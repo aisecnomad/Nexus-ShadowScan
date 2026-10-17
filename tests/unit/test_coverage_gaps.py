@@ -206,6 +206,17 @@ class TestVerdictMessage:
         assert message is not None
         assert "tolerated" in message
 
+    def test_a_truncated_gap_list_is_announced_as_truncated(self) -> None:
+        """Past MAX_PUBLISHED_GAPS the report lists only the first ones; the verdict says so."""
+        ledger = CoverageLedger()
+        ledger.add_examined(10_000_000)
+        for i in range(MAX_PUBLISHED_GAPS + 1):
+            ledger.record(CoverageGap(detail="link", path=f"tests/f{i}"))
+        message = ledger.verdict_message(CoveragePolicy())
+        assert message is not None
+        assert f"lists the first {MAX_PUBLISHED_GAPS} under coverage.details" in message
+        assert "each one" not in message
+
     def test_a_blinding_gap_alone_gets_no_summary(self) -> None:
         """It was already reported as an error where it happened."""
         ledger = CoverageLedger()
@@ -476,19 +487,59 @@ class TestEndToEnd:
         self._dangling_link(tmp_path, "tests/certs/ca")
         stats = self._run(tmp_path)
         (verdict,) = [warning for warning in stats.warnings if "tolerated" in warning]
-        match = re.search(r"see (\S+) for each one", verdict)
+        match = re.search(r"the JSON report lists each one under (\S+) in this connector's stats$", verdict)
         assert match is not None
-        assert match.group(1) == "stats[].coverage.details"
         report = json.loads(ScanResult(stats=[stats]).to_json())
         assert stats.coverage is not None
-        assert report["stats"][0]["coverage"]["details"] == stats.coverage["details"]
+        published = report["stats"][0]
+        for key in match.group(1).split("."):
+            published = published[key]
+        assert published == stats.coverage["details"]
         readme = (Path(__file__).resolve().parents[2] / "README.md").read_text(encoding="utf-8")
         assert "`stats[].coverage.details`" in readme
         assert "``stats[].coverage.details``" in (coverage.__doc__ or "")
         assert "coverage_gaps" not in readme + (coverage.__doc__ or "")
+
+    def test_the_sarif_verdict_reads_cleanly_and_names_the_json_report(self, tmp_path) -> None:
+        """SARIF escapes brackets in a message and has no coverage block of its own."""
+        from shadowscan.models import ScanResult
+        from shadowscan.reporters.sarif import render_sarif
+
+        self._tree(tmp_path, 200)
+        self._dangling_link(tmp_path, "tests/certs/ca")
+        stats = self._run(tmp_path)
+        log = json.loads(render_sarif(ScanResult(stats=[stats])))
+        (invocation,) = log["runs"][0]["invocations"]
+        texts = [note["message"]["text"] for note in invocation["toolExecutionNotifications"]]
+        (verdict,) = [text for text in texts if "tolerated" in text]
+        assert "\\" not in verdict
+        assert "the JSON report lists each one under coverage.details" in verdict
 
     def test_a_clean_tree_publishes_no_coverage_block(self, tmp_path) -> None:
         self._tree(tmp_path, 20)
         stats = self._run(tmp_path)
         assert stats.incomplete is False
         assert stats.coverage is None
+
+
+class TestDocumentation:
+    """What the documentation says about the published ledger matches what is published."""
+
+    ROOT = Path(__file__).resolve().parents[2]
+
+    def test_the_scanning_guide_documents_every_ledger_key(self) -> None:
+        guide = (self.ROOT / "docs" / "scanning.md").read_text(encoding="utf-8")
+        section = guide.split("### The coverage budget\n", 1)[1].split("\n### ", 1)[0]
+        keys = coverage._SUMMARY_KEYS | coverage._GAP_KEYS
+        missing = sorted(key for key in keys if f"`{key}`" not in section)
+        assert not missing, f"docs/scanning.md does not describe {missing}"
+        assert f"The first {MAX_PUBLISHED_GAPS} gaps" in section
+        assert "SARIF has no coverage block" in section
+
+    @pytest.mark.parametrize("name", ["README.md", "docs/engineering-log.md"])
+    def test_no_document_says_every_tolerated_gap_is_listed(self, name: str) -> None:
+        """Only the first MAX_PUBLISHED_GAPS are listed; details_truncated counts the rest."""
+        text = " ".join((self.ROOT / name).read_text(encoding="utf-8").split())
+        assert "published in full" not in text
+        assert f"first {MAX_PUBLISHED_GAPS}" in text
+        assert "`details_truncated` count" in text

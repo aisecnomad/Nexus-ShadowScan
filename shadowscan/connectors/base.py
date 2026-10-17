@@ -435,9 +435,10 @@ class ConnectorContext:
     def finalize_coverage(self) -> None:
         """Judge the run's partial gaps against the policy and publish the ledger.
 
-        Called once, after ``analyze()``. Tolerated gaps are published under
-        ``stats.coverage`` with their paths and weights, so a reader sees every
-        skipped entry whether or not the exit code changed.
+        Called once, after ``analyze()``. Every gap is counted in
+        ``stats.coverage``, and the first ``MAX_PUBLISHED_GAPS`` are listed
+        there with their paths and weights, so a reader sees what was skipped
+        whether or not the exit code changed.
         """
         if self.stats is None:
             return

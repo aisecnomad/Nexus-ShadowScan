@@ -93,9 +93,11 @@ a refused page, an unparseable manifest or a malformed export marks the scan
 incomplete (exit 3) rather than producing a smaller report that looks clean.
 A gap the scanner can bound — a handful of unreadable entries in a large tree
 — is instead charged against a 2% coverage budget (`--max-coverage-gap`,
-`strict_coverage` to disable), listed under `stats[].coverage.details`
-whether or not it changes the exit code. Only the opt-in LLM triage is
-advisory; its failures are warnings and it never changes scores. See
+`strict_coverage` to disable) and counted in the JSON report's
+`stats[].coverage` whether or not it changes the exit code; the first 50 are
+listed under `stats[].coverage.details`, and `details_truncated` counts the
+rest. Only the opt-in LLM triage is advisory; its failures are warnings and it
+never changes scores. See
 [architecture](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/architecture.md)
 for the pipeline, the package layout and the connector contract.
 

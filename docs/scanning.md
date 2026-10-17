@@ -183,6 +183,54 @@ keep their totals, but a key that is not one of these categories is counted as
 text there. A connector that was skipped, or timed out before it recorded a
 diagnostic, has no entry; the summary's `status` still says `incomplete`.
 
+### The coverage budget
+
+A gap the scanner cannot bound is *blinding*: the walk stopped early, a page
+was refused, a deadline expired, a link names a directory, a sanitizer limit
+was reached. It marks the scan incomplete at once. A *partial* gap costs a
+known number of entries (a dangling link is one) and is charged against a
+budget: `max_coverage_gap` (`--max-coverage-gap`), by default 2% of the entries
+the connector examined and at most 100 weighted entries. A gap under a
+dependency, cache or test path (`node_modules`, `vendor`, `tests`, `fixtures`
+and similar) is charged a quarter of its entries, unless the scanner could not
+read or decode the content. Within the budget the scan stays complete and the
+gaps' diagnostics remain warnings; over it the scan is incomplete and every
+partial gap is counted under its reason in `stats[].incomplete_reasons`.
+`strict_coverage: true` or `--max-coverage-gap 0` sets the budget to zero.
+
+A connector that recorded any gap publishes its ledger in the JSON report as
+`stats[].coverage`, which is `null` when there was none. When a gap was
+partial it also adds one verdict line to its warnings, or to its errors when
+the scan is incomplete.
+
+| Key | Meaning |
+|---|---|
+| `examined` | Entries the connector reached, summed over its roots (for a code scan, the entries the walk examined): the budget's denominator |
+| `gaps` | Gaps recorded, blinding and partial |
+| `blinding_gaps` | How many of them were blinding |
+| `gap_entries` | Entries the partial gaps cost, before weighting |
+| `weighted_gap_entries` | The same after path weighting: what is charged against the budget |
+| `allowance` | Weighted entries the scan could lose: `max_gap_ratio` times `examined`, at most 100, and 0 under strict accounting |
+| `within_budget` | Whether `weighted_gap_entries` stayed within `allowance` |
+| `max_gap_ratio` | The ratio in force |
+| `details` | The first 50 gaps (`MAX_PUBLISHED_GAPS`) in the order they were recorded |
+| `details_truncated` | Present only when more than 50 gaps were recorded: how many `details` leaves out. Every gap is still counted in `gaps` and `gap_entries`. |
+
+Each entry of `details` has `detail` (the diagnostic), `path`, `kind`
+(`blinding` or `partial`), `entries`, `full_weight` (true when the path discount
+was not applied) and `relevance` (`low` for a dependency, cache or test path,
+otherwise `high`). `shadowscan merge` and a process-mode plugin's result are
+checked against this shape (`shadowscan.coverage.validate_coverage_summary`), and
+a ledger that does not match is refused rather than republished.
+
+Only the JSON report carries `stats[].coverage`. SARIF has no coverage block:
+its `invocations[].toolExecutionNotifications` hold each connector's warnings
+and errors, among them the verdict line and the diagnostic of each gap that
+was reported, but not the counts, nor the gaps that one representative
+diagnostic stands for (a tree's further unread links). The verdict line names
+the JSON report for that reason. To read the ledger from a SARIF run, write a
+JSON report of the same scan as well (`--format json`).
+
 ### The `ci` profile
 
 A gate on a repository's source does not read its recorded cassettes, its

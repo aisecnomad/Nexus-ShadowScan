@@ -476,10 +476,14 @@ public repositories with the tool and read the committed benchmark metrics.
   test fixtures) are weighted to a quarter, not ignored, so a tree seeded with
   thousands still exhausts the budget. A file that could not be read or
   decoded is never weighted down by its path.
-- Tolerated gaps are published in full under `stats.coverage` with their
-  paths, weights and a one-line verdict, so nothing is hidden by being
-  tolerated. `strict_coverage` and `--max-coverage-gap 0` restore the previous
-  accounting exactly.
+- Tolerated gaps are counted in the JSON report's `stats[].coverage`, and the
+  first 50 (`MAX_PUBLISHED_GAPS`) are listed under `stats[].coverage.details`
+  with their paths and weights, `details_truncated` counting the rest. A
+  one-line verdict joins the connector's warnings, so nothing is hidden by
+  being tolerated. SARIF has no coverage block; its notifications carry that
+  line, which names the JSON report and so is worded without brackets, which
+  SARIF escapes in a message. `strict_coverage` and `--max-coverage-gap 0`
+  restore the previous accounting exactly.
 
 ### Connector deadlines scale to their input, and an overrun keeps its findings (October 17)
 

@@ -18,9 +18,9 @@ budget:
 * A **partial** gap costs a bounded, known amount of coverage: one unreadable
   entry, one unparseable manifest, one link whose target lies outside the tree.
   These accumulate against :attr:`CoveragePolicy.max_gap_ratio`. Within budget
-  the scan stays complete and every gap is still published under
-  ``stats[].coverage.details``; over budget the scan is incomplete exactly as
-  before.
+  the scan stays complete and every gap is still counted and, up to
+  :data:`MAX_PUBLISHED_GAPS`, listed under ``stats[].coverage.details``; over
+  budget the scan is incomplete exactly as before.
 
 Gaps are weighted by whether the path could plausibly hide a deployed agent.
 An unreadable file under ``node_modules/`` or ``tests/fixtures/`` is weighted
@@ -32,7 +32,10 @@ Nothing here can *hide* a gap. Tolerated gaps are listed in
 ``stats[].coverage.details`` (the first :data:`MAX_PUBLISHED_GAPS`, with
 ``details_truncated`` counting the rest), counted in ``gaps`` and
 ``gap_entries`` beside it, and summarised in one line on the scan stats, so a
-reviewer sees what was skipped whether or not it changed the exit code.
+reviewer sees what was skipped whether or not it changed the exit code. Only
+the JSON report carries ``stats[].coverage``; SARIF, OCSF, Markdown and HTML
+carry the verdict line among the diagnostics, which is why it names the JSON
+report.
 """
 
 from __future__ import annotations
@@ -378,7 +381,11 @@ class CoverageLedger:
                 f"coverage gaps within budget: {lost} entr(y/ies) unread of "
                 f"{summary['examined']} examined; the scan is incomplete for another reason"
             )
+        # Bracket-free, because SARIF and Markdown escape brackets in a message;
+        # and naming the JSON report, the only format that carries the ledger.
+        listed = f"the first {MAX_PUBLISHED_GAPS}" if "details_truncated" in summary else "each one"
         return (
             f"coverage gaps tolerated: {lost} entr(y/ies) unread of {summary['examined']} examined, "
-            f"within the {policy.max_gap_ratio:.1%} budget; see stats[].coverage.details for each one"
+            f"within the {policy.max_gap_ratio:.1%} budget; the JSON report lists {listed} under "
+            "coverage.details in this connector's stats"
         )
