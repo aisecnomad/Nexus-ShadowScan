@@ -213,7 +213,7 @@ each definition #259 moved was merged three ways (the original, this
 branch's version, #259's moved copy), so every fix landed in the module the
 split chose, and the 41 definitions the fixes added were placed by the
 collaborator that reads them. Verification is the repository's own: the
-full test suite on CPython 3.11 and 3.14 (the collaborator wiring test, the
+full test suite on every supported CPython (the collaborator wiring test, the
 coverage, credential-oracle and filesystem suites among them), ruff, mypy,
 the complexity gate, the nine evaluation corpora and the self-scan, as the
 engineering log entry for the split records. Not verified: the live clone

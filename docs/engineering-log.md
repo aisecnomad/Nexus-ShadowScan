@@ -27,6 +27,144 @@ Counts and figures quoted in an entry are those of its date.
   `shadowscan merge report.json --format sarif`. That log has the scan's
   results and notifications, plus one saying the source report is incomplete
   when it was, and `merge` exits 3 as the scan did.
+### The credential oracle's slow rows run with a budget that coverage tracing cannot exhaust (October 18)
+
+- The CI run of this branch failed on the Linux 3.11 leg, the coverage-traced
+  one. Two `tests/unit/test_credential_oracle.py` rows,
+  `r1p.4-ts-1500-get-chains` and `r1p.4-ts-12531-ors`, read `incomplete`
+  instead of `complete`: their inputs are 1,500 and 12,531 lines, and under
+  coverage tracing (several times slower) the default matching budget of 2
+  CPU seconds per 256 KiB ran out, so the scan reported itself incomplete,
+  which is the scanner failing closed, not a credential defect. The rows
+  passed untraced and alone. The oracle's `mode="slow"` scan rows now run with
+  `scan_timeout: 60`: they measure what the pipeline reports on a scan that
+  completes, and the budget has its own tests. Reproduced locally: the rows
+  fail under `--cov` on 3.11 and pass with the budget.
+- The other two legs that failed are recorded above: the macOS legs by the
+  initial-env probe's `/proc` fallback, and the 3.14 legs by the report
+  nesting limit that 3.14's parser no longer runs out of stack on. The fix
+  landed on the integration branch from this work (e2482bf).
+
+### Filesystem connector split into walk, file-scan and findings collaborators (ADR-005 steps 2-5; #259; October 18)
+
+- `FilesystemConnector` (`shadowscan/connectors/code/filesystem.py`, 6,237
+  lines on this branch after the review fixes) is a façade over four
+  collaborators in modules of their own, as ADR-005 describes:
+  `OwnershipResolver` (#258), `TreeWalker` in `walk.py` (the walk, its
+  limits, and the fail-closed coverage accounting including the budgeted,
+  discounted and declared gaps the review fixes added), `FileScanner` in
+  `file_scan.py` (reading, redaction and analysis of one file, the lockfile,
+  credential-file and binary-fixture reads and the credential quota
+  disclosure) and `ProjectFindings` in `project_findings.py`, with the records
+  they share in `scan_records.py`. The façade keeps configuration, the engine
+  hooks (`estimate_timeout_seconds`, the coverage hooks), `scan_tree` and
+  `_base`. Sizes: 1,171, 2,184, 2,257, 1,268 and 272 lines.
+- #259's four moves were made again on the integrated code rather than
+  carried as commits: the fixes of #254 to #258 had changed the same
+  functions, so each definition #259 moved was merged three ways (main, this
+  branch, #259's moved copy) into the module #259 chose, and the 41
+  definitions the fixes added were placed with the collaborator that reads
+  them. `isolated` takes the walker, whose gap accounting records a contained
+  failure, as the connector's method did here. The walker receives the
+  coverage `profile` and whether the gap budget is 0; the collaborator wiring
+  test covers both.
+- Every name importable from `filesystem.py` before still is, as the defining
+  module's object (`name as name` re-exports; `tests/unit/test_negative_context.py`
+  pins 304 of them, generated from the façade's imports). Tests patch the
+  class or module that owns a name. #259's other filesystem commits (its own
+  CLI split, changelog condensation and ownership move) were not carried:
+  this branch already had each in another form (#252 with fixes, #256/#258,
+  #258).
+- Verified by the full suite on 3.11 (25,641 passed) and 3.14, ruff, mypy,
+  the complexity gate (baseline written again with `--rebaseline`: the
+  façade's entries go, the collaborators' appear under their new names at
+  their old values), the policy and consistency tests and the self-scan. Not
+  verified: the live clone and API modes of `code.github` and `code.gitlab`,
+  and the 2026-10-01 field scan's repositories.
+
+### CI test legs run on pytest-xdist workers (#259; October 17)
+
+- The `test` job runs the suite with `-n auto --dist worksteal`, one worker
+  per CPU, including the coverage-traced 3.11 leg that took about 40 minutes
+  serially; pytest-cov combines the workers' data before the floors are
+  checked, and `make test-parallel` uses the same options. The macOS job
+  still runs `pytest -q` through the console entry point. The 60-minute job
+  limit is unchanged until the parallel timings are known. The suite has to
+  stay safe to run in parallel: no test may depend on another's files, ports,
+  environment or ordering.
+
+### OpenSSF Best Practices evidence page, claiming no badge (#259; October 17)
+
+- `docs/operations/openssf-best-practices.md` answers each of the 67
+  passing-level criteria with a status (Met, Confirm, Attest, N/A, Gap) and
+  the evidence in this repository, and lists what silver and gold would still
+  need. No badge is claimed and nothing records an application for one. One
+  gap is left for the maintainer: JWTs verified through a JWKS set no minimum
+  RSA key size (`crypto_keylength`). Policy tests keep every criterion
+  answered once and tie the page's statements about cryptography to the code.
+
+### Release attestation bundles are named `provenance.sigstore.json` and `sbom.sigstore.json` (#259; October 17)
+
+- The release workflow's two attested bundles were `provenance.json` and
+  `sbom.json`; they carry the `.sigstore.json` suffix that release-signature
+  checks such as OpenSSF Scorecard's Signed-Releases look for among a GitHub
+  release's assets. The workflow still creates no release:
+  `docs/operations/publishing.md` has the maintainer attach the wheel, the
+  sdist, `SHA256SUMS` and both bundles to a release created by hand, and shows
+  how to verify a download against them. **(behaviour change)**
+
+### Self-scan of the checkout in `make check` and CI, with every exclusion explained (#259; October 17)
+
+- `make self-scan` (part of `make check`) and a CI step scan this checkout
+  with `examples/shadowscan.self-scan.yaml` and require a complete report:
+  findings do not fail the step, an incomplete scan (exit 3) does. Each
+  exclusion names a path, not a pattern, with its reason above it; a
+  reviewed list in `tests/test_self_scan.py` is the only way to exclude part
+  of the first-party trees, and an exclusion that matches nothing fails.
+- On this branch the review fixes had added four more files the scanner
+  cannot read to completion, each now a named exclusion: the
+  signature-authoring guide and the engineering log quote call shapes without
+  a closing parenthesis (the call-lexing budget), and the engineering log,
+  `tests/unit/test_credential_oracle.py` and
+  `tests/unit/test_generic_credential_references.py` hold more credential
+  inputs than the five-per-format quota #257 discloses as incomplete. With
+  them the self-scan completes: 24 findings, 1,161 objects, exit 0.
+
+### Complexity ratchet holds function and module size and fails closed (#259; October 17)
+
+- `tools/complexity_gate.py` is #259's gate at this branch's target: it holds
+  every function above ruff's `C901` limit of 15 in `shadowscan/`, `tools/`
+  and `benchmarks/`, and every `shadowscan` module above 2,000 lines, to
+  `tools/complexity_baseline.json`. Nothing listed may grow, nothing new may
+  join, and an improvement fails the check until `--update` lowers the
+  baseline, so the room it made cannot be spent again; `--update` refuses to
+  raise anything, and a rise that review accepts is recorded with
+  `--rebaseline` as a diff of the baseline. The gate exits 2 when ruff or the
+  baseline cannot be trusted, ignores `noqa`, and records the ruff version.
+  It replaces the gate #254 added (target 15, `--update --allow-increase`),
+  whose CI step, Makefile targets and `make check` membership it keeps. The
+  tests express every expected complexity relative to the limit.
+
+### Coverage-guided fuzzing of the redaction and source-lexing code (#259; October 17)
+
+- `tools/fuzz` fuzzes `sanitize_text`, `sanitize` and the source lexer with
+  Atheris, hash-locked in `requirements-fuzz.lock` (Linux x86_64 only).
+  `make fuzz` and the weekly `Fuzz` workflow run it, the workflow with a
+  read-only token and no stored corpus; a failing lexing input is kept as an
+  artifact, but an input that beat the redactor is never printed or uploaded.
+  The same checks run as Hypothesis tests in the ordinary suite
+  (`tests/unit/test_fuzz_targets.py`), and `make audit` and the dependency
+  audit cover the new lock. Atheris is not an engine OpenSSF Scorecard's
+  Fuzzing check recognises. See `docs/operations/fuzzing.md`.
+
+### KubernetesConnector.analyze decomposed into per-concern helpers (#259; October 17)
+
+- `KubernetesConnector.analyze` (ruff `C901` complexity 66) is a short driver
+  over helpers that each own one concern: reading records and `List`
+  envelopes, the NetworkPolicy pre-pass, an object's identity and pod spec,
+  its containers, exposure tags and the finding. Findings, ids, tags and
+  diagnostics are unchanged; `tests/unit/test_kubernetes_helpers.py` covers
+  the helpers.
 
 ### A file's source-binding time budget is counted as `timeout`, as the docs define it (October 18)
 

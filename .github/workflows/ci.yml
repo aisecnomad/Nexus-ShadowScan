@@ -183,6 +183,9 @@ jobs:
         run: python -m pytest -q -n auto --dist worksteal --junitxml="$RUNNER_TEMP/junit-suite.xml"
       - name: Run the test suite with line and branch coverage
         if: ${{ env.COVERAGE_LEG == 'true' }}
+        env:
+          # A JUnit report for the annotation step below; the pytest command stays as documented.
+          PYTEST_ADDOPTS: --junitxml=${{ runner.temp }}/pytest.xml
         # pytest-cov measures in every worker and combines their data before it
         # checks the floor, so the report and coverage_gate below see the whole suite.
         run: python -m pytest -q -n auto --dist worksteal --junitxml="$RUNNER_TEMP/junit-suite.xml" --cov=shadowscan --cov-report=term-missing --cov-fail-under=80

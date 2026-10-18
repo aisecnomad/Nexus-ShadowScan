@@ -108,8 +108,8 @@ prove nothing about clean code.
 
 ## Run it
 
-You need Linux x86_64 and CPython 3.12 or 3.13 (PyPI also has 3.14 wheels; the harness has not
-been run there). Install the engine on top of the runtime, from the hash locks and never from
+You need Linux x86_64 and a supported CPython that Atheris publishes a wheel for
+(`requirements-fuzz.lock` pins the hashes); the harness has not been run on every one of them. Install the engine on top of the runtime, from the hash locks and never from
 source:
 
 ```bash

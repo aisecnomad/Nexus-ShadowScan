@@ -927,8 +927,10 @@ def test_program_another_thread_starts_during_a_plugin_spawn_keeps_its_environme
     result = _engine().run()
     assert result.complete, result.stats
     assert seen == ["synthetic key unset"]
-    # The worker itself still starts without them.
-    assert result.findings[0].metadata["initial"] == ["HOME", "PATH"]
+    # The worker itself still starts without them, where its initial environment can be read
+    # (/proc; the sibling test above skips without it, this one still checks the launch).
+    expected_initial = ["HOME", "PATH"] if os.path.exists("/proc/self/environ") else None
+    assert result.findings[0].metadata["initial"] == expected_initial
     _assert_reaped(installed_probe)
 
 

@@ -272,6 +272,12 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
 
 ### Operations
 
+- A release candidate's two attestation bundles are `provenance.sigstore.json`
+  and `sbom.sigstore.json` (they were `provenance.json` and `sbom.json`), the
+  names release-signature checks look for among a release's assets. Verify a
+  download with `gh attestation verify --bundle` as the
+  [publishing runbook](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/operations/publishing.md)
+  shows; a script that downloaded the old names needs the new ones.
 - The next release uploads a source distribution beside the universal
   `py3-none-any` wheel. The release workflow builds the wheel from that sdist
   with `python -m build`, checks that both carry the same metadata and package
