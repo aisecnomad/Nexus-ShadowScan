@@ -546,7 +546,8 @@ are never declared without a read. Documentation and example directories count b
 project root, so a project under `demo/` or `examples/svc/` with its own
 manifest keeps its gaps. A template's directory (template syntax such as
 `{{cookiecutter.slug}}`, `{%` or `${` in its path) and one none of whose JSON
-or TOML manifests parses are not projects for this rule: a template under a
+or TOML manifests parses as its tool reads it (npm and Composer accept a
+repeated key, not a `NaN`) are not projects for this rule: a template under a
 documentation or example path (`templates/{{cookiecutter.slug}}/`) keeps its
 unparsed manifest and sources declared. A template at the repository root, as
 in a cookiecutter repository (`{{cookiecutter.slug}}/src/`), is judged from the

@@ -421,8 +421,9 @@ exits 3 under the profile. The `docs/` and `examples/` directories below such a
 project, and test paths anywhere, are still declared (`docs/docs/` in that
 layout); its own content is not. A template is not such a project: a directory
 with template syntax in its path (`templates/crew/{{cookiecutter.slug}}/`, a
-`{%` or `${` segment), or one none of whose JSON or TOML manifests parses (a
-templated `package.json`), is judged by the project around it, so a template
+`{%` or `${` segment), or one none of whose JSON or TOML manifests parses as
+its tool reads it (a templated `package.json`; a repeated key, which npm and
+Composer accept, still parses), is judged by the project around it, so a template
 under a documentation or example path keeps its own unparsed manifest and
 sources declared. A template at the repository root (a cookiecutter
 repository's `{{cookiecutter.slug}}/`) is judged from the root, where no profile

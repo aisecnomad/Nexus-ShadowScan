@@ -13,6 +13,27 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Under the ci profile a project whose manifest repeats a key is a project, as npm and Composer read it; a template at the repository root is documented as not declared (October 18)
+
+- The ci profile declares the gaps in documentation and example paths unless
+  they lie in a project of their own, and a directory none of whose JSON or
+  TOML manifests parses is not one. The probe parsed JSON manifests with the
+  strict decoder, which refuses a repeated key. npm and Composer accept one
+  (the last counts), so a real project under `docs/` or `examples/` whose
+  `package.json` or `composer.json` repeated a key was taken for a broken
+  template, and the gaps in it were declared as the documentation around it:
+  the scan exited 0 where its own manifest made it a project that exits 3.
+  The probe now reads JSON manifests as those tools do: a repeated key
+  parses, a `NaN` or `Infinity` does not. The scanner's own analysis still
+  reads manifests strictly and records a gap for one that repeats a key.
+- `docs/scanning.md` and `docs/connectors/code.md` said a cookiecutter
+  template's unparsed manifest and sources stay declared. That holds for a
+  template under a documentation or example path
+  (`templates/{{cookiecutter.slug}}/`). A template at the repository root, as
+  in a cookiecutter repository, is judged from the root, where no profile path
+  applies, so its gaps are judged as without the profile. The docs now say
+  so, and `test_a_template_at_the_repository_root_is_not_declared` pins it.
+
 ### Plugin workers also start without npm's per-registry `_auth`, more webhook names and values, and .NET connection strings under any configuration path (October 18)
 
 The plugin-environment review found close variants of the credential families
