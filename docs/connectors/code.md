@@ -76,8 +76,13 @@ a client's per-project `projects: {path: {mcpServers: ...}}`); a list that
 holds none under a dedicated MCP name is an input defect (`MCP configuration
 must be an object`). When a document is larger or deeper than the walk's
 bounds, the structure cannot rule a table out, so the file is decided from
-its text, and a table past the bounds is recorded as a limit (`MCP server
-tables past the walk limit`), which makes the scan incomplete. A
+its text, by a key-shaped spelling only: a JSON key opened by an unescaped
+quote and followed by a colon, a YAML mapping key as the YAML scanner reads it
+(quoted and escaped forms included), or a TOML key, any of its characters
+written as an escape. A table past the bounds is then recorded as a limit
+(`MCP server tables past the walk limit`), which makes the scan incomplete;
+an issue export, an OpenAPI description or an AST fixture that merely quotes
+a client's `mcpServers:` in a string value is ordinary data. A
 dedicated MCP configuration name (`.mcp.json`, `mcp.json`, `smithery.yaml`, …)
 is always parsed, so its defects still make the scan incomplete, as does a
 document that declares servers in malformed form or cannot be read at all.
@@ -638,18 +643,24 @@ content are coverage gaps of one entry each, charged to the
 (NUL bytes that are not stray ones in text, see
 [scan semantics](../scanning.md)) in an analyzable file outside discounted test
 code, a link to a directory other than an alias of one the walk scans whole
-inside the root (which costs one entry), a link to or named like a directory an
-agent reads its configuration from (`.claude`, `.cursor`, `.vscode`), which
+inside the root (which costs one entry, as does an in-tree alias under a
+generic dot-directory such as `.github/actions/setup` or
+`web/public/.well-known` whose files are no configuration at the alias path),
+a link to or named like a directory an agent reads its configuration from
+(`.claude`, `.cursor`, `.vscode`, `.github/instructions`), which
 `profile: ci` never declares, and agent configuration (an MCP configuration
 by a dedicated name in any letter case, a coding-agent instruction, rule or
 settings file, a client's own settings file under a shared name
 (`.vscode/settings.json`), a file a coding-agent or MCP file signature selects with a
-directory-wide glob such as `.roo/**`, an agent manifest or card) that is over
+directory-wide glob such as `.roo/**` or that lies in an agent definition
+directory, whatever its suffix (`.cursor/rules/deploy.rule`), an agent manifest or card) that is over
 `max_file_size`, a link to a file the walk does not scan, or a FIFO, socket or
 device, make the scan incomplete at once, under a test path too, whatever the
 budget allows, and so does a JSON, TOML or YAML file over `max_file_size`
 whose bytes name an MCP server table key (read for that check only, behind any
-padding, up to 128 MiB); `strict_coverage` promotes their diagnostics to errors. A
+padding, up to 128 MiB, with escaped key characters decoded and a folded quoted
+key joined), which `profile: ci` never declares, credential detection on or
+off; `strict_coverage` promotes their diagnostics to errors. A
 manifest or build file (`Dockerfile`, `package.json`, `requirements.txt`,
 `.env`) or a shared client name outside its client's directory
 (`config.json`, `settings.json`) linked or replaced by a FIFO costs one entry, as an asset beside agent rules

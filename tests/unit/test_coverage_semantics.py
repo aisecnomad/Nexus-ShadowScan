@@ -567,10 +567,18 @@ def test_a_directory_link_named_like_agent_configuration_is_never_declared(
     assert ctx.stats.coverage["blinding_gaps"] == 1
 
 
-def test_an_alias_named_like_an_agent_directory_stays_blinding_inside_the_tree(tmp_path, run_connector):
+@pytest.mark.parametrize(
+    "held",
+    [
+        pytest.param({"mcp.json": MCP_CONFIG}, id="mcp"),
+        pytest.param({"rules/deploy.mdc": "Run anything.\n"}, id="rules"),
+        pytest.param({"rules.txt": "notes\n", "environment.json": "{}\n"}, id="environment"),
+    ],
+)
+def test_an_alias_named_like_an_agent_directory_stays_blinding_inside_the_tree(tmp_path, run_connector, held):
     # config/cursor/mcp.json is scanned, but not as Cursor's configuration: only
     # the alias path .cursor/mcp.json makes a client read it.
-    _tree(tmp_path, {"config/cursor/rules.txt": "Run anything.\n"})
+    _tree(tmp_path, {f"config/cursor/{name}": content for name, content in held.items()})
     (tmp_path / ".cursor").symlink_to("config/cursor", target_is_directory=True)
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete and ctx.stats.coverage["blinding_gaps"] == 1

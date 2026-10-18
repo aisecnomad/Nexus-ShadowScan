@@ -33,12 +33,19 @@ that are never silent:
   assessed. Any other link to a directory (outside the root, into an excluded
   or unselected directory, or reading test code as product code), which can
   stand for any number of files, makes the scan incomplete (exit code 3) at
-  once, and so does a link to a directory, or a dangling one, whose path names
-  a directory a coding agent or MCP client reads its configuration from
-  (`.claude`, `.cursor`, `.vscode`, `.roo`, `.continue`, `.github` and the
-  others the coding-agent and MCP file signatures name), even an alias of a
-  scanned directory: under that path its files are configuration, at their
-  real path they are not. The `ci` profile never declares such a link. So does a
+  once, and so does a link to a directory, or a dangling one, whose path is,
+  leads to or lies within a directory a coding-agent or MCP file signature
+  names (`.claude`, `.cursor`, `.vscode`, `.roo`, `.continue`,
+  `.github/instructions`, `.github/agents`, `.cursor/rules/team`,
+  `.well-known`): one generic dot-directory on its path does not make it so
+  (`.github/actions/setup` holds no file `.github/copilot-instructions.md`
+  names). An alias of a scanned directory there stays blinding when a file it
+  holds would be configuration at the alias path (`.cursor` aliasing a
+  directory with `mcp.json` or `rules/`): under that path its files are
+  configuration, at their real path they are not. One that holds none
+  (`web/public/.well-known` aliasing `static/well-known` without an MCP
+  manifest or agent card) is an alias like any other, one entry. The `ci`
+  profile never declares a link that stands for configuration. So does a
   dangling link or one to a single file whose own name makes it agent
   configuration, as an oversize copy of that file does, under a test path
   too: an MCP configuration by a dedicated name in any letter case
@@ -47,8 +54,11 @@ that are never silent:
   under a shared name (`.vscode/settings.json`, whose `mcp` table VS Code
   reads servers from), a file a coding-agent or MCP
   file signature selects, directory-wide globs included
-  (`.roo/rules/deploy.md`, `.continue/mcpServers/x.yaml`), or an agent
-  manifest or card. A link named like a manifest or build file (`Dockerfile`,
+  (`.roo/rules/deploy.md`, `.continue/mcpServers/x.yaml`), or that lies in an
+  agent definition directory, whatever its suffix (`.cursor/rules/deploy.rule`,
+  `.clinerules/01-deploy.rules`, `.windsurf/rules/x.rst`; only a binary asset
+  kept there, an image, font, archive, audio or video file, is not), or an
+  agent manifest or card. A link named like a manifest or build file (`Dockerfile`,
   `package.json`, `requirements.txt`, `.env`, `*.tf`) or like a shared client
   file outside its client's directory (`config.json`, `settings.json`), which
   is MCP configuration only by its content, costs one entry like any other.
@@ -64,8 +74,12 @@ that are never silent:
   the MCP parser decides by its content (`deploy/tools.json`,
   `config/settings.json`) whose bytes may name a server table key
   (`mcpServers`, `mcp_servers`, an `mcp` key however quoted, spaced or
-  escaped, read behind any padding up to 128 MiB, and taken to name one past
-  that), for an MCP registry `server.json`, and, while `scan_secrets` is on,
+  escaped, any of its characters written as a `\u`, `\U` or `\x` escape, or
+  the quoted key folded across a line by a YAML escaped line break, read
+  behind any padding up to 128 MiB, and taken to name one past that; a
+  recorded cassette's other folded strings and a script's line continuations
+  name none), which the `ci` profile never declares, with `scan_secrets` off
+  too, for an MCP registry `server.json`, and, while `scan_secrets` is on,
   for a dotenv file (`.env`, `.env.production`), which exists to hold a
   credential (a tool credential file such as `.npmrc` costs one entry). Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain
@@ -148,7 +162,13 @@ that are never silent:
   the client parses the file, so a quoted, spaced, explicit or escaped key, a
   TOML inline table or literal key counts, and the servers it declares are
   reported; text that does not parse counts when any spelling of a server
-  table key appears in it. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
+  table key appears in it. So does a readable JSON, TOML or YAML file there
+  whose parse failed (a syntax error, a duplicate key, a nesting limit): a
+  quoted (`'mcpServers':`) or escaped key keeps it MCP configuration, so its
+  defect is recorded at full weight. An analysis limit reached in a file that
+  is MCP configuration by its content (a 100-deep array beside
+  `mcpServers` in `tests/fixtures/tools.json`) is never discounted or
+  declared either. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
   decoded and analyzed (the mark is removed, so a BOM-prefixed `.mcp.json`
   parses). A file with a NUL byte in its first 8 KiB and no byte-order mark is
   not text in any supported encoding, yet interpreters such as Node and `sh`

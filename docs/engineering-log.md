@@ -59,6 +59,102 @@ coding agents; this is not independent human review.
 `tests/unit/test_redaction_performance.py` cover the fixes; each regression
 case fails before its change.
 
+### Agent configuration review fixes, round 2: rule files of any suffix, escaped and folded keys, analysis limits, walk bounds and directory aliases (October 18)
+
+An adversarial review of "Agent configuration never vanishes into a coverage
+gap" (below) found six ways a file the scanner reports as agent, MCP or
+coding-agent configuration still vanished into the budget, the test-code
+discount or a `--profile ci` declaration, and four ways an ordinary
+repository newly exited 3 where main 8c72467 exits 0. Each is fixed with a
+regression test in `tests/unit/test_coverage_configuration_spellings.py`
+that fails on the previous commit.
+
+- **Rule files of any suffix.** `_agent_configuration` counted a file that a
+  directory-wide coding-agent or MCP signature selects, or that lies in an
+  agent definition directory, only when its name was one the walker reads by
+  itself (`_analyzed_by_name`) or a signature named it literally. A
+  `.cursor/rules/deploy.rule`, `.clinerules/01-deploy.rules` or
+  `.windsurf/rules/x.rst`, which the signatures select and the scanner reads,
+  was one budgeted entry when oversize, linked outside the tree or replaced
+  by a FIFO, and discounted or declared under `tests/` when NUL-poisoned or
+  unreadable, where main exited 3. Such a file is now configuration whatever
+  its suffix; only a binary asset kept beside the rules
+  (`_BINARY_ASSET_SUFFIXES`: images, fonts, archives, audio and video) is
+  not, so a large `.cursor/rules/diagram.webp` stays an ordinary gap.
+- **Oversize content-detected configuration under `--profile ci`.** An
+  oversize file whose bytes name a server table (`docs/.continue/mcpServers/evil.yaml`,
+  a padded `tests/fixtures/servers.json`) was blinding, but `_budgeted_gap`
+  was not told it was configuration, so with `scan_secrets` off the ci
+  profile declared it. `_oversize_gap` now passes `configuration` and full
+  weight when the content check matched.
+- **Escaped and folded keys in unread bytes.** The byte check
+  (`_MCP_KEY_BYTES`) accepted an escape only for the letters m, c and p, so
+  `mcp\u0053ervers` (valid JSON, the same key to a client) padded past
+  `max_file_size` read as no configuration, while any backslash-newline
+  anywhere counted as a key, so an oversize PyYAML or VCR cassette (whose
+  `yaml.dump` folds long double-quoted strings with trailing backslashes) or
+  a shell-continuation export was blinding. `_unescaped_key_bytes` now writes
+  each `\u`, `\U` or `\x` escape of a key character as that character and
+  joins a folded double-quoted token only when the joined text starts an
+  `mcp` key, before the search; the loose escape and fold alternatives are
+  gone, and the chunk overlap is 4 KiB so an escaped, folded key cut at a
+  chunk boundary is still seen whole.
+- **Analysis limits in configuration found by content.** A failure that
+  `_isolated` contains (a `SanitizationLimitError` from a 100-deep array beside
+  `mcpServers` in `tests/fixtures/tools.json`) was recorded without full
+  weight, so the ci profile declared it. `_isolated` takes `by_content`: the
+  file-analysis and credential-detection boundaries pass `_mcp_by_content`
+  (what `_detect_mcp` decided, recorded before the server parser runs, or the
+  file's bytes by the escape-aware check before that), and the MCP-analysis
+  boundary always counts.
+- **A key the text check missed, behind a parse failure.** With no parse held
+  (a YAML nesting limit, a JSON duplicate key), `_looks_like_mcp_config`
+  pre-filtered with the plain substring check `_mentions_mcp_keys`, which
+  misses `'mcpServers':` and an escaped JSON key, so the fixture's gap was
+  discounted under `tests/`. The decision moved to `_content_declares_mcp`,
+  which uses the escape-aware byte check there, so the server parser runs and
+  records its defect at full weight.
+- **Tables past the walk's bounds.** When `mcp_server_holders` reported
+  truncation, the file was decided by `_mentions_mcp_keys`, which both missed
+  an escaped key (a 301st list entry with `mcp\u0053ervers` read as no
+  configuration, as on main) and found prose in string values: a 300-issue
+  export quoting a YAML `mcpServers:` snippet, a 300-path OpenAPI document
+  with one in a description, or an 8-deep AST fixture whose comment mentions
+  `mcp_servers:` exited 3 with `MCP server tables past the walk limit`, where
+  main exits 0. `_names_mcp_key` now requires a key-shaped spelling: a JSON
+  key opened by an unescaped quote and followed by a colon, a YAML mapping
+  key read from the YAML scanner's tokens (quoting and escapes undone as the
+  loader undoes them), or a TOML key at a line start or in an inline table,
+  each with any character written as an escape.
+- **Directory aliases under generic dot-directories.** A directory link was
+  agent configuration when any component of its path was a dot-directory a
+  signature names, so `.github/actions/setup -> ../../tools/setup-action` and
+  `web/public/.well-known -> ../../static/well-known`, aliases of scanned
+  directories, were blinding with `named like agent configuration` (main
+  exits 3 too). `_agent_directory_path` now asks whether a trailing run of the
+  link's components lies along the directory part of an agent configuration
+  glob (`_agent_directory_globs`: the coding-agent and MCP file signatures,
+  the posture settings directories, the agent definition directories, the
+  clients' settings files and the `.well-known` agent cards), or reaches a
+  wildcard there (`.cursor/rules/team`). Such a link to an outside or
+  unresolvable target stays blinding and is never declared; an alias of a
+  scanned directory is blinding only when a file it holds would be
+  configuration at the alias path (`_alias_holds_agent_configuration`, which
+  lists at most 1,000 entries and fails closed past them), and otherwise is
+  the one budgeted entry `alias of a scanned directory` any alias is.
+  `test_an_alias_named_like_an_agent_directory_stays_blinding_inside_the_tree`
+  now aliases `.cursor` to a directory holding `mcp.json`, `rules/` or
+  `environment.json`, as its comment said, instead of a `rules.txt` no client
+  reads there.
+
+Compatibility: on the reviewer's noise trees (issue export, OpenAPI document,
+deep AST fixture, folded cassettes, in-tree `.github/actions` and
+`.well-known` aliases) no scan exits 3 where main 8c72467 exits 0; the
+remaining exit 3 where main exits 0 are padded MCP fixtures under `tests/`
+with `--no-secrets`, which main budgeted. `make evaluate` gives the same
+tp/fp/fn/tn on every corpus. `_looks_like_mcp_config` delegates its structured
+branch to `_content_declares_mcp` to stay within the complexity target.
+
 ### go.mod require blocks read in linear time; no dependency named "(" (October 18)
 
 - `code.filesystem` found go.mod `require ( ... )` blocks with the lazy

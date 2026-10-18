@@ -81,6 +81,7 @@ from collections.abc import Callable, Iterable, Iterator, Sequence
 from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar
 
@@ -761,6 +762,18 @@ _XML_EXTENSIONS = frozenset({".xml", ".props", ".targets", ".csproj", ".fsproj",
 _WORKFLOW_EXTENSIONS = frozenset({".json", ".yaml", ".yml"})
 # Coding-agent sub-agent and rule definitions (Markdown with YAML front matter).
 _AGENT_DEFINITION_DIRS = (".claude/agents/", ".github/agents/", ".cursor/rules/", ".windsurf/rules/")
+# Binary assets a repository keeps beside its coding-agent rules (images, fonts,
+# archives, audio and video): no agent reads one as configuration, so an unread
+# copy there is an ordinary gap. Any other suffix in a rule directory is
+# configuration (``.rule``, ``.rules``, ``.markdown``, ``.rst``), read or not.
+_BINARY_ASSET_SUFFIXES = frozenset(
+    {
+        *(".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".tif", ".tiff", ".avif", ".heic"),
+        *(".svg", ".psd", ".woff", ".woff2", ".ttf", ".otf", ".eot"),
+        *(".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".zst", ".jar"),
+        *(".mp3", ".wav", ".ogg", ".flac", ".m4a", ".mp4", ".mov", ".webm", ".avi", ".mkv"),
+    }
+)
 
 # File names that only ever hold MCP client/server configuration. Any other
 # file is MCP configuration only when its parsed structure configures a server.
@@ -836,6 +849,41 @@ def _yaml_declares_mcp(text: str) -> bool | None:
     return _document_declares_mcp(data)
 
 
+def _content_declares_mcp(rel: str, text: str, document: Any) -> bool:
+    """Whether a file the MCP parser decides by its content declares servers; ``document`` is its parse.
+
+    Decided from the parsed structure when it is held (JSON, TOML, and the YAML
+    every structured file is parsed into once): leading padding before the keys
+    then cannot hide a server table. A JSON object must be decided
+    structurally; a string search of a prefix could miss the keys. An array
+    declares servers only in a mapping it holds (``_document_declares_mcp``),
+    never in a transcript's ``mcp_servers`` status list. Past the walk's
+    bounds the text decides, by a key-shaped spelling only (``_names_mcp_key``):
+    an issue export quoting a client's configuration in a string is no MCP
+    configuration.
+
+    With no parse held (it failed, or the syntax was rejected) any spelling of
+    a key the client would read, quoted or escaped, keeps the file a candidate
+    (``_text_may_declare_mcp``), so its defect is recorded at full weight; a
+    YAML file's structure, parsed only now that the text names a key, then
+    decides, and a file it cannot read goes to the MCP parser. Workflows keep
+    the text search: their servers are JSON strings in step inputs, which
+    ``_embedded_workflow_mcp`` reads.
+    """
+    if _WORKFLOW_FILE.search(rel) is not None:
+        return _mentions_mcp_keys(text)
+    if document is not None:
+        declared = _document_declares_mcp(document)
+        return declared if declared is not None else _names_mcp_key(rel, text)
+    if not _text_may_declare_mcp(text):
+        return False
+    if rel.endswith(_YAML_SUFFIXES):
+        declared = _yaml_declares_mcp(text)
+        if declared is not None:
+            return declared
+    return True
+
+
 def _mentions_mcp_keys(text: str) -> bool:
     """Whether ``text`` names an MCP server table key anywhere: the cheap check that comes first.
 
@@ -859,29 +907,143 @@ def _mentions_mcp_keys(text: str) -> bool:
 
 # Any spelling of an MCP server table key, in bytes lower-cased and stripped of NUL
 # bytes: the check of content whose structure cannot be read (an oversize file, a
-# binary one). ``mcpServers`` and ``mcp_servers`` however quoted, spaced, made
-# explicit (``? mcpServers``) or dotted (``['mcp_servers'.e]``); an ``mcp`` key
-# (``"mcp":``, ``mcp =``, a ``[mcp]`` table, ``mcp.servers``); and an ASCII letter of the
-# key written as an escape (``m``, ``\x6d``) or a quoted key folded across a
-# line break, so no encoding the parser would undo hides the key from the check.
+# binary one, one whose parse failed). ``mcpServers`` and ``mcp_servers`` however
+# quoted, spaced, made explicit (``? mcpServers``) or dotted (``['mcp_servers'.e]``);
+# an ``mcp`` key (``"mcp":``, ``mcp =``, a ``[mcp]`` table, ``mcp.servers``). It is
+# searched after ``_unescaped_key_bytes`` has written each escaped key character
+# as itself and joined a quoted key folded across a line break, so no encoding
+# the parser would undo hides the key. A quoted token that starts an ``mcp`` key
+# and folds into 256 blanks or more is a candidate too, since the join is bounded.
 _MCP_KEY_BYTES = re.compile(
     rb"mcp(?:[_-]?servers|[\"']?\s{0,256}(?:[:=]|\.\s{0,256}[\"']?servers)|[\"']?\s{1,256}#|[\"']?\s{256})"
     rb"|(?:^|\n)[ \t]{0,256}\[[ \t]{0,256}[\"']?mcp[\"']?[ \t]{0,256}\]"
-    rb"|\\(?:u0{2,6}|x)(?:4d|6d|43|63|50|70)|\\\r?\n"
+    rb"|\"(?:m(?:c(?:p[_-]?[a-z]{0,7})?)?)?\\\r?\n[ \t]{256}"
 )
+# An escape of an ASCII character as JSON (``m``), TOML (``\U0000006D``) and
+# YAML (``\x6d``) write one, lower-cased: the 8-digit form is tried first.
+_KEY_ESCAPE_BYTES = re.compile(rb"\\(?:u0{6}([0-9a-f]{2})|u00([0-9a-f]{2})|x([0-9a-f]{2}))")
+# Characters a server table key is spelled with: only their escapes are decoded.
+_KEY_CHARACTERS = frozenset(b"abcdefghijklmnopqrstuvwxyz0123456789_-.")
+# A YAML double-quoted token folded across a line break by an escaped newline
+# (``"mcp\`` then ``Servers"`` on the next line), as ``yaml.dump`` writes a long key.
+# The escaped break and the next line's indentation are no part of the scalar.
+_FOLD_BYTES = rb"\\\r?\n[ \t]{0,256}"
+_FOLDED_TOKEN_BYTES = re.compile(rb"\"(?:[a-z0-9_.-]{0,64}" + _FOLD_BYTES + rb")+[a-z0-9_.-]{0,64}")
+_FOLD = re.compile(_FOLD_BYTES)
 # Bytes of an oversize file read for that check, in chunks: more than any file a
 # Git host stores outside LFS (GitHub refuses one over 100 MiB). Past them the
 # file is taken to declare servers, since the check cannot rule it out.
 _MCP_CHECK_BYTES = 128 * 1024 * 1024
 _MCP_CHECK_CHUNK = 1024 * 1024
 # What a chunk keeps of the one before it, so a key cut at a chunk boundary is
-# still seen whole (none of the spellings above is longer than 525 bytes).
-_MCP_CHECK_OVERLAP = 1024
+# still seen whole: an escaped, folded spelling of the longest key, each of its
+# eleven characters written as a ten-byte escape after a 256-blank fold, is
+# shorter than 3,200 bytes.
+_MCP_CHECK_OVERLAP = 4096
+
+
+def _escaped_key_character(match: re.Match[bytes]) -> bytes:
+    """The key character an escape writes, lower-cased; any other escape is kept as written."""
+    character = bytes([int(match.group(match.lastindex or 1), 16)]).lower()
+    return character if character[0] in _KEY_CHARACTERS else match.group()
+
+
+def _unfolded_key(match: re.Match[bytes]) -> bytes:
+    """A folded double-quoted token joined when it then starts an ``mcp`` key; any other is kept."""
+    joined = _FOLD.sub(b"", match.group())
+    return joined if joined.startswith(b'"mcp') else match.group()
+
+
+def _unescaped_key_bytes(data: bytes) -> bytes:
+    """``data`` (lower-cased) with escaped key characters written as themselves and folded keys joined.
+
+    Only a double-quoted token whose joined text starts an ``mcp`` key is
+    joined, so a cassette's folded strings or a shell script's line
+    continuations, which spell no key, stay as they are.
+    """
+    if b"\\" not in data:
+        return data
+    return _FOLDED_TOKEN_BYTES.sub(_unfolded_key, _KEY_ESCAPE_BYTES.sub(_escaped_key_character, data))
 
 
 def _may_declare_mcp(data: bytes) -> bool:
     """Whether ``data`` (lower-cased, without NUL bytes) may name an MCP server table key."""
-    return _MCP_KEY_BYTES.search(data) is not None
+    return _MCP_KEY_BYTES.search(_unescaped_key_bytes(data)) is not None
+
+
+def _text_may_declare_mcp(text: str) -> bool:
+    """``_may_declare_mcp`` of decoded text: its bytes lower-cased, without NUL characters."""
+    return _may_declare_mcp(text.replace("\x00", "").encode("utf-8", "replace").lower())
+
+
+def _escaped_key(key: str) -> str:
+    """A pattern for ``key`` with any of its characters written as a JSON or TOML ``\\u`` escape."""
+    parts = []
+    for character in key:
+        digits = "".join(f"[{d.lower()}{d.upper()}]" if d.isalpha() else d for d in f"{ord(character):02x}")
+        parts.append(f"(?:{re.escape(character)}|\\\\(?:u00|U000000){digits})")
+    return "".join(parts)
+
+
+_TABLE_KEYS = f"(?:{_escaped_key('mcpServers')}|{_escaped_key('mcp_servers')})"
+# A key, not text: an unescaped double quote opens it (inside a JSON string every
+# quote is escaped) and a colon follows its closing quote.
+_JSON_TABLE_KEY = re.compile(rf'(?<!\\)"{_TABLE_KEYS}"\s*:')
+_JSON_MCP_KEY = re.compile(rf'(?<!\\)"{_escaped_key("mcp")}"\s*:')
+_JSON_SERVERS_KEY = re.compile(rf'(?<!\\)"{_escaped_key("servers")}"\s*:')
+# A TOML key at the start of a line or after an inline table's brace or comma: a
+# table header (``[mcp_servers.e]``, ``[tool.mcp_servers]``), a dotted key
+# (``mcp_servers.e.command =``) or an inline table (``mcp_servers = {``), bare or quoted.
+_TOML_TABLE_KEY = re.compile(
+    # A dotted prefix starts with a key character, so it cannot also take the
+    # blanks before it: one way to read each line, linear in its length.
+    r"(?:^|[{,])[ \t]*(?:\[\[?[ \t]*)?(?:[^\n=#\[\]{},\s][^\n=#\[\]{},]*\.[ \t]*)?"
+    rf"[\"']?{_TABLE_KEYS}[\"']?[ \t]*[.=\]]",
+    re.MULTILINE,
+)
+_YAML_SCAN_LOADER: Any = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+def _yaml_names_mcp_key(text: str) -> bool:
+    """Whether a YAML mapping key in ``text`` names a server table, however the key is quoted or escaped.
+
+    Read from the scanner's tokens, which undo quoting and escapes as the
+    loader does, so a key is told from text in a string value (a heredoc, an
+    OpenAPI description quoting a client's configuration). Text the scanner
+    cannot read is taken to name one.
+    """
+    keys: set[str] = set()
+    key = False
+    try:
+        for token in yaml.scan(text, Loader=_YAML_SCAN_LOADER):
+            if key and isinstance(token, yaml.ScalarToken):
+                if token.value in ("mcpServers", "mcp_servers"):
+                    return True
+                keys.add(token.value)
+            key = isinstance(token, yaml.KeyToken)
+    except yaml.YAMLError:
+        return True
+    return {"mcp", "servers"} <= keys
+
+
+def _names_mcp_key(rel: str, text: str) -> bool:
+    """Whether ``text`` spells a server table key as a key, not as text in a string value.
+
+    The check of a document whose parse the walk's bounds cut
+    (``mcp_server_holders``): a JSON key opened by an unescaped quote and
+    followed by a colon, a YAML mapping key (``_yaml_names_mcp_key``), a TOML
+    key, any of them with its characters written as escapes. A key past the
+    bounds keeps the file MCP configuration, so its unread table is recorded;
+    an issue export or an OpenAPI document that quotes a client's
+    configuration in a string is not.
+    """
+    if rel.endswith(_YAML_SUFFIXES):
+        return _yaml_names_mcp_key(text)
+    if rel.endswith(".toml"):
+        return _TOML_TABLE_KEY.search(text) is not None
+    return _JSON_TABLE_KEY.search(text) is not None or (
+        _JSON_MCP_KEY.search(text) is not None and _JSON_SERVERS_KEY.search(text) is not None
+    )
 
 
 def _guessed_mcp_name(rel: str, name: str) -> bool:
@@ -1216,6 +1378,34 @@ def _link_names_one_file(link: Path) -> bool:
     of files, inside the scan root or outside it.
     """
     return _link_target_kind(link) != "other"
+
+
+_GLOB_CHARACTERS = re.compile(r"[*?\[]")
+# Agent configuration globs as components: keyed by a literal first one, and the rest.
+_AgentGlobs = tuple[dict[str, list[tuple[str, ...]]], list[tuple[str, ...]]]
+# Entries an alias of a scanned directory is listed for before it is taken to
+# hold agent configuration (``_alias_holds_agent_configuration``).
+_MAX_ALIAS_ENTRIES = 1000
+
+
+def _on_glob_directory(window: list[str], components: tuple[str, ...]) -> bool:
+    """Whether a directory whose trailing components are ``window`` can hold a file the glob selects.
+
+    ``components`` is the glob split at ``/``. Each component of ``window`` must
+    match the glob's at the same depth within its directory part; a component
+    with a ``*``, which spans ``/`` as ``fnmatch`` reads it, holds any
+    directory whose name starts with its literal prefix.
+    """
+    for depth, part in enumerate(window):
+        if depth >= len(components):
+            return False
+        pattern = components[depth]
+        if "*" in pattern:
+            return part.startswith(_GLOB_CHARACTERS.split(pattern, maxsplit=1)[0])
+        if depth == len(components) - 1 or not fnmatch.fnmatchcase(part, pattern):
+            # A literal file name holds no directory; a component that differs leaves the glob.
+            return False
+    return True
 
 
 def _on_disk_project(root: Path, path: Path, proj_root: str) -> Path:
@@ -1804,7 +1994,10 @@ class FilesystemConnector(BaseConnector):
         self._blinding_link_notes: set[Path] = set()
         self._configuration_link_notes: set[Path] = set()
         self._alias_link_notes: set[Path] = set()
-        self._agent_directories: frozenset[str] | None = None
+        self._agent_directories: _AgentGlobs | None = None
+        # Whether the file under analysis is an MCP configuration by its content,
+        # once _detect_mcp has decided it; None before (_mcp_by_content).
+        self._content_mcp: bool | None = None
         # Supported lockfiles of the current root's walk -> whether their own
         # manifest sits beside them (see _lockfile_gap).
         self._lockfile_governed: dict[str, bool] = {}
@@ -2730,7 +2923,8 @@ class FilesystemConnector(BaseConnector):
             self._lockfile_gap(rel, "symbolic link is not followed")
             return True
         message = f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
-        agent = self._agent_configuration_link(rel, link)
+        alias = target is not None and self._alias_of_scanned_directory(rel, target, resolved_root)
+        agent = self._agent_configuration_link(rel, link, target if alias else None)
         if not agent and self._walk_declared(root, rel, walk):
             # One representative note per root, like the gap below, and it
             # leaves that gap's own representative slot for an undeclared link.
@@ -2756,7 +2950,6 @@ class FilesystemConnector(BaseConnector):
             else:
                 self.ctx.count_incomplete("unresolved-link")
             return True
-        alias = target is not None and self._alias_of_scanned_directory(rel, target, resolved_root)
         self._budgeted_link_gap(root, rel, link, message, agent=agent, alias=alias)
         return True
 
@@ -2778,8 +2971,9 @@ class FilesystemConnector(BaseConnector):
         ``.claude/settings.json``, ``CLAUDE.md`` pointing outside the tree),
         judged as an oversize copy of that file is, or a directory an agent
         reads its configuration from (``.claude``, ``.cursor``, ``.vscode``),
-        even an alias of a scanned one, whose files are read there without the
-        path that makes them configuration. A link named like a manifest or a
+        even an alias of a scanned one when a file it holds would be
+        configuration at the alias path, since there it is read without the
+        path that makes it configuration. A link named like a manifest or a
         build file (``Dockerfile``, ``package.json``, ``.env``) costs one
         entry, as any other does. One representative diagnostic per root and
         kind; the budget still counts every link.
@@ -2830,48 +3024,106 @@ class FilesystemConnector(BaseConnector):
             _is_test_path(f"{target_rel}/{_ANY_FILE_NAME}") and not _is_test_path(f"{rel}/{_ANY_FILE_NAME}")
         )
 
-    def _agent_configuration_link(self, rel: str, link: Path) -> bool:
+    def _agent_configuration_link(self, rel: str, link: Path, alias_of: Path | None = None) -> bool:
         """Whether a symbolic link at ``rel`` stands for agent configuration, which no budget may absorb.
 
         A link named like an agent configuration file (``_agent_configuration``),
-        or one to a directory, or dangling, whose path names a directory a
-        coding agent or MCP client reads its configuration from
-        (``_agent_directory_names``: ``tests/e2e/.claude``, ``docs/.vscode``,
-        ``.cursor/rules``). A link to a single file is judged by its own name:
+        or one to a directory, or dangling, whose path can hold such a file
+        (``_agent_directory_path``): it is, or lies on the way to or within, a
+        directory an agent configuration glob names (``tests/e2e/.claude``,
+        ``docs/.vscode``, ``.cursor/rules/team``, ``.github/instructions``),
+        not merely below a generic dot-directory (``.github/actions/setup``).
+        An alias of a directory the walk scans (``alias_of``, its target) is
+        then judged by what it holds: it stands for agent configuration when a
+        file below it would be configuration at the alias path
+        (``_alias_holds_agent_configuration``), so ``web/public/.well-known``
+        aliasing a directory without an MCP manifest or agent card is an
+        ordinary alias. A link to a single file is judged by its own name:
         ``.github/CODEOWNERS`` is not configuration because ``.github`` is.
         """
         if self._agent_configuration(rel, link.name):
             return True
-        kind = _link_target_kind(link)
-        if kind == "file":
+        if _link_target_kind(link) == "file" or not self._agent_directory_path(rel):
             return False
+        return alias_of is None or self._alias_holds_agent_configuration(rel, alias_of)
+
+    def _agent_directory_path(self, rel: str) -> bool:
+        """Whether a directory at ``rel`` can hold a file an agent configuration glob selects.
+
+        Some trailing run of its components (``.claude``, ``.github/instructions``)
+        lies along the directory part of a glob (``_agent_directory_globs``),
+        compared case-insensitively, or reaches a wildcard there
+        (``.cursor/rules/**`` holds ``.cursor/rules/team``). One generic
+        dot-directory on the path does not make it so: ``.github/actions/setup``
+        and ``.github/workflows`` hold no file ``.github/copilot-instructions.md``
+        or ``.github/agents/*.md`` names.
+        """
         parts = rel.lower().split("/")
-        names = self._agent_directory_names()
-        # A dangling link may stand for a directory of that name; one to a
-        # directory stands for every path below it.
-        return any(part in names for part in (parts[-1:] if kind == "missing" else parts))
+        by_first, wildcard_first = self._agent_directory_globs()
+        for start in range(len(parts)):
+            window = parts[start:]
+            for components in (*by_first.get(window[0], ()), *wildcard_first):
+                if _on_glob_directory(window, components):
+                    return True
+        return False
 
-    def _agent_directory_names(self) -> frozenset[str]:
-        """Lower-cased names of the directories agent configuration is read from, by the file signatures.
+    def _agent_directory_globs(self) -> _AgentGlobs:
+        """Agent configuration globs below a dot-directory, as lower-cased components.
 
-        Every literal dot-directory a coding-agent or MCP file-name signature
-        names (``.claude``, ``.cursor``, ``.roo``, ``.continue``, ``.vscode``,
-        ``.kiro``, ``.github``, …), custom packs included, plus the settings
-        directories the posture reader knows. Computed once per connector.
+        Every coding-agent and MCP file-name signature glob (custom packs
+        included) whose directory part names a dot-directory, without its
+        leading ``**/``; the settings directories the posture reader knows
+        (``.claude/**``, ``.codex/**``, ...), the agent definition directories,
+        the clients' own settings files and the agent cards a site serves
+        (``.well-known/agent.json``). Keyed by a literal first component, the
+        rest listed apart. Computed once per connector.
         """
         if self._agent_directories is None:
-            names = {".claude", ".codex", ".gemini", ".openclaw", ".clawdbot"}
+            globs = {
+                *(f"{name}/**" for name in (".claude", ".codex", ".gemini", ".openclaw", ".clawdbot")),
+                *(f"{directory}**" for directory in _AGENT_DEFINITION_DIRS),
+                *(f"{directory}/{name}" for directory, name in _CLIENT_SETTINGS_FILES),
+                *(f".well-known/{name}" for name in ("agent.json", "agent-card.json", "agent_card.json")),
+            }
             for signature, signal in self.index.signals_of_type("file"):
-                if signature.category != "coding-agent" and signature.id != "protocol.mcp":
+                if signature.category == "coding-agent" or signature.id == "protocol.mcp":
+                    globs.update(signal.globs)
+            by_first: dict[str, list[tuple[str, ...]]] = {}
+            wildcard_first: list[tuple[str, ...]] = []
+            for glob in sorted(globs):
+                components = tuple(glob.lower().removeprefix("**/").split("/"))
+                if len(components) < 2 or not any(part.startswith(".") for part in components[:-1]):
                     continue
-                for glob in signal.globs:
-                    names.update(
-                        part.lower()
-                        for part in glob.split("/")[:-1]
-                        if part.startswith(".") and not any(char in part for char in "*?[")
-                    )
-            self._agent_directories = frozenset(names)
+                if _GLOB_CHARACTERS.search(components[0]):
+                    wildcard_first.append(components)
+                else:
+                    by_first.setdefault(components[0], []).append(components)
+            self._agent_directories = (by_first, wildcard_first)
         return self._agent_directories
+
+    def _alias_holds_agent_configuration(self, rel: str, target: Path) -> bool:
+        """Whether a file below ``target`` would be agent configuration at the alias path ``rel``.
+
+        ``target`` is a directory the walk scans at its real path, where such a
+        file is read without the path that makes a client read it. Its tree is
+        listed, without following links, up to ``_MAX_ALIAS_ENTRIES`` entries;
+        a longer one, or one that cannot be listed, is taken to hold some, and
+        so is a directory link below it whose alias path could.
+        """
+        seen = 0
+        failed: list[OSError] = []
+        for directory, dirnames, filenames in os.walk(target, onerror=failed.append):
+            below = Path(directory).relative_to(target).as_posix()
+            prefix = rel if below == "." else f"{rel}/{below}"
+            links = [name for name in dirnames if os.path.islink(os.path.join(directory, name))]
+            seen += len(filenames) + len(links)
+            if seen > _MAX_ALIAS_ENTRIES or failed:
+                return True
+            if any(self._agent_configuration(f"{prefix}/{name}", name) for name in filenames):
+                return True
+            if any(self._agent_directory_path(f"{prefix}/{name}") for name in links):
+                return True
+        return bool(failed)
 
     def _reserved_budget(self, rel: str, path: Path, size: int, budget: float) -> float:
         """Return the share of ``budget`` a file must have left before the walk may start it.
@@ -2907,19 +3159,31 @@ class FilesystemConnector(BaseConnector):
         rel: str,
         analysis: str,
         reason: Callable[[Exception], str] = _exception_name,
+        *,
+        by_content: Callable[[], bool] | None = None,
     ) -> Iterator[None]:
         """Contain a failure while analyzing ``rel`` to one diagnostic so other findings survive.
 
         A ConnectorError always propagates: cancellation or an exhausted
         deadline ends the walk and must not become one "incomplete" error per
         file, project or finding.
+
+        ``by_content`` says, once a failure is recorded, whether the file is an
+        MCP configuration by its content (``_mcp_by_content``): its gap then
+        has full weight and the ``ci`` profile never declares it, as it never
+        declares agent configuration by its name (``_declared_omission``).
         """
         try:
             yield
         except ConnectorError:
             raise
         except Exception as exc:  # noqa: BLE001 - isolate hostile input and retain other findings
-            self._gap(rel, f"code.filesystem: {rel}: {analysis} incomplete ({reason(exc)})", error=True)
+            self._gap(
+                rel,
+                f"code.filesystem: {rel}: {analysis} incomplete ({reason(exc)})",
+                error=True,
+                full_weight=by_content is not None and by_content(),
+            )
 
     def scan_tree(self, root: Path) -> Iterator[Finding]:
         root = root.absolute()
@@ -3178,8 +3442,14 @@ class FilesystemConnector(BaseConnector):
                     self._unread_settings.extend((root, name) for name, _, root, _ in entries[index:])
                     break
             examined += 1
+            self._content_mcp = None
             with (
-                self._isolated(rel, "file analysis", _file_failure_reason),
+                self._isolated(
+                    rel,
+                    "file analysis",
+                    _file_failure_reason,
+                    by_content=partial(self._mcp_by_content, scan, rel, path),
+                ),
                 self.index.scan_budget(seconds=budget, chars=size, wall_seconds=wall_cap),
             ):
                 self._scan_file(scan, rel, path, proj_root)
@@ -3613,6 +3883,21 @@ class FilesystemConnector(BaseConnector):
             return self._looks_like_mcp_config(rel, name, text, document), document
         return _may_declare_mcp(text.encode("latin-1", "replace").lower()), None
 
+    def _mcp_by_content(self, scan: _ScanState, rel: str, path: Path) -> bool:
+        """Whether ``rel``, whose analysis failed, is an MCP configuration by its content.
+
+        As ``_detect_mcp`` decided it when it got that far; before that (a
+        failure in credential detection, or earlier), by the file's bytes, as
+        an oversize file's are read (``_file_may_declare_mcp``), for a file the
+        MCP parser decides by its content (``_guessed_mcp_name``).
+        """
+        if self._content_mcp is not None:
+            return self._content_mcp
+        if not _guessed_mcp_name(rel, path.name):
+            return False
+        on_disk = PurePosixPath(path.relative_to(scan.base).as_posix()) if scan.base else PurePosixPath(rel)
+        return self._file_may_declare_mcp(on_disk, scan.root_fd)
+
     def _unreadable_gap(self, rel: str, issue: str, *, by_content: bool = False) -> None:
         """Charge content of ``rel`` that the scanner could not read or decode to the coverage budget.
 
@@ -3712,10 +3997,14 @@ class FilesystemConnector(BaseConnector):
         Incidental content (generated source, a data export) costs one entry of
         the budget. Agent configuration does not (``_agent_configuration``): by
         its name, or, for a file the MCP parser decides by its content, when its
-        bytes may name a server table (``_oversize_declares_mcp``), so padding a
+        bytes may name a server table (``_file_may_declare_mcp``), so padding a
         ``deploy/tools.json`` that holds ``mcpServers`` hides it no better than
         padding a ``.mcp.json``. Nor does a file that exists to hold credentials
-        while they are scanned: a dotenv file, unread, hides one.
+        while they are scanned: a dotenv file, unread, hides one. A file whose
+        bytes may name a server table is charged a whole entry and never
+        declared by the ``ci`` profile, with credential detection off too
+        (``configuration``): ``docs/.continue/mcpServers/evil.yaml`` or a
+        padded ``tests/fixtures/servers.json``.
 
         While ``scan_secrets`` is on, none of the file's bytes was read for
         credentials, so its gap is never declared and never weighed down by its
@@ -3723,11 +4012,11 @@ class FilesystemConnector(BaseConnector):
         in ``src/`` does. Reading oversize content for credentials alone is not
         done; a key in it is the trade-off the budget accepts (SECURITY.md).
         """
-        selected = (
-            self._agent_configuration(rel, name)
-            or (self.scan_secrets and _dotenv_name(name))
-            or (_guessed_mcp_name(rel, name) and self._oversize_declares_mcp(on_disk, root_fd))
+        named = self._agent_configuration(rel, name)
+        by_content = (
+            not named and _guessed_mcp_name(rel, name) and self._file_may_declare_mcp(on_disk, root_fd)
         )
+        selected = named or by_content or (self.scan_secrets and _dotenv_name(name))
         if not selected and not self.scan_secrets and self._discounted_test_gap(rel):
             # A test fixture the walk left to this content check, which found no server table.
             self._skip_oversize_test_fixture(rel, None)
@@ -3739,14 +4028,18 @@ class FilesystemConnector(BaseConnector):
             + ("coverage incomplete" if selected else "coverage gap"),
             declared=f"code.filesystem: {rel}: skipped, {issue}",
             blinding=selected,
-            full_weight=self.scan_secrets,
+            full_weight=self.scan_secrets or by_content,
             reason="oversize-file",
             unread_credentials=True,
+            # Bytes that may name a server table make the file MCP configuration
+            # by its content, which the ci profile never declares, whatever
+            # credential detection read (_declared_omission).
+            configuration=by_content,
         )
 
     @staticmethod
-    def _oversize_declares_mcp(on_disk: PurePosixPath, root_fd: int) -> bool:
-        """Whether an oversize file's bytes may name an MCP server table key (``_may_declare_mcp``).
+    def _file_may_declare_mcp(on_disk: PurePosixPath, root_fd: int) -> bool:
+        """Whether a file's bytes may name an MCP server table key (``_may_declare_mcp``), unanalyzed.
 
         The file is opened as the reader opens it, confined below the scan root,
         and read in chunks up to ``_MCP_CHECK_BYTES``, lower-cased and without
@@ -3802,9 +4095,10 @@ class FilesystemConnector(BaseConnector):
         * a file in an agent definition directory (``.cursor/rules/``) or that
           a coding-agent or MCP file-name signature selects, its
           directory-wide globs included (``.continue/mcpServers/*.yaml``,
-          ``.roo/rules/*.md``, ``.kiro/steering/*``), when the file is text
-          the scanner reads or a signature names it: an image kept beside the
-          rules is not;
+          ``.roo/rules/*.md``, ``.kiro/steering/*``), whatever its suffix
+          (``.cursor/rules/deploy.rule``, ``.clinerules/01.rules``,
+          ``.windsurf/rules/x.rst``): only a binary asset kept beside the
+          rules (``_BINARY_ASSET_SUFFIXES``: an image, a font, an archive) is not;
         * a file whose content a caller found to declare MCP servers
           (``by_content``).
 
@@ -3830,10 +4124,11 @@ class FilesystemConnector(BaseConnector):
         ):
             return True
         matches = self.index.match_file(rel) if file_matches is None else file_matches
-        selected = [m for m in matches if _agent_file_signal(m)]
-        if not selected and not any(directory in lower for directory in _AGENT_DEFINITION_DIRS):
+        if not any(_agent_file_signal(m) for m in matches) and not any(
+            directory in lower for directory in _AGENT_DEFINITION_DIRS
+        ):
             return False
-        return _analyzed_by_name(name) or self._named_by_signature(rel, selected)
+        return PurePosixPath(name).suffix.lower() not in _BINARY_ASSET_SUFFIXES
 
     def _named_by_signature(self, rel: str, file_matches: list[Match]) -> bool:
         """Whether a file-name signature selects ``rel`` by its name, not only by its directory.
@@ -4128,7 +4423,11 @@ class FilesystemConnector(BaseConnector):
         over-budget content pass cannot hide a real key. Notebook outputs and
         markdown cells are scanned from the raw document.
         """
-        with self._isolated(file.rel, "credential detection"):
+        with self._isolated(
+            file.rel,
+            "credential detection",
+            by_content=partial(self._mcp_by_content, scan, file.rel, file.path),
+        ):
             seen_secrets: set[tuple[str, str, int | None]] = set()
             self._detect_secrets_in(scan, file, file.text, seen_secrets)
             if file.raw_notebook is not None and file.raw_notebook != file.text:
@@ -4231,6 +4530,9 @@ class FilesystemConnector(BaseConnector):
         file.is_mcp = self._looks_like_mcp_config(file.rel, file.name, file.text, document) or (
             file.name.lower() == "server.json" and '"mcpServers"' in file.text
         )
+        # Decided before the server parser runs, so a limit it reaches is the gap of
+        # an MCP configuration (_isolated).
+        self._content_mcp = file.is_mcp
         if file.is_mcp:
             mcp_errors: list[str] = []
             file.mcp_servers = _parse_mcp_servers(file.rel, file.text, mcp_errors, document)
@@ -5124,7 +5426,10 @@ class FilesystemConnector(BaseConnector):
         project_findings: dict[str, Finding] = {}
         yield from self._emit_projects(scan, project_findings)
         for rel, servers in scan.mcp_files:
-            with self._isolated(rel, "MCP analysis"), self.index.scan_budget(seconds=self.scan_timeout):
+            with (
+                self._isolated(rel, "MCP analysis", by_content=lambda: True),
+                self.index.scan_budget(seconds=self.scan_timeout),
+            ):
                 yield self._mcp_finding(label, root, rel, servers)
         yield from self._emit_manifests(scan, project_findings)
         yield from project_findings.values()
@@ -5347,30 +5652,7 @@ class FilesystemConnector(BaseConnector):
         if lower in _DEDICATED_MCP_CONFIG_NAMES:
             return True
         if lower in MCP_CONFIG_NAMES or rel.endswith(_MCP_STRUCTURE_SUFFIXES):
-            # Workflows keep the text search: their servers are JSON strings in step
-            # inputs, which _embedded_workflow_mcp reads.
-            workflow = _WORKFLOW_FILE.search(rel) is not None
-            # Decide from the parsed structure when it is held (JSON, TOML, and the YAML
-            # every structured file is parsed into once): leading padding before the keys
-            # then cannot hide a server table. A JSON object must be decided structurally;
-            # the text fallback below never sees past its truncation, so a string search of
-            # a prefix could miss the keys. An array declares servers only in a mapping it
-            # holds (see _document_declares_mcp), never in a transcript's "mcp_servers"
-            # status list.
-            if document is not None and not workflow:
-                declared = _document_declares_mcp(document)
-                if declared is not None:
-                    return declared
-            if not _mentions_mcp_keys(text):
-                return False
-            if rel.endswith(_YAML_SUFFIXES) and not workflow:
-                # No parse is held: the text search also finds the keys inside string
-                # values (a heredoc, a template), so the structure, parsed only now that the
-                # text names a key, decides; a file it cannot read goes to the MCP parser.
-                declared = _yaml_declares_mcp(text)
-                if declared is not None:
-                    return declared
-            return True
+            return _content_declares_mcp(rel, text, document)
         return False
 
     # ----------------------------------------------------------------- emits
