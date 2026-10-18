@@ -1500,12 +1500,19 @@ def _credential_joins(line: str, end: int) -> list[_Join]:
 
 
 def _password_name(name: str) -> bool:
-    """Whether a credential's name names a password or a secret ('dbPassword', 'DB_PASS', 'clientsecret')."""
-    words = _CALLEE_WORD.findall(name.rsplit(".", 1)[-1])
+    """Whether a credential's name names a password or a secret ('dbPassword', 'DB_PASS', 'clientsecret').
+
+    The name is read as a whole too, as the detector reads it: 'dbPassWord' splits into the
+    words 'db', 'Pass' and 'Word', but its letters end in 'password', and the detector reports
+    its fallback literal as the password.
+    """
+    segment = name.rsplit(".", 1)[-1]
+    words = _CALLEE_WORD.findall(segment)
     if not words:
         return False
     last = words[-1].lower()
-    return last in _PASSWORD_WORDS or last.endswith(_PASSWORD_ENDS)
+    joined = segment.replace("_", "").replace("-", "").lower()
+    return last in _PASSWORD_WORDS or last.endswith(_PASSWORD_ENDS) or joined.endswith(_PASSWORD_ENDS)
 
 
 def _inside(starts: list[int], literals: list[tuple[int, int]], position: int) -> bool:

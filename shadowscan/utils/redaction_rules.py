@@ -291,6 +291,9 @@ _PLACEHOLDER_FILL = re.compile(r"(?i)x{4,}|\*{4,}|\.{3,}")
 # Random keys change character class (digit, lower, upper) often inside one
 # long alphanumeric run; names, words and model identifiers rarely do.
 _OPAQUE_RUN = re.compile(r"[A-Za-z0-9]{8,}")
+# A UUID: Pinecone and Heroku API keys, among others, have its shape. Its hyphens cut it into
+# runs too short to alternate letters and digits as an opaque key's run does.
+_UUID = re.compile(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}")
 # A lowercase word: prose or an argument name rather than a value.
 _CLI_WORD = re.compile(r"[a-z][a-z_-]*")
 
@@ -435,7 +438,7 @@ def _credential_literal(value: str, *, positional: bool) -> bool:
         return False
     if _ENVIRONMENT_NAME.fullmatch(value) or _FILE_PATH.fullmatch(value) or _placeholder(value):
         return False
-    return positional or _opaque(value)
+    return positional or _opaque(value) or _UUID.fullmatch(value) is not None
 
 
 def _interpolated(prefix: str, quote: str, value: str) -> bool:

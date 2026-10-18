@@ -611,6 +611,28 @@ def _instruction_word(word: str) -> bool:
     return not _word_stems(word).isdisjoint(_INSTRUCTION_WORDS)
 
 
+# Instruction verbs that a sentence a person picks as a password is made of as often as
+# an instruction ('NowIsTheTimeToCome', 'ComeWithMeNowPlease'). In an env or credential
+# file they ask something only beside a negation or modal ('must-come-from-vault',
+# 'never-use-in-prod'), a word of the label vocabulary ('use-your-own') or of the
+# variable's name.
+_WEAK_INSTRUCTION_WORDS = frozenset({"come", "set", "use"})
+_WEAK_INSTRUCTION_QUALIFIERS = _QUALIFIER_WORDS - {"please"}
+
+
+def _env_instruction(words: list[str], name: set[str]) -> bool:
+    """Whether an env or credential file's password ``words`` ask something (``_WEAK_INSTRUCTION_WORDS``)."""
+    weak = False
+    for word in words:
+        stems = _word_stems(word)
+        if not stems.isdisjoint(_INSTRUCTION_WORDS - _WEAK_INSTRUCTION_WORDS):
+            return True
+        weak = weak or not stems.isdisjoint(_WEAK_INSTRUCTION_WORDS)
+    return weak and any(
+        word in _WEAK_INSTRUCTION_QUALIFIERS or word in name or _label_word(word, env=True) for word in words
+    )
+
+
 def _instruction_vocabulary(word: str) -> bool:
     """Whether a lower-case word is a function, instruction or instruction-context word."""
     return word in _FUNCTION_WORDS or word in _INSTRUCTION_CONTEXT_WORDS or _instruction_word(word)
@@ -1156,6 +1178,8 @@ def _label_slug(value: str, candidate: str, *, names: bool = True) -> bool:
     # Without ``names`` the slug is a password in an env or credential file.
     strengths = [1 if word in name else _label_strength(word, env=not names) for word in words]
     function, instruction, closed = _sentence_words(words, strengths)
+    if not names:
+        instruction = instruction and _env_instruction(words, name)
     sentence = any(word in _FUNCTION_WORDS and word not in _QUALIFIER_WORDS for word in words)
     if not instruction and ((function and not closed) or (sentence and not names)):
         # Function words that ask nothing: a passphrase whatever label words
@@ -1334,9 +1358,7 @@ def _label_phrase(value: str, candidate: str) -> bool:
         for word in words
     ):
         return True
-    if not any(word in _FUNCTION_WORDS for word in words) or not any(
-        _instruction_word(word) for word in words
-    ):
+    if not any(word in _FUNCTION_WORDS for word in words) or not _env_instruction(words, name):
         return False
     return all(
         word in name or (word.isalpha() and (_label_word(word, env=True) or _instruction_vocabulary(word)))
