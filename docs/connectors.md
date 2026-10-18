@@ -136,10 +136,13 @@ is started without the credentials the operator exported for the built-in
 connectors, and removes them from its own environment again before the plugin
 is imported: every variable whose name ends in `TOKEN`, `ACCESSTOKEN`,
 `AUTHTOKEN`, `SECRET`, `KEY`, `APIKEY`, `PASSWORD`, `PASSWD`, `PASSPHRASE`,
-`CREDENTIALS`, `CREDENTIAL`, `PAT`, `JWT`, `CONNECTION_STRING`, `WEBHOOK` or
-`WEBHOOK_URL` (after an underscore, or as the whole name, and ignoring a
-version after it, as in `CI_JOB_JWT_V2`; npm's per-registry
-`npm_config_//<registry>/:_authToken` ends in `_AUTHTOKEN`), every variable
+`CREDENTIALS`, `CREDENTIAL`, `PAT`, `JWT`, `CONNECTION_STRING`, `WEBHOOK`,
+`WEBHOOK_URL`, `WEBHOOK_URI`, `WEBHOOK_URLS` or `WEBHOOKURL` (after an
+underscore, or as the whole name, and ignoring a version after it, as in
+`CI_JOB_JWT_V2`; npm's per-registry `npm_config_//<registry>/:_authToken` ends
+in `_AUTHTOKEN`), npm's per-registry `npm_config_//<registry>/:_auth`, every
+variable that names a .NET connection string anywhere in its configuration
+path (`App_ConnectionStrings__Db`, `Azure__Storage__ConnectionString`), every variable
 whose name starts with `OP_SESSION_`, Terraform's `TF_TOKEN_` (`TF_TOKEN_<host>`),
 npm's `NPM_CONFIG__AUTH` (`npm_config__authToken`, `npm_config__auth`),
 .NET's `ConnectionStrings__` or one of Azure App Service's connection-string
@@ -158,9 +161,10 @@ that carry a credential, the file holding one or a session
 `DOCKER_AUTH_CONFIG`, `GOOGLE_APPLICATION_CREDENTIALS`,
 `GOOGLE_GHA_CREDS_PATH`, `IDENTITY_HEADER`, `OCI_CLI_KEY_FILE`,
 `OCI_CLI_KEY_CONTENT`, `OCI_CLI_SECURITY_TOKEN_FILE`, `DATABASE_URL`,
-`DATABASE_DSN`), and every `*_URL`, `*_URI` or `*_DSN` variable whose value
-carries a user or password (an `@` after `://`, as in `redis://:password@host`
-or `https://token@host`); configuration selectors such as `AWS_PROFILE`,
+`DATABASE_DSN`, `YARN_NPM_AUTH_IDENT`), and every `*_URL`, `*_URI` or `*_DSN`
+variable whose value carries a user or password (an `@` after `://`, as in
+`redis://:password@host` or `https://token@host`) or is a Slack, Discord,
+Microsoft Teams or Google Chat webhook, whose path is the secret; configuration selectors such as `AWS_PROFILE`,
 `KUBECONFIG`, `DOCKER_CONFIG` and `BUNDLE_GEMFILE`, endpoints such as
 `IDENTITY_ENDPOINT` and `NPM_CONFIG_REGISTRY`, `PATH`, `HOME`, `SHELL`, locale,
 temporary-directory, proxy and CA settings stay. A

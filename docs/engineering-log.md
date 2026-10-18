@@ -13,6 +13,29 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Plugin workers also start without npm's per-registry `_auth`, more webhook names and values, and .NET connection strings under any configuration path (October 18)
+
+The plugin-environment review found close variants of the credential families
+the withheld list targets, which a process-mode worker still inherited:
+
+- npm's per-registry basic credential `npm_config_//<registry>/:_auth` (a
+  base64 `user:password`), although the top-level `npm_config__auth` and the
+  per-registry `:_authToken` were withheld, and Yarn's `YARN_NPM_AUTH_IDENT`.
+- `*_WEBHOOK_URI`, `*_WEBHOOK_URLS` and `*_WEBHOOKURL`, beside the withheld
+  `*_WEBHOOK` and `*_WEBHOOK_URL`. A webhook URL carries no user
+  information, so the URL-value rule did not take these either. A `*_URL`,
+  `*_URI` or `*_DSN` variable holding a Slack, Discord, Microsoft Teams or
+  Google Chat webhook (`SLACK_HOOK_URL=https://hooks.slack.com/services/...`)
+  is now withheld too.
+- .NET connection strings outside a name starting with `ConnectionStrings__`:
+  after an `AddEnvironmentVariables` prefix (`App_ConnectionStrings__Db`) or
+  as a section's `ConnectionString` (`Azure__Storage__ConnectionString`).
+
+Neighbours stay: `npm_config_//<registry>/:always-auth`,
+`MY_CONNECTION_STRINGS_DIR`, `CONNECTIONSTRINGSDIR`, and a webhook URL under a
+name that is not a URL name. `options.plugin_env` keeps any of them for a
+plugin that needs it. The list in `docs/connectors.md` is updated.
+
 ### A process-mode plugin's credential identities are labelled `keyed` under the operator's identity key again (October 18)
 
 - Since the plugin-environment change on this branch, a process-mode worker

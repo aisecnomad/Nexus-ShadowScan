@@ -992,6 +992,22 @@ def test_plugin_env_option_is_validated(value):
         ("SLACK_WEBHOOK_URL_V2", True),
         ("DISCORD_WEBHOOK", True),
         ("WEBHOOK_URL", True),
+        # Variants the second list missed (plugin environment review).
+        ("npm_config_//registry.npmjs.org/:_auth", True),  # npm's per-registry user:password
+        ("NPM_CONFIG_//r/:_auth", True),
+        ("YARN_NPM_AUTH_IDENT", True),
+        ("TEAMS_WEBHOOK_URI", True),
+        ("SLACK_WEBHOOKURL", True),
+        ("DISCORD_WEBHOOK_URLS", True),
+        ("MYAPP_ConnectionStrings__Db", True),  # an AddEnvironmentVariables prefix
+        ("App_ConnectionStrings__Db", True),
+        ("Azure__Storage__ConnectionString", True),
+        ("Logging__Db__ConnectionString", True),
+        ("ConnectionStrings", True),
+        ("npm_config_//registry.npmjs.org/:always-auth", False),
+        ("NPM_CONFIG_//r/:_authority_dir", False),
+        ("YARN_NPM_AUTH_IDENT_DIR", False),
+        ("CONNECTIONSTRINGSDIR", False),
         ("PATH", False),
         ("HOME", False),
         ("LANG", False),
@@ -1061,6 +1077,13 @@ def test_credential_environment_names(name, withheld):
         ("SSH_REMOTE_URL", "git@github.com:org/repo.git", False),  # not scheme://, a user name only
         ("HTTPS_PROXY", "http://synthetic@proxy.example:3128", False),  # proxy settings stay
         ("CONTACT", "https://synthetic@host.example", False),  # not a URL name
+        # A chat webhook carries its secret in the path, with no user information.
+        ("SLACK_HOOK_URL", "https://hooks.slack.com/services/T0/B0/synthetic", True),
+        ("NOTIFY_URI", "https://discord.com/api/webhooks/0/synthetic", True),
+        ("TEAMS_URL", "https://example.webhook.office.com/webhookb2/synthetic", True),
+        ("CHAT_URL", "https://chat.googleapis.com/v1/spaces/X/messages?key=synthetic", True),
+        ("DOCS_URL", "https://api.slack.com/messaging/webhooks", False),
+        ("NOTIFY_CHANNEL", "https://hooks.slack.com/services/T0/B0/synthetic", False),  # not a URL name
     ],
 )
 def test_credential_environment_url_values(name, value, withheld):
