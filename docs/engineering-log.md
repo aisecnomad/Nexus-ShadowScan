@@ -13,6 +13,52 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Credential review fixes, round 6: sentence passwords with a weak verb, camelCase password names and UUID defaults withheld, catalog and ConfigParser defaults, CR-only text in linear time (October 18)
+
+An adversarial review of the round-5 credential rules reproduced these, and an
+independent verifier confirmed each against main 8c72467. Both reviewers were
+coding agents; this is not independent human review.
+
+- **Regression, fixed.** Round 5 let `come`, `use` and `set` make an
+  instruction in an env or credential file, so a sentence a person picked as
+  a password (`NowIsTheTimeToCome`, `ComeWithMeNowPlease`) was read as a
+  label and dropped. Main reported those passwords. These weak verbs now make
+  an instruction only beside a negation or modal (`must-come-from-vault`), a
+  label-vocabulary word (`use-your-own`) or a word of the variable's name.
+- **Regression, fixed.** Round 5 reported a password's default of any shape
+  after any `.get()`, so a message catalog's defaults (`"Forgot password?"`)
+  became credentials, and eight in one i18n module filled the quota: exit 3
+  on an ordinary module, where main completed. A ConfigParser read reported
+  its option name `"password"` as the password. The any-shape rule now holds
+  after an environment read only (`process.env`, `os.environ`, `getenv`,
+  `ENV.fetch`, `env()`, `GetEnvironmentVariable`); after any other read a
+  default is judged as a key is. Main's false positives on both shapes are
+  gone too.
+- **Regression, fixed.** The netrc pass found a line's start with
+  `rfind("\n", 0, position)`, which on CR-only text scans back to the start
+  every time: 400,000 such lines took 55 s against main's 4.7 s. Line starts
+  are now found in a doubling backward window, linear in the text.
+- **Leak shared with main, fixed.** Under a camelCase name such as
+  `dbPassWord`, the detector reported the fallback literal of
+  `process.env.DB_PASSWORD?.trim() || "<pw>"` but the redactor read the
+  name's last word, `Word`, and left the password in the finding's own
+  snippet in every format. The redactor now also reads the name as a whole.
+- **Leak shared with main, fixed (minor).** A UUID-shaped key given as an API
+  key's settings default was reported but shown in its snippet: its hyphens
+  cut it into runs the opaque-key test does not take. A UUID after a
+  credential's name is now withheld.
+- **Not changed.** A key pasted as an environment variable's name that does
+  not look opaque is reported without counting toward the quota, up to a
+  bound, and one past the bound is left out without disclosure, as on main.
+  Disclosing it would make seven readable long names
+  (`SVC1OPENAIAPIKEYPROD`) exit 3 again, which an earlier round fixed. A
+  Python `os.getenv("X_PASSWORD", "<default>")` default is not reported on
+  main or this branch; that is left for a later round.
+
+`tests/unit/test_credential_review_followups.py` and a CR-only case in
+`tests/unit/test_redaction_performance.py` cover the fixes; each regression
+case fails before its change.
+
 ### go.mod require blocks read in linear time; no dependency named "(" (October 18)
 
 - `code.filesystem` found go.mod `require ( ... )` blocks with the lazy
