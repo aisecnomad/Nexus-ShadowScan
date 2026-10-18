@@ -57,7 +57,7 @@ def arm_job_deadline(
         try:
             sys.stderr.write(message + "\n")
             sys.stderr.flush()
-        except Exception:  # noqa: BLE001 - output must not prevent termination
+        except Exception:  # noqa: BLE001, S110 - output, even a blocked stderr, must not prevent termination
             pass
 
     def _watch() -> None:

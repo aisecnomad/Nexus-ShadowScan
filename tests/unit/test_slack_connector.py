@@ -361,3 +361,32 @@ def test_record_of_another_workspace_is_skipped_not_scan_wide(run_connector, tmp
     assert ctx.stats.warnings == [
         "saas.slack: skipped 2 records that name another or an invalid workspace; coverage incomplete"
     ]
+
+
+@pytest.mark.parametrize("team_id", [None, "T1"])
+def test_slack_names_the_workspace_on_calls_an_org_token_requires_it_for(index, monkeypatch, team_id):
+    # Slack documents team_id as required with an org-level token (the Enterprise
+    # token the admin.apps.* lists need) for users.list and team.integrationLogs,
+    # and a workspace-level token ignores it.
+    config = {"token": "test", **({"team_id": team_id} if team_id else {})}
+    connector = SlackConnector(ConnectorContext(index=index, config=config))
+    sent: dict[str, dict] = {}
+
+    def get_json(path, params=None):
+        sent[path] = dict(params or {})
+        return _slack_response(path, params)
+
+    monkeypatch.setattr(
+        "shadowscan.connectors.saas.slack.HttpClient", Mock(return_value=Mock(get_json=get_json))
+    )
+    connector.run()
+    scoped = [
+        "/users.list",
+        "/admin.apps.approved.list",
+        "/admin.apps.restricted.list",
+        "/admin.apps.requests.list",
+        "/team.integrationLogs",
+    ]
+    for path in scoped:
+        assert sent[path].get("team_id") == team_id, path
+    assert "team_id" not in sent["/team.info"]

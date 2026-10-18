@@ -7,9 +7,9 @@ this page is the practical companion.
 
 ## Environment
 
-ShadowScan supports CPython 3.11, 3.12 and 3.13 on Linux and macOS. On Windows
-use WSL: the confined file reader needs `O_NOFOLLOW` and `dir_fd`, and the
-Makefile needs `/bin/bash`, `mktemp` under `$TMPDIR` (default `/tmp`) and the
+ShadowScan supports CPython 3.11, 3.12, 3.13 and 3.14 on Linux and macOS. On
+Windows use WSL: the confined file reader needs `O_NOFOLLOW` and `dir_fd`, and
+the Makefile needs `/bin/bash`, `mktemp` under `$TMPDIR` (default `/tmp`) and the
 POSIX `venv/bin` layout.
 
 ```bash
@@ -155,11 +155,13 @@ make typecheck       # mypy on the scanner and tools
 make complexity      # function and module size against tools/complexity_baseline.json; nothing may grow
 make signatures      # signature schema and regex validation
 make mappings        # threat and control mapping catalogs
+make ocsf-schema     # the vendored OCSF requirements match the reporter's version, as CI
+make complexity      # no function new above complexity 15 or above its baseline allowance, as CI
 make secrets         # fail on hardcoded credentials in tracked files, as CI
 make self-scan       # scan this checkout with ShadowScan itself; an incomplete scan (exit 3) fails, as CI
 make audit           # pip-audit on the environment and every hash lock, as CI (needs network)
 make evaluate        # every bundled detection corpus; reports go to a temporary directory
-make check           # exactly: lint format-check typecheck complexity signatures mappings secrets self-scan audit test coverage-gate evaluate
+make check           # exactly: lint format-check typecheck signatures mappings ocsf-schema complexity secrets self-scan audit test coverage-gate evaluate
 ```
 
 `make complexity` keeps the largest functions and modules from growing back; see
@@ -170,8 +172,8 @@ two repository test modules on their own, which `make test` also runs; use it
 after touching `.github/` or documentation. `make docs` builds the site with
 `mkdocs build --strict`, as CI's docs job does, into `site/`, which git ignores
 and `make self-scan` excludes. `make check-fast` runs lint,
-format, types, the complexity gate, both validators, secrets and policy in a minute or two,
-without the test suite, audit or evaluation.
+format, types, both validators, the OCSF and complexity checks, secrets and policy in a
+minute or two, without the test suite, audit or evaluation.
 
 `make fuzz` is not a prerequisite of `make check` either: it fuzzes the redaction and
 source-lexing code with Atheris for `FUZZ_SECONDS` (default 60) per target, needs the
@@ -242,9 +244,9 @@ leave the baseline under its old name; it does not carry its room along.
 ## What CI runs
 
 The [CI workflow](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/.github/workflows/ci.yml)
-runs the same commands on Linux for Python 3.11, 3.12 and 3.13 and on macOS for
-3.11 and 3.13, installs the hash-locked dependency sets, audits every lock and
-builds and validates the wheel outside the checkout. A separate
+runs the same commands on Linux for Python 3.11, 3.12, 3.13 and 3.14 and on
+macOS for 3.11 and 3.14, installs the hash-locked dependency sets, audits every
+lock and builds and validates the wheel outside the checkout. A separate
 `container-security` job builds the worker image once, smoke-tests it, records
 a CycloneDX inventory and blocks HIGH or CRITICAL vulnerabilities in that exact
 image. The Linux Python 3.11 job runs the suite

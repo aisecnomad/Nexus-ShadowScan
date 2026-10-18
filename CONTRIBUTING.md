@@ -37,7 +37,7 @@ as your first contribution.
 
 ## Getting started
 
-Use Python 3.11, 3.12, or 3.13 and Git on a POSIX system. Linux and macOS are
+Use Python 3.11, 3.12, 3.13, or 3.14 and Git on a POSIX system. Linux and macOS are
 CI-validated development and test targets; Linux x86_64 is the only validated
 deployment target for the production runtime lock. On Windows use WSL,
 because the scanner's confined file reader needs `O_NOFOLLOW`/`dir_fd` and the
@@ -86,14 +86,14 @@ Dependabot and the tests read them from there:
 | `Makefile` | Every development command; `make help` lists them by section |
 | `requirements.lock` | Hash-locked runtime and cloud SDK set for deployments, CI and the image |
 | `requirements-build.lock` | Hash-locked build backend for `--no-build-isolation` builds |
-| `requirements-ci.lock` | Hash-locked development and test toolchain (CPython 3.11 to 3.13) |
+| `requirements-ci.lock` | Hash-locked development and test toolchain (CPython 3.11 to 3.14) |
 | `requirements-ci-constraints.txt` | Reviewed inputs that `requirements-ci.lock` is generated from; never installed directly |
 | `requirements-docs.lock` | Hash-locked MkDocs toolchain for `make docs` and the Docs workflow |
 | `requirements-fuzz.lock` | Hash-locked Atheris fuzzing engine for `make fuzz` and the Fuzz workflow (Linux x86_64) |
 | `mkdocs.yml` | Documentation site configuration and navigation |
 | `Dockerfile`, `.dockerignore` | The worker image and its build-context allow-list |
 | `agent-card.yaml` | Sample Agent Capability Card used by the offline demo, the quick start and the image |
-| `CHANGELOG.md`, `RELEASE_NOTES.md` | Summary of every change by version and theme (the earlier per-change engineering log is kept in [`archive/changelog/`](archive/changelog/README.md)), and the operator summary of what changes on upgrade |
+| `CHANGELOG.md`, `docs/engineering-log.md`, `RELEASE_NOTES.md` | Summary of every change by version and theme, the detailed engineering log (the pre-October-2026 log is kept word for word in [`archive/changelog/`](archive/changelog/README.md)), and the operator summary of what changes on upgrade |
 | `AGENTS.md` | Rules for coding agents working in this repository |
 | `CITATION.cff`, `NOTICE`, `LICENSE`, `CODEOWNERS` | Citation metadata, attribution, licence and review ownership |
 
@@ -120,7 +120,7 @@ changes only that module.
 Existing Make targets provide the next steps:
 
 ```bash
-make check-fast      # lint, format, types, validators, secrets and policy; no tests
+make check-fast      # lint, format, types, validators, OCSF, complexity, secrets and policy; no tests
 make test-fast       # full test suite without coverage, stop at first failure
 make test            # full suite with line and branch coverage and the overall floor
 make test-parallel   # the same coverage run on pytest-xdist workers, as CI runs it
@@ -172,6 +172,8 @@ exact supported Python matrix and dependency pins.
 | Connectors | `make coverage-gate` (after tests) | ≥ 75% for every module under `shadowscan/connectors/`, statements and branches |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
 | Mappings | `python -m shadowscan.mappings.validate` | All valid |
+| OCSF schema | `python -m tools.ocsf_schema --check` | The vendored OCSF requirements match the version the reporter emits |
+| Complexity | `python -m tools.complexity_gate` | No function new above cyclomatic complexity 15, none above its allowance in `tools/complexity_baseline.json` |
 | Secrets | `make secrets` | Every tracked file is scanned; only exact reviewed synthetic-value approvals are accepted |
 | Audit | `make audit` | No known vulnerabilities in the environment or any hash lock |
 | Repository policy | `make policy` | Action pins, permissions, links, anchors, Makefile and hook parity with CI |
@@ -184,17 +186,19 @@ suite untraced on the others; `pyproject.toml` enables branch coverage.
 Ruff enforces a 110-column line length outside `tests/`,
 `tools/benchmark/*_cases.py` and `benchmarks/*/corpus.py`, flags loop
 variables captured by closures (B023), flags a broad `except` that does not
-re-raise (BLE), and rejects `noqa` directives that suppress nothing (RUF100).
-Suppress an intentional broad `except` with `# noqa: BLE001 - <reason>`; a
-repository test requires the reason. Mypy requires annotated definitions
+re-raise (BLE), and rejects `noqa` directives that suppress nothing (RUF100)
+or name no codes (PGH004). Suppress an intentional broad `except` with
+`# noqa: BLE001 - <reason>`; a repository test requires the reason. Mypy requires annotated definitions
 (`disallow_untyped_defs`) and reports unused `type: ignore` comments.
 `pyproject.toml` holds the complete rule sets.
 
 `make complexity` keeps the functions and modules that are already too large from growing, and
-stops a new one from joining them. When it fails because your change made a function more
-complex or a module longer, split it; do not raise the number. When it fails because you
-improved one, run `python -m tools.complexity_gate --update` and commit the lower baseline, so
-the room cannot be spent again. A rise that is unavoidable is recorded with
+stops a new one from joining them. Each entry is keyed by the file and the function's qualified
+name (`path::Class.method`, a nested function under the function that encloses it), so a method
+never inherits the allowance of another one with its name. When the gate fails because your
+change made a function more complex or a module longer, split it; do not raise the number. When
+it fails because you improved one, run `python -m tools.complexity_gate --update` and commit the
+lower baseline, so the room cannot be spent again. A rise that is unavoidable is recorded with
 `python -m tools.complexity_gate --rebaseline` and explained in the pull request.
 [Testing](docs/testing.md#function-and-module-size) has the details.
 
@@ -204,6 +208,8 @@ The same gates as individual commands:
 make install
 python -m shadowscan.signatures.validate
 python -m shadowscan.mappings.validate
+python -m tools.ocsf_schema --check
+python -m tools.complexity_gate
 make secrets
 ruff check shadowscan tests tools benchmarks
 ruff format --check shadowscan tests tools benchmarks
@@ -263,18 +269,22 @@ repository contains no secrets.
    changing the approved commit. The requirements below apply to the final commit.
 
 - Target `main`. Do not push reviewed security changes directly.
-- Keep findings fail-closed: a limit, malformed export, or denied API must mark
-  the scan incomplete (exit 3) rather than look empty.
+- Keep findings fail-closed: a malformed export, a denied API, an expired
+  deadline or any limit whose remainder the scanner cannot count must mark the
+  scan incomplete (exit 3) rather than look empty. A gap it *can* count --
+  one unreadable entry, one file over a size cap -- goes through
+  `ctx.coverage_gap()`, which charges it to the budget and reports it either
+  way; see `shadowscan/coverage.py` for which is which.
 - Do not log raw credentials, JWTs, or unsanitized connector configuration.
 - Pin GitHub Actions by full commit SHA. Do not leave `persist-credentials`
   enabled on checkouts that do not need to push.
-- Update `CHANGELOG.md` under Unreleased and `docs/production.md` when a change
-  affects rollout, finding identity, or credential policy. A changelog entry is
-  one short bullet (at most 1,000 characters, tested) under the matching theme
-  heading, newest first, flagged **(behaviour change)**, **(breaking)** or
-  **(rebaseline needed)** when an operator has to act. The reasoning, test
-  notes and rejected alternatives belong in the pull request or the page for
-  the feature.
+- Add a detailed entry under Unreleased in `docs/engineering-log.md` and update
+  `docs/production.md` when a change affects rollout, finding identity, or
+  credential policy, and give it one short bullet in `CHANGELOG.md` (at most
+  1,000 characters, tested) under the matching theme heading, newest first,
+  flagged **(behaviour change)**, **(breaking)** or **(rebaseline needed)**
+  when an operator has to act. The reasoning, test notes and rejected
+  alternatives belong in the engineering log entry or the page for the feature.
 - Include regression tests for bug fixes.
 - Use the PR template checklist; it covers the main gates. `make check` runs
   every local gate; CI also builds the documentation, audits each lock file and

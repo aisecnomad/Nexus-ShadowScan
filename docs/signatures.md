@@ -326,7 +326,10 @@ and tests, which call and test the products they detect.
   large inputs. `python -m shadowscan.signatures.validate` rejects secret
   patterns slower than that allowance on a pathological keyword-dense
   corpus. Fixed linear hostname
-  and environment tokenizers use the shared input deadline instead. Filesystem scans share a configurable
+  and environment tokenizers use the shared input deadline instead, and so
+  does the judge that reads the text after each secret match: matches are
+  read in batches of 64, judged between regex executions, and the
+  executions together keep one pattern's allowance. Filesystem scans share a configurable
   execution budget across the file's matching operations (2 seconds by default).
   Exceeding either limit raises an error and makes the scan incomplete; timeout
   is never treated as a clean non-match. A costly custom pattern should be
@@ -401,6 +404,49 @@ and tests, which call and test the products they detect.
   never match. Shorter values are not reported. Anthropic API (`sk-ant-api03-`), admin
   (`sk-ant-admin01-`) and Claude Code OAuth (`sk-ant-oat01-`) tokens are attributed to `provider.anthropic`;
   other `sk-ant-` shapes match nothing, because the fallback deliberately excludes the prefix.
+* The generic assigned credential (`heuristic.inline-credential`) reports literals only. Its value class
+  admits `.` and `_`, so `matcher.keep_secret_matches` drops a value that names a credential instead of
+  holding one: in source code an unquoted identifier or member chain (`self.api_key = api_key`,
+  `k = settings.OPENAI_API_KEY`); in any text an unquoted member chain that code follows (a call, a
+  subscript, `;`, `,`, `)` or `}`) or that starts at `process.env.`, `import.meta.env.`, `os.environ.`,
+  `self.` or `this.`. A quoted value is always a literal, a value that does not read as words is never a
+  name, and an unquoted value in configuration (`DB_PASSWORD=Summer.Vacation2024` in an env file) stays a
+  candidate. In an env or credential file (`match_secrets(env_file=True)`: `.env`, `.env.local`, `.netrc`,
+  not a template such as `.env.example`) the name-shape rules apply only to token names (`API_KEY`,
+  `ACCESS_TOKEN`, `CLIENT_SECRET`); a PASSWORD or CREDENTIAL value there
+  (`POSTGRES_PASSWORD=TrustNoOneEverAgain`, also with blanks around `=`) cannot name a variable, unless every
+  word of it is label vocabulary, a function word or a word of the name and every number is the name's
+  (`KeycloakAdminPassword`; `PostgresProd2024Secure` is a password). A reference whose variable name is a key
+  pasted in the name's place (`process.env.<KEY>`, `os.environ.<KEY>`; `redaction_rules.pasted_key_name`, the
+  test that withholds the read from evidence) reports that name. When operators follow such a reference instead of a value end (`;`, `,`, `)`, `}`, `]`, an
+  empty line before an operator), past any call, subscript, optional or non-null chain, generic call's type
+  arguments or TypeScript cast on it (`GetEnvironmentVariable("X") ??`, `process.env.X?.trim() ||`,
+  `configService.get<string>("X") ??`, `GetValue<string>("X") ??`, `as string ||`), through
+  parentheses around an operand (`|| ("<key>")`) and Python's triple quotes, and on the same or a later
+  line (after comment lines or a backslash continuation too, with empty or comment lines between an operator
+  and its operand, and with any blanks between tokens, a no-break or zero-width space as well), the match is
+  kept if a string literal that is a direct operand of `||`, `??`, `?:`, `or`, a ternary branch or `+` is
+  one token of the value class and looks like a key, not like words and numbers (`"anonymous-public-access"`,
+  `"/oauth2/v2.0/authorize"` and `"gpt-4o-mini-2024-07-18"` are a mode, a path and a model id): the pattern's value stops
+  at the first blank, so `apiKey = process.env.OPENAI_API_KEY || "<key>"` matches only the read and the
+  fallback is the credential (`Match.extra["credential"]`, which the placeholder test judges). A literal
+  passed to a call there (`?? getSecret("<path>")`, `?: error("X is not set")`) is not a fallback operand.
+  Three or more letter words joined by `-` or `_`, or by `.` as a password outside source code
+  (a dotted slug's words each lower case, Capitalized or upper case; in source code a dotted string of words
+  names a package, a key or a namespace, such as `net.openid.appauth.state`), are a label, not a high-entropy
+  key, when, without a plural `-s` or past `-ed`, one of them is credential, placeholder, development or filler
+  vocabulary that word lists leave out (`'request-scoped-credential'`, `'local-development-only'`,
+  `'lorem-ipsum-dolor-sit-amet'`), two are such vocabulary that is also a common word
+  (`'unsafe-dev-only-default'`), one common one comes with a function word (`'this-should-be-changed'`,
+  `'change-me-please'`), two are function words (`'do-not-commit-this'`, `'must-be-set-at-runtime'`), or
+  one is a word of three letters or more of the assigned name; a word of two letters of the name counts as a
+  common word (`PG_PASSWORD=pg-replica-sync-user` is a label). One common word alone, as in
+  `snout-passed-thump-bloom-gravel` or `db-fiber-thump-bloom-gravel`, labels nothing. A slug is a label as
+  well when it is CONSTANT_CASE (upper case joined
+  by `_`); other word slugs are generated passphrases (`snout-fiber-thump-bloom-gravel`,
+  `snout.fiber.thump.bloom.gravel` outside source code, `SNOUT-FIBER-THUMP-BLOOM-GRAVEL`) and are reported.
+  Matches are filtered before the five-per-signal cap, and a credential a signature already counted counts
+  once however often the text repeats it.
 * `name` patterns for products whose name is also a dictionary word or a first name (Otter, Devin, Jasper,
   Drift...) are context-guarded: the vendor form (`otter\.ai`) matches on its own; the bare word only when it is
   the whole display name (`^[^\S\r\n]*otter[^\S\r\n]*$`, an app called just "Otter") or with product context on

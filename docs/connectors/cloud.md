@@ -18,15 +18,27 @@ JSONL record dump (a workload export for Kubernetes and OpenShift) and no
 extra. They use read-only
 list/describe/get calls only.
 
+!!! warning "Offline cloud input is ShadowScan's own dump format"
+    For `cloud.aws`, `cloud.gcp`, `cloud.azure` and `cloud.oci`, offline
+    `input` replays the `_kind`-tagged records a live scan wrote with
+    `--dump-records` (or `options.dump_records`) — not a provider's native
+    export. A raw CloudTrail, Cloud Audit Logs or Azure Activity Log file
+    carries no `_kind`, so every record is reported as unsupported and the
+    scan is incomplete (exit 3) rather than quietly empty. To analyze an
+    account offline, run a live scan once with `--dump-records DIR` and
+    replay that directory. Kubernetes and OpenShift are the exception:
+    their input is a native workload export (`kubectl get ... -o json`).
+
 See the [shared connector entry guide](../connectors.md#connector-entry-guide)
 for the common modes, permissions, options, fail-closed and evidence-limit
 references.
 
 ## `cloud.aws`
 Bedrock Agents (action groups, knowledge bases, aliases, collaborators,
-guardrails, memory), Flows, AgentCore (runtimes, gateways = MCP, memories,
-browsers, code interpreters, workload identities), model invocation logging
-state, Lambda (env names, plaintext keys, layers, images, tags), ECS task
+guardrails, memory, tags), Flows, AgentCore (runtimes with their tags,
+gateways = MCP, memories, browsers, code interpreters, workload identities),
+model invocation logging state, Lambda (env names, plaintext keys, layers,
+images, tags), ECS task
 definitions referenced by running tasks and service deployments, plus latest
 registered definitions, SageMaker endpoints (LLM containers), Step Functions with Bedrock
 states, Q Business, Lex, Secrets Manager / SSM names, IAM principals with LLM
@@ -39,6 +51,12 @@ Bedrock agents whose action-group functions set `requireConfirmation: ENABLED`
 record `metadata.approval_gate` (`every-action` when every enabled action group
 other than the user-input group defines functions and each one requires
 confirmation, else `some-actions`); see [autonomy tiers](../concepts/autonomy.md).
+A Bedrock agent's and an AgentCore runtime's `owner` is its `owner` or `Owner`
+tag, read through `ListTagsForResource` (`GetAgent` and `GetAgentRuntime`
+return no tags; the documented `bedrock:List*` and `bedrock-agentcore:List*`
+grants cover the call). A denied or malformed tag listing marks the scan
+incomplete and leaves the resource recorded without an owner; the live-scope
+details record the call as `denied` or `failed`.
 Opt-in: AWS Agent Registry and AgentCore registry records
 ([below](#aws-agent-registry-and-agentcore-registry-records)).
 Options: `profile`, `role_arn`, `regions` (`all`), `services` (default: every

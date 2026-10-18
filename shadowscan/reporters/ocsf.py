@@ -168,7 +168,7 @@ def _resources(f: Finding) -> list[dict[str, Any]]:
     ]
 
 
-def _unmapped(f: Finding) -> dict[str, Any]:
+def _unmapped(f: Finding, *, substituted: bool = False) -> dict[str, Any]:
     factors = [
         {"id": factor.id, "description": factor.description, "weight": factor.weight}
         for factor in f.risk.factors
@@ -188,13 +188,18 @@ def _unmapped(f: Finding) -> dict[str, Any]:
             "models": f.models or None,
             "capabilities": f.capabilities or None,
             "permissions": f.permissions or None,
+            # Stated so a consumer never mistakes the render time for an
+            # observation time. Absent on every ordinary event.
+            "time_source": "report_render" if substituted else None,
             "risk_factors": factors or None,
             "score_basis": "heuristic-not-cvss",
         }
     )
 
 
-def _event(f: Finding, time_ms: int | None, time_dt: str | None) -> dict[str, Any]:
+def _event(
+    f: Finding, time_ms: int | None, time_dt: str | None, *, substituted: bool = False
+) -> dict[str, Any]:
     severity_id, severity = _SEVERITY[f.risk.level]
     risk_level_id, risk_level = _RISK_LEVEL[f.risk.level]
     return _compact(
@@ -222,7 +227,7 @@ def _event(f: Finding, time_ms: int | None, time_dt: str | None) -> dict[str, An
             "risk_level_id": risk_level_id,
             "risk_level": risk_level,
             "risk_score": f.risk.score,
-            "unmapped": _unmapped(f),
+            "unmapped": _unmapped(f, substituted=substituted),
         }
     )
 
@@ -272,13 +277,26 @@ def render_ocsf(result: ScanResult) -> str:
     for finding in result.findings:
         finding.sanitize()
     # Every event carries the scan's end (or start) as its time: findings are
-    # published when the scan concludes. An unparseable timestamp is omitted.
+    # published when the scan concludes.
     reference = result.finished_at if _parse_timestamp(result.finished_at) else result.started_at
     time_ms = _epoch_millis(reference)
     time_dt = _utc_timestamp(reference)
+    # ``time`` is a required OCSF attribute. Omitting it makes the event
+    # non-conformant, so a validating pipeline rejects the whole report rather
+    # than reading it -- a worse outcome than publishing a timestamp whose
+    # provenance is stated. An undated fleet merge reaches this: fleet.merge
+    # sets started_at to "" when no source carries a date. When no scan
+    # timestamp parses, publish the render time and mark it in ``unmapped``,
+    # so a consumer can tell a substituted timestamp from a scan's own -- which
+    # an absent field does not let it do.
+    time_substituted = time_ms is None
+    if time_substituted:
+        now = datetime.now(tz=UTC)
+        time_ms = int(now.timestamp() * 1000)
+        time_dt = now.isoformat().replace("+00:00", "Z")
     document = {
         "ocsf_version": _OCSF_VERSION,
-        "events": [_event(f, time_ms, time_dt) for f in result.findings],
+        "events": [_event(f, time_ms, time_dt, substituted=time_substituted) for f in result.findings],
         "scan": _scan(result),
     }
     return json.dumps(document, indent=2, default=str, allow_nan=False)

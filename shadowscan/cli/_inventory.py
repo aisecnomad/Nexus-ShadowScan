@@ -9,7 +9,8 @@ import yaml
 from rich.table import Table
 from rich.text import Text
 
-from shadowscan.cli import LEVELS, _load_report, console, err_console, main
+import shadowscan.cli as _cli
+from shadowscan.cli import LEVELS, _load_report, main
 from shadowscan.errors import SetupError
 from shadowscan.models import Finding, Kind
 from shadowscan.registry import Inventory, card_stub_for
@@ -36,9 +37,9 @@ def inventory_check(paths: tuple[str, ...]) -> None:
         ) from None
     for link in inv.skipped_links:
         message = f"warning: inventory {link}: symbolic link skipped (links are not followed)"
-        err_console.print(Text(terminal_text(message), style="yellow"))
+        _cli.err_console.print(Text(terminal_text(message), style="yellow"))
     for notice in inv.autonomy_warnings():
-        err_console.print(Text(terminal_text(f"warning: {notice}"), style="yellow"))
+        _cli.err_console.print(Text(terminal_text(f"warning: {notice}"), style="yellow"))
     table = Table(title=f"{len(inv)} registered agents", header_style="bold")
     table.add_column("Agent id")
     table.add_column("Name")
@@ -61,7 +62,7 @@ def inventory_check(paths: tuple[str, ...]) -> None:
             Text(terminal_text((e.governance or {}).get("eu_ai_act_risk_class", ""))),
             Text(terminal_text(e.source or "")),
         )
-    console.print(table)
+    _cli.console.print(table)
 
 
 @inventory.command("stubs")
@@ -133,4 +134,4 @@ def inventory_stubs(findings_json: str, out_dir: str, kinds: str, min_risk: str)
                 "could not write inventory stub; check output path and permissions"
             ) from None
         n += 1
-    console.print(Text(terminal_text(f"wrote {n} capability card stub(s) to {out}"), style="green"))
+    _cli.console.print(Text(terminal_text(f"wrote {n} capability card stub(s) to {out}"), style="green"))

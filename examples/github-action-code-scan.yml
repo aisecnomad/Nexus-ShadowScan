@@ -78,7 +78,9 @@ jobs:
         env:
           SHADOWSCAN_FAIL_ON: ${{ vars.SHADOWSCAN_FAIL_ON }}
         run: |
-          args=(code . --format sarif -o "$RUNNER_TEMP/shadowscan.sarif")
+          # --profile ci declares the gaps a source gate accepts (fixtures, cassettes,
+          # documentation) as counted omissions; every other gap still exits 3.
+          args=(code . --profile ci --format sarif -o "$RUNNER_TEMP/shadowscan.sarif")
           if [ -n "$SHADOWSCAN_FAIL_ON" ]; then
             case "$SHADOWSCAN_FAIL_ON" in
               low|medium|high|critical) args+=(--fail-on "$SHADOWSCAN_FAIL_ON") ;;

@@ -11,6 +11,7 @@ from shadowscan.connectors.base import BaseConnector
 from shadowscan.connectors.common import apply_matches, blob_matches, finalize, looks_like_placeholder
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, SignatureIndex
+from shadowscan.signatures.matcher import reported_credential
 from shadowscan.utils.text import redact
 
 _SECRETISH = re.compile(r"(?i)(?:key|token|secret|password|passwd|credential|apikey|api_key)")
@@ -62,7 +63,8 @@ class RecordDispatch:
         kind = rec.get("_kind") if isinstance(rec, dict) else None
         if not isinstance(kind, str) or kind not in self.kinds:
             self.connector.ctx.warn(
-                f"{self.connector.name}: record has missing, invalid, or unsupported _kind"
+                f"{self.connector.name}: record has missing, invalid, or unsupported _kind; "
+                "offline input replays a --dump-records export, not a provider's native log"
             )
             return None
         return kind
@@ -255,7 +257,7 @@ def scan_env(
             # Judge each matched credential rather than the surrounding value,
             # so a URL or note containing a marker word cannot hide a real key.
             for m in index.match_secrets(value):
-                if looks_like_placeholder(m.value):
+                if looks_like_placeholder(reported_credential(m)):
                     continue
                 finding.add_tag("plaintext-credential")
                 finding.add_evidence(

@@ -56,7 +56,7 @@ _ESCAPED_BOUNDARY = (
 _SPECIFIC_TOKEN_START = r"(?:(?<![A-Za-z])|" + _ESCAPED_BOUNDARY + ")"
 # Prefixes no ordinary word contains.
 _SPECIFIC_TOKEN = (
-    r"sk-(?:proj|ant|live|or-v1|lf|litellm|svcacct|admin)-[A-Za-z0-9_-]{8,}"
+    r"sk-(?:proj|ant|live|or-v1|lf|litellm|svcacct|admin)-[A-Za-z0-9_-]{8,}"  # noqa: S105 - a redaction pattern, not a credential
     r"|gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,}"
     # GitLab personal/runner/trigger/deploy/feed/SCIM/CI/mail/OAuth/agent tokens.
     r"|gl(?:pat|rt|ptt|dt|ft|soat|cbt|imt|oas|agent|ffct)-[A-Za-z0-9_-]{8,}|GR1348941[A-Za-z0-9_-]{20,}"
@@ -66,7 +66,7 @@ _SPECIFIC_TOKEN = (
     r"|(?:AKIA|ASIA)[A-Z0-9]{16}|hf_[A-Za-z0-9]{8,}"
 )
 _GENERIC_TOKEN = (
-    r"sk-[A-Za-z0-9_-]{8,}"
+    r"sk-[A-Za-z0-9_-]{8,}"  # noqa: S105 - a redaction pattern, not a credential
     r"|gsk_[A-Za-z0-9]{40,}|pcsk_[A-Za-z0-9_]{20,}|e2b_[a-f0-9]{40}|tgp_v1_[A-Za-z0-9_-]{30,}"
     r"|lsv2_(?:pt|sk)_[a-f0-9]{32}_[a-f0-9]{10}|tvly-(?:dev-|prod-)?[A-Za-z0-9_-]{20,}"
     r"|xai-[A-Za-z0-9]{60,}|pplx-[A-Za-z0-9]{40,}|csk-[A-Za-z0-9]{30,}|nvapi-[A-Za-z0-9_-]{60,}"

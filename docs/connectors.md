@@ -14,7 +14,7 @@ Exports must satisfy strict JSON and the same encoded byte limits as replay.
 A rejected replacement marks the scan incomplete, preserves an existing file,
 and leaves that instance unexported in the current manifest. Check the manifest
 before replaying a path from an earlier run. A complete zero-record export is an
-explicit empty record envelope. See [migration guidance](production.md#october-9-scan-evidence-corrections-unreleased).
+explicit empty record envelope. See [migration guidance](history/production-change-history.md#october-9-scan-evidence-corrections-unreleased).
 Live HTTP endpoints require HTTPS; redirects and pagination cannot send credentials
 to another origin. Denied access, collection failures, pagination limits and
 oversized or slow responses (see
@@ -102,7 +102,6 @@ SDK or native extension can be stopped at its deadline:
 options:
   plugins: [platform.example=example_connectors.platform:ExampleConnector]
   plugin_execution: process   # the default; thread runs plugins in-process
-  connector_timeout_seconds: 120
 connectors:
   - name: platform.example
 ```
@@ -132,8 +131,54 @@ propagates. The watchdog is a Python thread, so native code that holds the
 interpreter lock indefinitely still needs external supervision.
 
 This is **lifecycle isolation, not a security sandbox**. A child retains the
-scanner's operating-system privileges and environment, including credentials.
-Sibling connector configurations are not passed to it. Record exports go only
+scanner's operating-system privileges and can read what the scanner can. It
+is started without the credentials the operator exported for the built-in
+connectors, and removes them from its own environment again before the plugin
+is imported: every variable whose name ends in `TOKEN`, `ACCESSTOKEN`,
+`AUTHTOKEN`, `SECRET`, `KEY`, `APIKEY`, `PASSWORD`, `PASSWD`, `PASSPHRASE`,
+`CREDENTIALS`, `CREDENTIAL`, `PAT`, `JWT`, `CONNECTION_STRING`, `WEBHOOK` or
+`WEBHOOK_URL` (after an underscore, or as the whole name, and ignoring a
+version after it, as in `CI_JOB_JWT_V2`; npm's per-registry
+`npm_config_//<registry>/:_authToken` ends in `_AUTHTOKEN`), every variable
+whose name starts with `OP_SESSION_`, Terraform's `TF_TOKEN_` (`TF_TOKEN_<host>`),
+npm's `NPM_CONFIG__AUTH` (`npm_config__authToken`, `npm_config__auth`),
+.NET's `ConnectionStrings__` or one of Azure App Service's connection-string
+prefixes (`CUSTOMCONNSTR_`, `SQLAZURECONNSTR_`, `SQLCONNSTR_`,
+`MYSQLCONNSTR_`, `POSTGRESQLCONNSTR_`, `APIHUBCONNSTR_`, `DOCDBCONNSTR_`,
+`EVENTHUBCONNSTR_`, `NOTIFICATIONHUBCONNSTR_`, `REDISCACHECONNSTR_`,
+`SERVICEBUSCONNSTR_`), every Bundler host credential (a `BUNDLE_` name with
+`__`, as in `BUNDLE_GITHUB__COM`; this also withholds the gem-scoped
+`BUNDLE_BUILD__<gem>` and `BUNDLE_LOCAL__<gem>`, which a plugin that needs them
+names in `options.plugin_env`), the CI, cloud SDK and package tooling variables
+that carry a credential, the file holding one or a session
+(`AWS_ACCESS_KEY_ID`, `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`,
+`AWS_WEB_IDENTITY_TOKEN_FILE`, `AZURE_CLIENT_CERTIFICATE_PATH`,
+`AZURE_FEDERATED_TOKEN_FILE`, `BW_SESSION`, `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE`,
+`CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`, `COMPOSER_AUTH`,
+`DOCKER_AUTH_CONFIG`, `GOOGLE_APPLICATION_CREDENTIALS`,
+`GOOGLE_GHA_CREDS_PATH`, `IDENTITY_HEADER`, `OCI_CLI_KEY_FILE`,
+`OCI_CLI_KEY_CONTENT`, `OCI_CLI_SECURITY_TOKEN_FILE`, `DATABASE_URL`,
+`DATABASE_DSN`), and every `*_URL`, `*_URI` or `*_DSN` variable whose value
+carries a user or password (an `@` after `://`, as in `redis://:password@host`
+or `https://token@host`); configuration selectors such as `AWS_PROFILE`,
+`KUBECONFIG`, `DOCKER_CONFIG` and `BUNDLE_GEMFILE`, endpoints such as
+`IDENTITY_ENDPOINT` and `NPM_CONFIG_REGISTRY`, `PATH`, `HOME`, `SHELL`, locale,
+temporary-directory, proxy and CA settings stay. A
+plugin that reads its own credential from the
+environment names it in `options.plugin_env` (exact names, at most 64), and the
+worker keeps those; a value the configuration interpolates with `${VAR}` is
+expanded by the scanner before the worker starts and needs no entry. The
+variables are left out of the worker's initial environment (on Linux
+`/proc/self/environ`) and so of the programs it starts; the scanner's
+`os.environ` is not changed, and thread-mode plugins share it. Withholding them
+keeps credentials from a plugin that does not look for them, not from one that
+does: the worker runs as the scanner's user, so it can read its parent's
+environment, every withheld variable included, from `/proc/<ppid>/environ` on
+Linux, and every file that user can read. Files or a secrets manager keep the
+built-in connectors' credentials out of the environment, but not from a plugin
+running as the same user; run an untrusted plugin under a separate user or in
+a separate container, in a scan job that does not hold the credential.
+Sibling connector configurations are not passed to the worker. Record exports go only
 to the private export directory the scanner prepared (expanded, symlink-free,
 owned, mode 0700); the worker never derives that path again. Descendant subprocesses
 and external side effects are not rolled back by worker termination; plugins
@@ -158,12 +203,12 @@ filesystem or network activity.
 
 The unreleased attribution corrections resolve a bounded subset of Python
 re-exports. See the [code](connectors/code.md) guide and the
-[migration notes](production.md#unreleased-attribution-migration). Regression
+[migration notes](production-migrations.md#unreleased-attribution-migration). Regression
 coverage for these cases does not change the field-evaluation or live-acceptance
 status below.
 
 For the October 1 code-collection and capability corrections, review the
-[migration notes](production.md#october-1-discovery-review-migration) and
+[migration notes](history/production-change-history.md#october-1-discovery-review-migration) and
 [source coverage policy](scanning.md#coverage-policy). Added regression tests
 do not raise a connector's live-acceptance or field-evaluation status.
 
@@ -284,7 +329,7 @@ tool coordinates, including execution capabilities. This is static source
 inventory, not runtime instance discovery. The default
 `project` mode preserves existing identities; see the
 [source guide](connectors/code.md#separate-source-identities) and
-[migration notes](production.md#unreleased-review-migration). GitHub and GitLab
+[migration notes](production-migrations.md#unreleased-review-migration). GitHub and GitLab
 forward the same option to their checkout scans.
 
 `package.json` npm aliases (`"runtime": "npm:@langchain/langgraph@^1"`) are
@@ -421,7 +466,11 @@ globs. The defaults cover lockfiles, minified bundles, source maps, images,
 fonts, archives and compiled artifacts, and a glob with `/` matches the relative
 path. A file over `max_file_size` that matches one is skipped with a warning
 and the scan stays complete, even under `strict_coverage`. Any other oversize
-analyzable file makes coverage incomplete.
+analyzable file is a coverage gap: an incidental one costs one entry of the
+root's [coverage budget](scanning.md#coverage-budget-and-strict-accounting),
+and configuration its name selects (an MCP configuration, a coding-agent
+file, a manifest) makes the scan incomplete at once, as a link to it or a
+FIFO in its place does.
 
 Each root is opened once, and every file, including `CODEOWNERS`, is read
 relative to it without following a link in any path component. A root that
@@ -579,8 +628,11 @@ other values stop the connector with an error that names the option (exit 3).
 match AI SaaS signatures or hold privileged scopes, and service apps
 (`application_type: service` / `client_credentials` / token-exchange).
 Token: SSWS API token (`token`, env `OKTA_API_TOKEN`) or OAuth bearer
-(`bearer`, env `OKTA_ACCESS_TOKEN`) with `okta.apps.read`; `bearer` wins when
-both are set. Options: `include_inactive`, `fetch_tokens`. A 429 is retried
+(`bearer`, env `OKTA_ACCESS_TOKEN`) with `okta.apps.read` and
+`okta.appGrants.read`; `bearer` wins when both are set. The grants of an app are
+a separate scope from the app itself: a bearer without `okta.appGrants.read` is
+refused on every `/grants` call and the scan is incomplete. Options:
+`include_inactive`, `fetch_tokens`. A 429 is retried
 after the window named by Okta's `X-Rate-Limit-Reset` header (bounded to 120 s
 per wait); exhausted retries mark the scan incomplete.
 Live collection also needs `org_url` (`https://<org>.okta.com`, env
@@ -621,7 +673,8 @@ app registration; a package whose details are missing is `unknown` and binds
 nothing, and an organization's own package with no approval request is
 `registered`, not `approved`.
 `include_agent_identities: true` lists Entra Agent ID
-agent identities from the Graph beta API; they enrich the service principal
+agent identities from the Graph beta API, which needs `AgentIdentity.Read.All`
+(the base permissions above do not grant it); they enrich the service principal
 finding of the same id or stand alone, and are always reported. Records of the
 deprecated Entra agent registry are read from offline exports only, as
 `deprecated` records that never approve. `auth_mode: delegated` reads a
@@ -890,7 +943,10 @@ beside an empty `items` array. Bare recipe arrays remain supported.
 (scopes, pending requests), `team.integrationLogs` (who installed what). The
 app id is matched as the app's client id.
 `team.info` must return an authenticated workspace identity. If `team_id` is
-configured, it must match exactly before inventory calls begin. Missing/null
+configured, it must match exactly before inventory calls begin, and it is sent
+with `users.list`, the `admin.apps.*` lists and `team.integrationLogs`: an
+org-level token (the Enterprise token the `admin.apps.*` lists need) is refused
+there without it, and a workspace-level token ignores it. Missing/null
 collection arrays and malformed pagination are incomplete coverage. Later
 network failures retain already collected observations; provider error text is
 not copied into diagnostics. Complete live acceptance generally requires an
@@ -935,6 +991,16 @@ of its own for it (for example `token: ${GITHUB_APPS_TOKEN}`) rather than relyin
 on `GITHUB_TOKEN`, which `code.github` reads by default for a token that clones
 untrusted repositories; the rule that code scans and live connectors run
 separately does not narrow a shared token's scope.
+
+GitHub serves the approved fine-grained PAT list
+(`GET /orgs/{org}/personal-access-tokens`) only to GitHub App installation or
+user access tokens with the organization "Personal access tokens" read
+permission, and refuses a classic or fine-grained personal token there. One
+GitHub App token with the organization "Administration", "Personal access
+tokens" and "GitHub Copilot Business" read permissions covers every call. With
+an owner's personal token as `token`, set `app_token` (env `GITHUB_APP_TOKEN`)
+to a GitHub App token for the PAT list; without it that listing is refused,
+the scan is incomplete, and the warning says so.
 
 Installation envelopes validate declared totals against unique collected IDs,
 across all pages of a live listing or of an offline export file (one page
@@ -1257,7 +1323,12 @@ guides).
 ### `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models` and `endpoint.ebpf`
 The offline inventories analyze host and runtime, MCP tool-list, Ollama, local
 model metadata and eBPF event exports; see the
-[endpoint guide](connectors/endpoint.md). They do not perform local host
+[endpoint guide](connectors/endpoint.md). `endpoint.ebpf` reads native
+Tetragon, Falco, Tracee and Hubble event shapes as well as flat records
+(see [eBPF event formats](connectors/endpoint.md#ebpf-event-formats)); a
+record matching none of them is reported, not silently dropped, and marks the
+scan incomplete, as does an event with a field of the wrong type or a list
+past 100 entries. They do not perform local host
 filesystem discovery, and their findings carry no device name, so lifecycle
 links do not apply to them. The one live probe among them is opt-in:
 `endpoint.mcp` fetches the A2A Agent Cards listed in `agent_card_urls` (at most
@@ -1335,7 +1406,7 @@ unread); other long command lines are classified from their leading arguments
 and reported in one counted warning. Launches with options a launcher's grammar
 does not recognize are not reported. Full validated host and user
 identities are used for aggregation; display shortening never merges devices
-or users. See the [migration notes](production.md#unreleased-runtime-identity-and-completeness-migration)
+or users. See the [migration notes](production-migrations.md#unreleased-runtime-identity-and-completeness-migration)
 before rebuilding inventory bindings and comparison baselines.
 
 Lifecycle assessments additionally disclose their observation window, runtime
@@ -1359,8 +1430,9 @@ All connectors are read-only. Prefer dedicated audit credentials:
 |---|---|
 | GitHub | fine-grained PAT: contents/metadata read; `secrets:read` for Actions secret names, plus `variables:read`, Codespaces `secrets:read` and Dependabot `secrets:read` for the other credential-name listings (each optional; a denied listing marks coverage incomplete) |
 | GitLab | PAT `read_api`, `read_repository` |
-| Okta | API token from a read-only admin, or OAuth `okta.apps.read` |
-| Slack | token with `users:read`; the `admin.apps.*` lists and `team.integrationLogs` need an org admin user token (`admin.apps:read`, `admin`) |
+| GitHub Apps | GitHub App token with organization `Administration`, `Personal access tokens` and `GitHub Copilot Business` read permissions; or an organization owner's token plus `app_token`, a GitHub App token for the fine-grained PAT list, which GitHub serves only to GitHub Apps |
+| Okta | API token from a read-only admin, or OAuth `okta.apps.read` and `okta.appGrants.read` |
+| Slack | token with `users:read`; the `admin.apps.*` lists and `team.integrationLogs` need an org admin user token (`admin.apps:read`, `admin`), and an org-level token needs `team_id` |
 | ServiceNow | basic or bearer credentials with read access to the `sn_aia_*`, `sys_hub_flow` and `oauth_entity` tables through the Table API |
 | Salesforce | connected app (client-credentials flow) whose integration user has read access to the objects the REST `query` and Tooling `query` endpoints return; verify the object permissions in your org |
 | n8n | API key; the connector reads `/api/v1/workflows` only |
@@ -1371,7 +1443,7 @@ All connectors are read-only. Prefer dedicated audit credentials:
 | Zoom | Server-to-Server OAuth app with `marketplace:read:list_apps:admin` |
 | Atlassian | site admin basic auth with an API token for the Universal Plugin Manager listing |
 | Auth0 | Management API v2 token with `read:clients`, `read:client_grants` |
-| Entra / Teams / Power Platform | app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user. Opt-in Agent 365 packages: `CopilotPackages.Read.All` (application, or delegated for a work or school account whose user holds a role that can read the agent catalog). Opt-in agent identities: Graph beta service principal read; confirm the least-privileged permission on Microsoft's current beta reference. Comparable drift reads `GET /organization`: `Organization.Read.All` or `Directory.Read.All` (application), `User.Read` (delegated) |
+| Entra / Teams / Power Platform | app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user. Opt-in Agent 365 packages: `CopilotPackages.Read.All` (application, or delegated for a work or school account whose user holds a role that can read the agent catalog). Opt-in agent identities: `AgentIdentity.Read.All` (Microsoft's least-privileged permission for listing agent identities, application or delegated). Comparable drift reads `GET /organization`: `Organization.Read.All` or `Directory.Read.All` (application), `User.Read` (delegated) |
 | Google Workspace | DWD scopes `admin.directory.user.readonly`, `admin.directory.user.security`, `admin.directory.customer.readonly` |
 | AWS | `SecurityAudit` managed policy + `bedrock:List*/Get*`, `bedrock-agentcore:List*/Get*`, `cloudtrail:LookupEvents`; ECS additionally needs `ecs:ListClusters`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ecs:ListServices`, `ecs:DescribeServices`, `ecs:ListTaskDefinitionFamilies`, `ecs:DescribeTaskDefinition`; the opt-in `registry` service needs `agent-registry:ListRegistries`, `agent-registry:GetRegistry`, `agent-registry:ListRegistryRecords`, `agent-registry:GetRegistryRecord` (AgentCore registries are covered by `bedrock-agentcore:List*/Get*`), and `registry_arns` needs `agent-registry:ListDiscoverableRegistryRecords` and `agent-registry:BatchGetDiscoverableRegistryRecord` on those registries. Do not grant `agent-registry:InvokeRegistryMcp` or `Search*` actions: the connector never calls them |
 | GCP | `roles/viewer` + `roles/iam.securityReviewer` (+ `roles/logging.privateLogViewer` for audit logs; with the opt-in catalogs, read access to Agent Registry and to Discovery Engine assistants and agents, for example Google's viewer roles for those APIs: verify the role names in your organization) |

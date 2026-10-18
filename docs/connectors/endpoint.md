@@ -161,12 +161,103 @@ particular, MCP tool fingerprints are not compared with a rug-pull baseline.
 
 | Connector | Offline input |
 |---|---|
-| `endpoint.host` | Host/MDM inventory records with a runtime or configuration name |
+| `endpoint.host` | Host/MDM inventory records with a runtime or configuration name; a row is reported only when its name or path matches an AI product signature, its whole `name`, `path` file name or `process` is a known AI product, local model runtime or self-hosted AI platform, its path lies in a local model store ([below](#host-inventory-rows)), or its `type`/`category` names an AI category (`ai`, `agent`, `assistant`, `copilot`, `llm`, `mcp`, `model`) — filtered rows add one informational note, not a coverage gap |
 | `endpoint.mcp` | Server records containing MCP tool-list responses, and A2A card records exported with `--dump-records` |
 | `endpoint.ollama` | Ollama-compatible model inventory, including an `endpoint` and `models` list |
 | `endpoint.models` | Artifact metadata records; do not serialize model contents |
-| `endpoint.ebpf` | Tetragon, Falco, Tracee, or Hubble event records |
+| `endpoint.ebpf` | Native Tetragon, Falco, Tracee or Hubble event records, or flat records ([below](#ebpf-event-formats)) |
 | `gateway.otel` | OTLP span records with GenAI semantic-convention attributes |
+
+### Host inventory rows
+
+osquery `apps` and `programs` rows and most MDM software lists carry an
+application or executable name and no category, so `endpoint.host` also
+reports a row whose name is, as a whole, a known AI product. The `name`,
+the file name of `path` and the `process` are each compared without an
+`.app` or `.exe` suffix or a trailing version (`0.3.14`, `v0.5.17`,
+`version 2`; a bare number, such as the `3` of `Codex 3` or the `2024` of
+`Jan 2024`, is part of the name), ignoring case, spaces and punctuation:
+`LM Studio.app`, `/usr/local/bin/ollama`, `Jan.exe` and `Ollama version 0.5.7`
+qualify. Each value is read up to 1,024 characters, so a long path keeps its
+file name, but a name or path component longer than 160 characters is longer
+than any product name and is compared with none, which keeps the work per row
+bounded. The known products are the product names of the
+bundled provider, coding-agent and platform signatures (Ollama, LM Studio,
+vLLM, llama.cpp, LocalAI, SGLang, Aider, LiteLLM, Dify, Flowise, and the
+self-hosted chat UIs Open WebUI, LibreChat and AnythingLLM, ...) and the local
+model runtimes and AI command-line tools the endpoint inventory catalog lists
+(GPT4All, Msty, `llama-server`, `opencode`, ...). A path that is, or lies in,
+one of the catalog's local model stores below a home directory (`~`, `$HOME`,
+`/home/<user>`, `/Users/<user>`, `C:\Users\<user>`, `/root`) is reported too:
+`~/.ollama/models`, `~/.lmstudio/models`, `~/.cache/lm-studio/models`,
+`~/.cache/huggingface/hub`, the GPT4All directories and `~/jan/models`.
+Elsewhere a store's directory counts only with the store's own layout below
+it: Ollama's `manifests` or `blobs`, a Hugging Face `models--<org>--<name>`
+directory, or a model file (`.gguf`, `.safetensors`, ...). An application's
+`jan/models` directory, or a user named jan with a `models` directory, is no
+model store. A name that only
+contains one of them is not enough. A product name that is also a common
+word, a given name or another program's name — Make (also GNU make), Goose
+(Homebrew's `goose` is the pressly/goose database migration tool), Jan,
+`lms`, Continue, Replicate, Cohere and Rivet — counts only in its own
+product's context: an application bundle or executable that product installs,
+or a directory it keeps, as the endpoint catalog lists them (`Jan.app`,
+`Jan.exe`, `Goose.app`, `~/.config/goose`, LM Studio's `LM Studio.app`,
+`~/.lmstudio` and `~/.cache/lm-studio` for `lms`, `~/.continue`), anywhere on
+the path (`/Applications/Goose.app/Contents/MacOS/goose`, `~/.lmstudio/bin/lms`,
+the older `~/.cache/lm-studio/bin/lms`). An
+`.app` or `.exe` suffix or a dot-directory alone is no context: Make
+(Integromat), Replicate and Cohere have no desktop application, so `make.exe`
+(GNU make under Chocolatey, MSYS2 or GnuWin32), `Make.app`, `~/.make`,
+`Cohere.exe` and `Replicate.app` stay filtered, and so does a Windows
+`goose.exe`, which pressly/goose also builds. Other directories on a path, such
+as a home directory's user name or Homebrew's `Cellar/goose`, are no context
+either, so ordinary software stays filtered. A path inside an application
+bundle or dot-directory named after any other known product
+(`/Applications/Ollama.app/...`, `~/.ollama/...`) is reported.
+
+### eBPF event formats
+
+`endpoint.ebpf` reads each producer's native export shape and correlates the
+destination, port and process it carries with known AI hosts and local model
+ports:
+
+| Producer | Export | Fields read |
+|---|---|---|
+| Tetragon | `tetra getevents -o json` events (`process_exec`, `process_kprobe`, …) | `process.binary`, `process.pod.namespace`/`name`, and every `sock_arg` (`daddr`, `dport`) and `sockaddr_arg` (`addr`, `port`) kprobe argument, each scored (the example policy's `tcp_v4_connect` hook passes both, and the socket has no destination yet at kprobe entry); snake_case and lowerCamelCase keys are both read |
+| Falco | JSON alerts (`json_output: true`) | `output_fields`: `proc.name`, `fd.sip.name`/`fd.rip.name`/`fd.sip`/`fd.rip`, `fd.sport`/`fd.rport`, `k8s.ns.name`, `k8s.pod.name` |
+| Tracee | JSON events | `processName`, `kubernetes.podName`/`podNamespace`, and every sockaddr map in `args` (`sin_addr`/`sin6_addr`, `sin_port`/`sin6_port`), each scored |
+| Hubble | `hubble observe -o json` flows, wrapped under `flow` or bare | every `destination_names` entry (a CDN-shared address resolves from several names, and the AI host need not come first), or `IP.destination` when there are none, the `l4` TCP/UDP `destination_port`, and the client workload from `source.namespace`/`pod_name` |
+| Flat | Records exported by other collectors | `process_name`/`binary` or a `process` object, every one of `destination`/`remote_addr`/`hostname`/`server.address`/`url` and of `port`/`destination_port`, each scored, `namespace`, `pod`/`pod_name`; a record that also carries a key a native reader claims (a string `eventName` with `processName`, or `rule`/`priority` with an `output_fields` map) and has flat destination or port fields is read both ways, and every destination and port either reading finds is scored, with the native fields filling the gaps in the flat ones — a Falco alert's own `hostname` and a bare Hubble flow's `destination` endpoint are not flat fields and are never read as destinations |
+
+Kernel-level events usually carry numeric destination addresses, so Tetragon
+and Tracee connects contribute local model ports and process names; AI host
+matching needs a name-bearing source such as Falco's `fd.sip.name`, Hubble's
+`destination_names`, or a flat export. The AI hosts are OpenAI and Anthropic
+hosts and the Google AI services the GCP connector counts as AI, which include
+every Google API the bundled signatures name: `aiplatform`,
+`generativelanguage`, `dialogflow`, `discoveryengine`, `documentai`, `speech`,
+`contactcenteraiplatform`, `notebooks` and `agentregistry` on `googleapis.com`,
+with regional prefixes (`us-central1-aiplatform`, `eu-documentai`) and as the
+mutual-TLS endpoints Google client libraries use with a client certificate
+(`aiplatform.mtls.googleapis.com`). Other `googleapis.com` names, such as
+`fonts` or `storage`, which Google front-end addresses also resolve from, are
+not. A record that matches none of these
+shapes is not analyzed: the connector records one warning and marks the scan
+incomplete rather than letting an unread export look clean. A recognized
+event or flat record is scored on what can be read, and the scan is
+incomplete when any of it cannot: a field above of the wrong type (a
+`process`, `pod`, `kubernetes`, `IP`, `l4`, `source` or socket map that is
+not a map, a Tracee `remote_addr` or `struct sockaddr*` argument whose value
+is not a map, `args` or `destination_names` that is not a list, an argument
+that is not a map, a name, destination or URL that is not text, a port that
+is neither a number nor text, a JSON `true` or `false` included), or an
+`args` or `destination_names` list longer than 100 entries, whose entries
+past the hundredth are not read. Each producer, and the flat shape, records
+one warning for malformed fields and one for the list limit, naming the
+producer and no value from the export. See
+`examples/ebpf/` for a Tetragon TracingPolicy and Falco rules that emit the
+fields above.
 
 MCP tool definitions are analyzed for risky capability names, prompt-injection
 or exfiltration indicators, missing declared authentication, and duplicate tool

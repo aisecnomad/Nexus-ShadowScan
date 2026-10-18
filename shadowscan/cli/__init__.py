@@ -19,6 +19,7 @@ from typing import IO, Any, NoReturn, TypeVar
 import click
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.markup import escape
 from rich.text import Text
 
 from shadowscan import __version__
@@ -35,11 +36,12 @@ from shadowscan.connectors import (
     available_connectors,
     plugin_registry_errors,
 )
+from shadowscan.coverage import validate_max_coverage_gap
 from shadowscan.engine import Engine
 from shadowscan.errors import SetupError
 from shadowscan.models import ScanResult, ScanStats
 from shadowscan.reporters import FORMATS, render
-from shadowscan.reporters.table import print_table
+from shadowscan.reporters.table import incomplete_reasons_text, print_table
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.deadline import JobDeadline, arm_job_deadline
 from shadowscan.utils.git import terminate_active_clones, terminate_clones_on_signal
@@ -52,19 +54,35 @@ from shadowscan.utils.output import (
 from shadowscan.utils.platform import UnsupportedPlatformError, require_supported_platform
 
 console = Console(width=None if sys.stdout.isatty() else 200)
+
+
 err_console = Console(stderr=True)
+
+
 log = logging.getLogger("shadowscan.cli")
+
+
 LEVELS = ["critical", "high", "medium", "low", "info"]
+
+
 SETUP_FAILED = "scan setup failed; check connector configuration, signature packs and inventory"
+
+
 _JOB_DEADLINE_CONTEXT_KEY = "shadowscan.cli.job_deadline_watchdog"
+
+
 # Without a job deadline, nothing else bounds report output and clone cleanup
 # once a timed-out connector worker has been abandoned.
 _ABANDONED_WORKER_EXIT_GRACE_SECONDS = 30.0
+
+
 _ABANDONED_WORKER_EXIT_MESSAGE = (
     f"report output did not finish within {_ABANDONED_WORKER_EXIT_GRACE_SECONDS:g} seconds after a"
     " connector timed out; exiting (scan coverage is incomplete; the report may be missing or"
     " truncated, and an existing output file may not have been replaced)"
 )
+
+
 F = TypeVar("F", bound=Callable[..., Any])
 
 
@@ -146,17 +164,53 @@ def _exit_code(result: ScanResult, fail_on: str | None) -> int:
     return 2 if worst <= threshold else 0
 
 
+def _incomplete_explanation(result: ScanResult) -> str:
+    """Why the scan exits 3, by reason category; the diagnostics themselves stay in the report.
+
+    The categories come from the connectors' own message vocabulary and name no path or value,
+    so they can go to a terminal or a CI log that the private report does not reach.
+    """
+    summary = result.summary()
+    reasons = summary["incomplete_reasons"]
+    if reasons:
+        detail = incomplete_reasons_text(reasons)
+    else:
+        detail = "a connector was skipped or recorded no diagnostic"
+    note = f"scan incomplete (exit 3): {detail}; see the report's warnings, errors and stats"
+    if summary["declared_omissions"]:
+        note += f"; {summary['declared_omissions']} declared omission(s) did not count"
+    if summary["tolerated_gaps"]:
+        note += f"; {summary['tolerated_gaps']} coverage gap(s) within budget did not count"
+    return note
+
+
+def _explain_incomplete(result: ScanResult) -> None:
+    """Print the exit-3 explanation on stderr, best effort: a closed stream must not change the exit."""
+    try:
+        err_console.print(Text(terminal_text(_incomplete_explanation(result)), style="yellow"))
+    except Exception:  # noqa: BLE001, S110 - output streams may already be closed; the exit code must not change
+        pass
+
+
+def _abandoned_exit_message(result: ScanResult, code: int, abandoned: int) -> str:
+    """The notice for leaving timed-out workers behind; with exit 3 it leads with the reasons."""
+    message = f"[yellow]exiting without waiting for {abandoned} timed-out connector worker(s)[/yellow]"
+    if code == 3:
+        message = f"[yellow]{escape(terminal_text(_incomplete_explanation(result)))}[/yellow]\n{message}"
+    return message
+
+
 def _exit_abandoned_workers(code: int, message: str) -> NoReturn:
     """Best-effort output must not prevent the CLI leaving blocked workers."""
     try:
         try:
             err_console.print(message)
-        except Exception:  # noqa: BLE001 - output streams may already be closed
+        except Exception:  # noqa: BLE001, S110 - output streams may already be closed
             pass
         for stream in (sys.stdout, sys.stderr):
             try:
                 stream.flush()
-            except Exception:  # noqa: BLE001 - still try the other stream and exit
+            except Exception:  # noqa: BLE001, S110 - still try the other stream and exit
                 pass
     finally:
         # An abandoned worker may still be waiting to stop its own clone.
@@ -273,11 +327,12 @@ def _run_and_emit_with_deadline(
             # A timed-out connector's thread may still be blocked in an SDK call.
             # Python joins worker threads at interpreter exit, which would hold the
             # process (and its CI job) open indefinitely. The report is written.
-            abandoned = len(engine.abandoned_workers)
+            # One diagnostic carries the exit-3 explanation with the notice.
             _exit_abandoned_workers(
-                code,
-                f"[yellow]exiting without waiting for {abandoned} timed-out connector worker(s)[/yellow]",
+                code, _abandoned_exit_message(result, code, len(engine.abandoned_workers))
             )
+        if code == 3:
+            _explain_incomplete(result)
         sys.exit(code)
     except KeyboardInterrupt:
         # Interpreter exit would join the blocked workers, so keep an exit
@@ -308,6 +363,15 @@ def _connector_timeout_option(
         return None
     try:
         return validate_connector_timeout(value)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
+
+
+def _max_coverage_gap_option(ctx: click.Context, param: click.Parameter, value: float | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        return validate_max_coverage_gap(value)
     except ValueError as exc:
         raise click.BadParameter(str(exc)) from exc
 
@@ -357,6 +421,16 @@ security_options = [
         " deprecated alias; thread workers use cooperative cancellation",
     ),
     click.option(
+        "--max-coverage-gap",
+        "max_coverage_gap",
+        type=float,
+        default=None,
+        callback=_max_coverage_gap_option,
+        help="share of examined entries that may be left unread before a scan reports itself"
+        " incomplete (default: 0.02); 0 fails on any gap. A gap the scanner cannot bound"
+        " (an early stop, a refused page) always fails closed, whatever this allows",
+    ),
+    click.option(
         "--plugin-execution",
         type=click.Choice(["thread", "process"]),
         default=None,
@@ -380,6 +454,7 @@ security_options = [
         " --deny-private-origin also overrides every connector-level allow_private_origin",
     ),
 ]
+
 
 # Incremental state, report output, inventory, signature and gating options.
 report_options = [
@@ -462,6 +537,7 @@ class ScanOptions:
     allow_instance_credentials: bool | None
     allow_credential_mixing: bool | None
     connector_timeout_seconds: float | None
+    max_coverage_gap: float | None
     allow_plugin: tuple[str, ...]
     plugin_execution: str | None
     allow_signature_override: bool | None
@@ -522,6 +598,8 @@ def _apply_security_options(cfg: ScanConfig, opts: ScanOptions) -> None:
         cfg.allow_credential_mixing = opts.allow_credential_mixing
     if opts.connector_timeout_seconds is not None:
         cfg.connector_timeout_seconds = opts.connector_timeout_seconds
+    if opts.max_coverage_gap is not None:
+        cfg.max_coverage_gap = opts.max_coverage_gap
     if opts.job_deadline_seconds is not None:
         cfg.job_deadline_seconds = opts.job_deadline_seconds
 
@@ -644,3 +722,37 @@ from shadowscan.cli import (  # noqa: E402, F401
 
 # Backward-compat re-exports: tests monkeypatch these via "shadowscan.cli.<name>".
 from shadowscan.reporters.dashboard import render_dashboard as render_dashboard  # noqa: E402
+
+# The click commands were importable from the single cli.py module, so a script
+# that invokes one directly (``from shadowscan.cli import scan``) keeps working.
+# They are looked up on first use rather than imported here: the command
+# modules import this package, and an import back from them would be a cycle.
+_COMMAND_MODULES = {
+    "code": "_scan",
+    "controls_command": "_controls",
+    "dashboard_command": "_dashboard",
+    "diff": "_diff",
+    "endpoint": "_endpoint",
+    "gateway": "_scan",
+    "inventory": "_inventory",
+    "inventory_check": "_inventory",
+    "inventory_stubs": "_inventory",
+    "jwt": "_jwt",
+    "list_connectors": "_connectors",
+    "mcp_registry": "_mcp_registry",
+    "mcp_registry_snapshot": "_mcp_registry",
+    "merge_command": "_merge",
+    "run": "_scan",
+    "scan": "_scan",
+    "signatures": "_signatures",
+    "signatures_list": "_signatures",
+    "signatures_show": "_signatures",
+    "signatures_test": "_signatures",
+}
+
+
+def __getattr__(name: str) -> Any:
+    module = _COMMAND_MODULES.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return getattr(sys.modules[f"{__name__}.{module}"], name)

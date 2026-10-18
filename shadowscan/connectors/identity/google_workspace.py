@@ -40,7 +40,7 @@ SCOPES = (
     "https://www.googleapis.com/auth/admin.directory.user.security "
     "https://www.googleapis.com/auth/admin.directory.customer.readonly"
 )
-_GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
+_GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"  # noqa: S105 - the OAuth token endpoint URL, not a credential
 
 
 class GoogleWorkspaceConnector(BaseConnector):

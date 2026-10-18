@@ -8,8 +8,9 @@ import json
 import pytest
 from click.testing import CliRunner
 from rich.console import Console
+from rich.text import Text
 
-from shadowscan.cli import _emit, main
+from shadowscan.cli import _abandoned_exit_message, _emit, main
 from shadowscan.models import Evidence, Finding, Kind, Risk, RiskFactor, ScanResult, ScanStats, Surface
 from shadowscan.reporters import render
 from shadowscan.reporters.table import print_table
@@ -135,6 +136,32 @@ def test_table_neutralizes_controls_in_findings_and_connector_diagnostics():
     _assert_no_payload_controls(output.getvalue())
     # Publication escapes controls without changing the stored observation.
     assert finding.title == PAYLOAD and finding.resource == PAYLOAD
+
+
+def test_table_banner_neutralizes_controls_in_incomplete_reason_keys():
+    # The banner names the reason categories; a result built from untrusted stats
+    # must not let a key carry terminal controls into it.
+    stats = ScanStats(
+        connector="engine.fleet", started_at="now", incomplete=True, incomplete_reasons={PAYLOAD: 1}
+    )
+    output = io.StringIO()
+    print_table(ScanResult(stats=[stats]), console=Console(file=output, force_terminal=True, width=600))
+    assert "INCOMPLETE SCAN (hostile\\u001b]52" in Text.from_ansi(output.getvalue()).plain
+    _assert_no_payload_controls(output.getvalue())
+
+
+def test_abandoned_worker_notice_treats_incomplete_reasons_as_literal_text():
+    # The notice is Rich markup; the explanation it carries is text, not tags.
+    key = "[/yellow][blink]" + PAYLOAD
+    stats = ScanStats(
+        connector="engine.fleet", started_at="now", incomplete=True, incomplete_reasons={key: 1}
+    )
+    output = io.StringIO()
+    Console(file=output, force_terminal=True, width=600).print(
+        _abandoned_exit_message(ScanResult(stats=[stats]), 3, 1)
+    )
+    assert "[/yellow][blink]hostile\\u001b]52" in Text.from_ansi(output.getvalue()).plain
+    _assert_no_payload_controls(output.getvalue())
 
 
 def test_diff_terminal_output_neutralizes_imported_title_and_resource(tmp_path):

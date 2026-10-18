@@ -4,12 +4,8 @@ from __future__ import annotations
 
 import click
 
-from shadowscan.cli import (
-    _emit,
-    _exit_code,
-    _load_report,
-    main,
-)
+import shadowscan.cli as _cli
+from shadowscan.cli import _exit_code, _load_report, main
 from shadowscan.fleet import merge_reports, source_names
 from shadowscan.reporters import FORMATS
 from shadowscan.utils.redaction import sanitize_text
@@ -42,5 +38,5 @@ def merge_command(reports: tuple[str, ...], fmt: str, output: str | None, max_ro
     except ValueError as exc:
         raise click.ClickException(sanitize_text(str(exc))) from None
     verbose: int = main.verbose  # type: ignore[attr-defined]
-    _emit(result, fmt, output, verbose >= 1, max_rows)
+    _cli._emit(result, fmt, output, verbose >= 1, max_rows)
     raise click.exceptions.Exit(_exit_code(result, None))

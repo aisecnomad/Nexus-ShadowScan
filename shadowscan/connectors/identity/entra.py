@@ -10,8 +10,9 @@ assignments and tenant-owned app registrations, then reports:
 
 Opt-in collections (default off):
 
-* ``include_agent_identities``: Entra Agent ID agent identities (Graph beta), which
-  enrich the service principal finding of the same id or stand alone;
+* ``include_agent_identities``: Entra Agent ID agent identities (read from Graph beta;
+  the listing needs ``AgentIdentity.Read.All``, which the base permissions do not
+  grant), which enrich the service principal finding of the same id or stand alone;
 * ``include_agent_registry``: Microsoft Agent 365 catalog packages, reported as
   vendor registry records (``metadata.registry_record``, registry
   ``microsoft-agent-365``, see :mod:`shadowscan.registries`).
@@ -54,7 +55,12 @@ from shadowscan.connectors.common import (
     finalize,
     scope_matches,
 )
-from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
+from shadowscan.connectors.identity.common import (
+    assess_app,
+    identity_kind_for,
+    only_ai_name_hint,
+    summarize_scopes,
+)
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.registries import (
     LISTING_SCOPES,
@@ -77,7 +83,7 @@ AGENT_IDENTITIES = f"{GRAPH_BETA}/servicePrincipals/microsoft.graph.agentIdentit
 AGENT_365 = "microsoft-agent-365"
 DEPRECATED_REGISTRY = "entra-agent-registry"
 AUTH_MODES = ("app-only", "delegated")
-DEFAULT_DELEGATED_TOKEN_ENV = "GRAPH_DELEGATED_TOKEN"
+DEFAULT_DELEGATED_TOKEN_ENV = "GRAPH_DELEGATED_TOKEN"  # noqa: S105 - names an environment variable, not a credential
 MAX_DELEGATED_TOKEN_CHARS = 16 * 1024
 # The audiences of a Microsoft Graph access token: v1 tokens name the resource URI, v2 tokens its appId.
 GRAPH_AUDIENCES = frozenset(
@@ -563,9 +569,12 @@ class EntraConnector(BaseConnector):
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
+        # Only properties of the v1.0 servicePrincipal resource: it defines neither publisherName
+        # nor createdDateTime, so selecting them returned nothing at best and risked a refused
+        # listing. The publisher comes from verifiedPublisher; offline exports may carry both.
         sp_select = (
-            "id,appId,displayName,appDisplayName,publisherName,servicePrincipalType,accountEnabled,"
-            "createdDateTime,tags,appOwnerOrganizationId,homepage,replyUrls,signInAudience,verifiedPublisher,"
+            "id,appId,displayName,appDisplayName,servicePrincipalType,accountEnabled,"
+            "tags,appOwnerOrganizationId,homepage,replyUrls,signInAudience,verifiedPublisher,"
             "notes,appRoleAssignmentRequired,appRoles,oauth2PermissionScopes,description,loginUrl"
         )
         sps = list(self._pages("/servicePrincipals", params={"$select": sp_select, "$top": 999}))
@@ -1315,12 +1324,14 @@ class EntraConnector(BaseConnector):
             account=self.tenant,
             first_seen=sp.get("createdDateTime"),
         )
+        publisher = sp.get("publisherName") or ((sp.get("verifiedPublisher") or {}).get("displayName"))
+        description = " ".join(x for x in [sp.get("notes"), sp.get("description")] if x)
         assess_app(
             self.index,
             f,
             name=name,
-            publisher=sp.get("publisherName") or ((sp.get("verifiedPublisher") or {}).get("displayName")),
-            description=" ".join(x for x in [sp.get("notes"), sp.get("description")] if x),
+            publisher=publisher,
+            description=description,
             urls=[sp.get("homepage"), sp.get("loginUrl"), *(sp.get("replyUrls") or [])],
             # Sets iterate in hash order; sort so reports are reproducible across runs.
             scopes=sorted(delegated) + app_perms,
@@ -1334,6 +1345,21 @@ class EntraConnector(BaseConnector):
             and not delegated
             and not app_perms
             and sp_type != "ManagedIdentity"
+        ):
+            return None
+        # A third-party SP that holds only OpenID Connect delegated scopes and
+        # has no AI hint, or one from a common word, is a sign-in client, not
+        # an AI app; any application permission or other delegated scope, or
+        # a stronger name hint, keeps it (see only_ai_name_hint).
+        if (
+            not retained
+            and not machine
+            and only_ai_name_hint(
+                f,
+                list(delegated) + app_perms,
+                index=self.index,
+                names=(name, publisher, description),
+            )
         ):
             return None
         f.add_evidence(

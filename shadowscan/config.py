@@ -72,6 +72,7 @@ from typing import Any
 
 import yaml
 
+from shadowscan.coverage import DEFAULT_MAX_GAP_RATIO, validate_max_coverage_gap
 from shadowscan.errors import SetupError, yaml_error_position
 from shadowscan.mcp_registry import MAX_MCP_REGISTRIES, McpRegistrySource
 from shadowscan.registries import (
@@ -115,12 +116,14 @@ _OPTION_FIELDS = {
     "state_dir",
     "plugins",
     "plugin_execution",
+    "plugin_env",
     "allow_signature_override",
     "allow_private_origin",
     "allow_instance_credentials",
     "allow_credential_mixing",
     "connector_timeout_seconds",
     "connector_timeout",
+    "max_coverage_gap",
     "risk_basis",
     "risk_weights",
     "job_deadline_seconds",
@@ -492,6 +495,27 @@ def _redacted_config(config: Any) -> Any:
     return {key: REDACTED if key in _WITHHELD_KEYS else value for key, value in shown.items()}
 
 
+class _DefaultConnectorTimeout(float):
+    """The connector deadline when the operator sets none: 120 seconds.
+
+    Its own type, so the engine can tell it from an explicit 120: only this
+    default is scaled to a large input. A value a caller, a configuration file
+    or ``--connector-timeout-seconds`` sets is a plain float, 120 included, and
+    is honoured unchanged.
+    """
+
+    __slots__ = ()
+
+
+#: The deadline a connector gets when the operator sets none.
+DEFAULT_CONNECTOR_TIMEOUT: float = _DefaultConnectorTimeout(120.0)
+
+
+def connector_timeout_is_default(value: object) -> bool:
+    """Whether ``value`` is the unset default rather than a deadline someone chose."""
+    return isinstance(value, _DefaultConnectorTimeout)
+
+
 @dataclass(slots=True)
 class ScanConfig:
     connectors: list[ConnectorSpec] = field(default_factory=list)
@@ -506,6 +530,9 @@ class ScanConfig:
     state_dir: str | None = None
     plugins: list[str] = field(default_factory=list)
     plugin_execution: str = "process"
+    # Environment variable names a process-mode plugin worker keeps although they are
+    # credential-shaped (see plugin_process.scrub_credential_environment).
+    plugin_env: list[str] = field(default_factory=list)
     allow_signature_override: bool = False
     allow_private_origin: bool = False
     # An explicit refusal (--deny-private-origin, or a library caller): unlike
@@ -514,7 +541,12 @@ class ScanConfig:
     deny_private_origin: bool = field(default=False, kw_only=True)
     allow_instance_credentials: bool = False
     allow_credential_mixing: bool = False
-    connector_timeout_seconds: float = 120.0
+    connector_timeout_seconds: float = DEFAULT_CONNECTOR_TIMEOUT
+    # Share of examined entries a connector may leave unread before its scan is
+    # reported incomplete. Zero restores strict accounting. A gap the scanner
+    # cannot bound (an early stop, a refused page) ignores this and always
+    # fails closed. See :mod:`shadowscan.coverage`.
+    max_coverage_gap: float = DEFAULT_MAX_GAP_RATIO
     job_deadline_seconds: float | None = None  # CLI process deadline; embedding callers own supervision
     risk_basis: str = "combined"
     risk_weights: dict[str, Any] | None = field(default_factory=dict)
@@ -530,7 +562,9 @@ class ScanConfig:
 
     def __post_init__(self, connector_timeout: float | None) -> None:
         if connector_timeout is not None:
-            if self.connector_timeout_seconds != 120.0:
+            # Any canonical value a caller set conflicts, an explicit 120 included,
+            # as both keys do in a configuration file whatever their values.
+            if not connector_timeout_is_default(self.connector_timeout_seconds):
                 raise ConfigValidationError(
                     "specify connector_timeout_seconds or connector_timeout, not both"
                 )
@@ -546,6 +580,7 @@ class ScanConfig:
         self.plugins = validate_plugins(self.plugins)
         if not isinstance(self.plugin_execution, str) or self.plugin_execution not in {"thread", "process"}:
             raise ConfigValidationError("options.plugin_execution must be thread or process")
+        self.plugin_env = validate_plugin_env(self.plugin_env)
         self.allow_signature_override = _boolean_option(
             self.allow_signature_override, "allow_signature_override"
         )
@@ -560,6 +595,10 @@ class ScanConfig:
             self.allow_credential_mixing, "allow_credential_mixing"
         )
         self.connector_timeout_seconds = validate_connector_timeout_seconds(self.connector_timeout_seconds)
+        try:
+            self.max_coverage_gap = validate_max_coverage_gap(self.max_coverage_gap)
+        except ValueError as exc:
+            raise ConfigValidationError(str(exc)) from None
         self.job_deadline_seconds = validate_job_deadline_seconds(self.job_deadline_seconds)
         self.incremental = _boolean_option(self.incremental, "incremental")
         if self.fail_on is not None and (
@@ -649,7 +688,7 @@ class ScanConfig:
             raise ConfigValidationError(
                 "specify options.connector_timeout_seconds or options.connector_timeout, not both"
             )
-        timeout = opts.get("connector_timeout_seconds", 120.0)
+        timeout = opts.get("connector_timeout_seconds", DEFAULT_CONNECTOR_TIMEOUT)
         if "connector_timeout" in opts:
             # Older configurations used null for no deadline. Keep them usable
             # while enforcing the safe default instead of permitting infinity.
@@ -657,7 +696,9 @@ class ScanConfig:
                 "connector_timeout",
                 "options.connector_timeout is deprecated; use options.connector_timeout_seconds",
             )
-            timeout = 120.0 if opts["connector_timeout"] is None else opts["connector_timeout"]
+            timeout = (
+                DEFAULT_CONNECTOR_TIMEOUT if opts["connector_timeout"] is None else opts["connector_timeout"]
+            )
         connectors = data.get("connectors", [])
         if not isinstance(connectors, list):
             raise ConfigValidationError("connectors must be a list")
@@ -709,6 +750,7 @@ class ScanConfig:
             state_dir=_optional_path(base, opts.get("state_dir"), "options.state_dir"),
             plugins=validate_plugins(opts.get("plugins", [])),
             plugin_execution=opts.get("plugin_execution", "process"),
+            plugin_env=validate_plugin_env(opts.get("plugin_env", [])),
             allow_signature_override=_boolean_option(
                 opts.get("allow_signature_override", False), "allow_signature_override"
             ),
@@ -722,6 +764,7 @@ class ScanConfig:
                 opts.get("allow_credential_mixing", False), "allow_credential_mixing"
             ),
             connector_timeout_seconds=validate_connector_timeout(timeout),
+            max_coverage_gap=_coverage_gap_option(opts.get("max_coverage_gap", DEFAULT_MAX_GAP_RATIO)),
             job_deadline_seconds=validate_job_deadline_seconds(opts.get("job_deadline_seconds")),
             risk_basis=opts.get("risk_basis", "combined"),
             risk_weights=opts.get("risk_weights", {}),
@@ -752,7 +795,7 @@ class ScanConfig:
                 " text file of at most 8 MiB"
             ) from None
         try:
-            data = yaml.load(text, Loader=_ConfigLoader)
+            data = yaml.load(text, Loader=_ConfigLoader)  # noqa: S506 - loader is a SafeLoader subclass with resource bounds; see shadowscan.utils.safe_yaml
         except ConfigValidationError:
             raise
         except (ValueError, yaml.YAMLError) as exc:
@@ -841,6 +884,33 @@ def validate_plugins(value: Any) -> list[str]:
 def plugin_names(entries: list[str]) -> set[str]:
     """The connector names a validated ``plugins`` list approves."""
     return {entry.partition("=")[0].strip() for entry in entries}
+
+
+_ENV_NAME_RX = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
+MAX_PLUGIN_ENV = 64
+
+
+def validate_plugin_env(value: Any) -> list[str]:
+    """Validate ``options.plugin_env``: the credential-shaped variables a plugin worker may keep.
+
+    A process-mode plugin worker does not inherit credential-shaped variables
+    (``plugin_process.scrub_credential_environment``); this list names the ones
+    an approved plugin reads itself, by exact name. Names are environment
+    variable identifiers, at most 64 of them, each once. Messages never
+    include the values.
+    """
+    if not isinstance(value, list) or any(not isinstance(name, str) for name in value):
+        raise ConfigValidationError("options.plugin_env must be a list of environment variable names")
+    if len(value) > MAX_PLUGIN_ENV:
+        raise ConfigValidationError(f"options.plugin_env lists more than {MAX_PLUGIN_ENV} names")
+    names: list[str] = []
+    for name in value:
+        if not _ENV_NAME_RX.fullmatch(name):
+            raise ConfigValidationError("options.plugin_env entries must be environment variable names")
+        if name in names:
+            raise ConfigValidationError("options.plugin_env names a variable more than once")
+        names.append(name)
+    return names
 
 
 _TRUSTED_REGISTRY_FLAGS = ("allow_auto_approved", "allow_registered_only", "allow_offline_records")
@@ -1047,7 +1117,18 @@ def _connector_enabled(value: Any) -> bool:
     return _strict_boolean(value, "connector enabled")
 
 
+def _coverage_gap_option(value: Any) -> float:
+    """``options.max_coverage_gap`` as a ratio, with the configuration error type."""
+    try:
+        return validate_max_coverage_gap(value)
+    except ValueError as exc:
+        raise ConfigValidationError(f"options.{exc}") from None
+
+
 def validate_connector_timeout_seconds(value: Any) -> float:
+    if connector_timeout_is_default(value):
+        # Valid as it stands; kept so the engine still sees that none was set.
+        return DEFAULT_CONNECTOR_TIMEOUT
     message = "connector_timeout_seconds must be a positive finite number"
     if isinstance(value, bool):
         raise ConfigValidationError(message)

@@ -23,7 +23,7 @@ jobs needs a ruleset change in the same pull request.
 |---|---|---|---|
 | [CI](ci.yml) | push to `main`, every pull request, Monday 05:17 UTC | DCO check (calls [DCO](dco.yml)), docs build, lint, type and complexity-ratchet checks, tests on Linux and macOS, coverage gates, evaluation corpora, wheel and container checks; `CI gate` summarizes them | nothing |
 | [CodeQL](codeql.yml) | push to `main`, every pull request, Monday 05:29 UTC | Python code scanning | `security-events` |
-| [Docs](docs.yml) | push and pull request touching docs or the package; manual | Builds the MkDocs site; a manual run with `publish` from `main` deploys GitHub Pages | `pages`, `id-token` (deploy job only) |
+| [Docs](docs.yml) | push and pull request touching docs or the package; manual | Builds the MkDocs site; a manual run with `publish` from `main` deploys GitHub Pages, and with the repository variable `DOCS_PUBLISH` set to `true` every docs push to `main` republishes it | `pages`, `id-token` (deploy job only) |
 | [DCO](dco.yml) | called by CI | Checks every commit's `Signed-off-by` trailer | nothing |
 | [Scorecard](scorecard.yml) | push to `main`, ruleset changes, Monday 05:20 UTC, manual | OpenSSF Scorecard; publishes the result | `security-events`, `id-token` |
 | [Dependency and governance audit](audit.yml) | Tuesday 04:41 UTC, manual | `pip-audit` of every hash lock; read-only check of the visible `main` rules | nothing |

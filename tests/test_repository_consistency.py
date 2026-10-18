@@ -4,18 +4,22 @@
 This module covers the rest of the repository's self-consistency: every relative
 Markdown link and heading anchor resolves, the community files GitHub and the
 OpenSSF Scorecard look for exist, `CITATION.cff` matches `pyproject.toml`, the
-CI matrix matches the classifiers, the Makefile and pre-commit hooks run what CI
-runs, every CodeQL action step is pinned to the same release, the docs toolchain
-comes from its lock everywhere, and documented counts, the README's demo output,
-CSV report markers, the HTTP read deadline and the plugin execution default match
-the shipped code. Run both modules with ``make policy``.
+CI matrices, `requires-python` and every documented interpreter range match the
+classifiers, the Makefile and pre-commit hooks run what CI runs, every CodeQL
+action step is pinned to the same release, the docs toolchain comes from its lock
+everywhere, and documented counts, the README's demo output, CSV report markers,
+the HTTP read deadline and the plugin execution default match the shipped code.
+Run both modules with ``make policy``.
 """
 
 from __future__ import annotations
 
+import ast
 import functools
 import hashlib
 import importlib.util
+import inspect
+import io
 import itertools
 import json
 import os
@@ -23,6 +27,7 @@ import re
 import shutil
 import subprocess
 import textwrap
+import tokenize
 import tomllib
 from collections import Counter
 from collections.abc import Iterator
@@ -36,9 +41,14 @@ import yaml
 
 from shadowscan.config import ScanConfig
 from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
+from shadowscan.connectors.cloud.gcp import AI_SERVICES as GCP_AI_SERVICES
 from shadowscan.connectors.cloud.gcp import GcpConnector
+from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.common import MAX_PAGES
-from shadowscan.engine import Engine
+from shadowscan.connectors.endpoint.catalog import MODEL_STORES
+from shadowscan.connectors.endpoint.runtime import EbpfConnector, HostConnector, OtelConnector
+from shadowscan.coverage import DEFAULT_MAX_GAP_RATIO
+from shadowscan.engine import DEFAULT_CONNECTOR_TIMEOUT, Engine
 from shadowscan.models import ScanStats
 from shadowscan.reporters.csv_ import _safe_cell
 from shadowscan.utils import http
@@ -338,7 +348,8 @@ def test_live_files_name_the_current_repository() -> None:
             text = (ROOT / name).read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        if name == "CHANGELOG.md":
+        if name in ("CHANGELOG.md", "docs/engineering-log.md"):
+            # Dated logs: the released sections record the name the repository had then.
             text = text[: text.index("\n## 0.")]
         stale.extend(
             f"{name}:{number}"
@@ -607,6 +618,265 @@ def test_ci_matrix_covers_every_classified_python_version() -> None:
         if re.fullmatch(r"Programming Language :: Python :: 3\.\d+", classifier)
     }
     assert matrix == classified, f"CI tests {sorted(matrix)} but pyproject classifies {sorted(classified)}"
+
+
+def _classified_minors() -> set[int]:
+    return {
+        int(classifier.rsplit(".", 1)[1])
+        for classifier in _pyproject()["project"]["classifiers"]
+        if re.fullmatch(r"Programming Language :: Python :: 3\.\d+", classifier)
+    }
+
+
+def _ci_matrix_minors(job: str) -> set[int]:
+    versions = _load_yaml(GITHUB / "workflows" / "ci.yml")["jobs"][job]["strategy"]["matrix"]["python"]
+    return {int(str(version).split(".", 1)[1]) for version in versions}
+
+
+def _versions(minors: set[int]) -> str:
+    return ", ".join(f"3.{minor}" for minor in sorted(minors))
+
+
+def test_requires_python_admits_exactly_the_classified_versions() -> None:
+    requires = _pyproject()["project"]["requires-python"]
+    bounds = re.fullmatch(r">=3\.(\d+),<3\.(\d+)", requires)
+    assert bounds is not None, f"requires-python {requires!r} is not a >=3.N,<3.M range"
+    admitted = set(range(int(bounds.group(1)), int(bounds.group(2))))
+    assert admitted == _classified_minors(), (
+        f"requires-python {requires} admits {_versions(admitted)} but pyproject classifies "
+        f"{_versions(_classified_minors())}"
+    )
+    assert _ci_matrix_minors("test-macos") <= admitted, "the macOS job tests an interpreter pyproject refuses"
+
+
+# Two or more CPython minor versions written as one list or range, however it is spelled:
+# "3.11, 3.12 and 3.13", "3.11; 3.12; 3.13", "3.11 to 3.14", "3.11 up to and including 3.14",
+# "3.11 - 3.14", "3.11 -- 3.14" (any dash or hyphen), "3.11...3.14", "3.11 up to Python 3.14",
+# "python3.11–python3.14", "`3.11`–`3.14`", ">=3.11,<3.15", "≥3.11, <3.15", "<3.15,>=3.11",
+# "3.11+ (tested through 3.14)", "3.11+ (tested on 3.14)", "macOS 3.11/3.14". A patch release such
+# as 3.12.4 is not a minor version and ends the span, so "3.12.0 to 3.12.3" is not an interpreter
+# claim; nor is a list whose last version is a possessive ("3.11, or Python 3.14's syntax" names
+# what each interpreter does), although a range is ("3.11–3.13's standard library" still names
+# 3.11 to 3.13); and an open "3.12+" with no upper bound describes behavior rather than a set.
+_MINOR_VERSION = r"`?(?<![\d.])3\.\d+(?!\.?\d)`?"
+# A later version of a span, which may also follow an ellipsis.
+_LATER_MINOR_VERSION = r"`?(?:(?<![\d.])|(?<=\.\.))3\.\d+(?!\.?\d)`?"
+_LIST_SEPARATOR = r" ?, ?(?:(?:and|or|&) )?| ?; ?| (?:and|or|&|plus) | ?/ ?"
+_UPPER_BOUND = (
+    r"(?:[A-Za-z-]+ ){0,3}?"
+    r"(?:to|through|thru|up to|(?:tested|validated|verified|checked) (?:on|with|against)) "
+)
+_DASHES = "-‐‑‒–—―−"
+_RANGE_SEPARATOR = (
+    rf" ?(?:--|[{_DASHES}]) ?| ?(?:\.\.\.?|…) ?| (?:to|through|thru|until|up to)(?: and including)? "
+    rf"|\+? (?:and|or) (?:later|newer|above),? \(?{_UPPER_BOUND}|\+ ?[(,]? ?{_UPPER_BOUND}"
+)
+_SPECIFIER = (
+    r"(?:>=|≥) ?`?3\.\d+`? ?, ?(?:<=?|≤) ?`?3\.\d+`?"
+    r"|(?:<=?|≤) ?`?3\.\d+`? ?, ?(?:>=|≥) ?`?3\.\d+`?"
+)
+_INTERPRETER_SPAN = re.compile(
+    rf"{_SPECIFIER}|{_MINOR_VERSION}"
+    rf"(?:(?:{_LIST_SEPARATOR}|{_RANGE_SEPARATOR})(?:C?[Pp]ython ?)?{_LATER_MINOR_VERSION})+"
+)
+_SPECIFIER_BOUND = re.compile(r"([<>]=?|[≤≥]) ?`?3\.(\d+)")
+_RANGE_WORDS = re.compile(rf"[{_DASHES}+…]|\.\.|\b(?:to|through|thru|until|later|newer|above)\b")
+_POSSESSIVE = re.compile(r"['’]s\b")
+# A span describes the macOS CI matrix only when macOS alone is the platform its clause names last
+# before it ("macOS 3.11/3.14", "on macOS for 3.11 and 3.14") and the clause is about CI. "Linux and
+# macOS 3.11-3.14" or "on macOS, ShadowScan supports 3.11 to 3.14" state the supported set.
+_CLAUSE_BREAK = re.compile(r"[;!?]|\.(?= )")
+_PLATFORM = re.compile(r"\b(?:Linux|macOS|Ubuntu|Windows|WSL)\b")
+_JOINED_PLATFORM = re.compile(r"\b(?:Linux|Ubuntu|Windows|WSL) ?(?:,|/|&|and|or) ?$")
+_CI_WORDS = re.compile(r"\b(?:CI|jobs?|runners?|matrix|workflows?|legs?|tests?|tested)\b")
+# Spans that record an earlier interpreter set on purpose, and why.
+_DATED_INTERPRETER_SPANS = {
+    ("docs/assurance-results.md", "3.11/3.12"): "the CI matrix when that dated result was recorded",
+}
+# The lock headers state the interpreters each lock is validated on; docs/production.md asks for
+# that comment to be kept when a lock is regenerated.
+_LOCK_HEADERS = ("requirements.lock", "requirements-ci.lock", "requirements-ci-constraints.txt")
+
+
+def _is_specifier(span: str) -> bool:
+    return span[0] in "<>≤≥"
+
+
+def _span_minors(span: str) -> set[int]:
+    if _is_specifier(span):
+        lower = upper = 0
+        for operator, minor in _SPECIFIER_BOUND.findall(span):
+            if operator in (">=", "≥"):
+                lower = int(minor)
+            else:
+                upper = int(minor) + (operator != "<")
+        return set(range(lower, upper))
+    parts = re.split(r"3\.(\d+)", span)
+    minors = [int(part) for part in parts[1::2]]
+    covered = {minors[0]}
+    for previous, separator, current in zip(minors[:-1], parts[2:-1:2], minors[1:], strict=True):
+        covered.update(range(previous, current + 1) if _RANGE_WORDS.search(separator) else {current})
+    return covered
+
+
+def _describes_macos_ci(paragraph: str, match: re.Match[str]) -> bool:
+    before = _CLAUSE_BREAK.split(paragraph[: match.start()])[-1]
+    after = _CLAUSE_BREAK.split(paragraph[match.end() :])[0]
+    platforms = list(_PLATFORM.finditer(before))
+    if not platforms or platforms[-1].group(0) != "macOS":
+        return False
+    if _JOINED_PLATFORM.search(before[: platforms[-1].start()]):
+        return False
+    return _CI_WORDS.search(before + after) is not None
+
+
+def _lists_possessives(paragraph: str, match: re.Match[str]) -> bool:
+    """Whether the span ``match`` is a list whose last version is a possessive ("3.11, or
+    Python 3.14's syntax"): it names what each interpreter does, not a supported set. A
+    range whose upper bound is a possessive ("3.11–3.13's standard library") is not one."""
+    span = match.group(0)
+    if _is_specifier(span) or not _POSSESSIVE.match(paragraph, match.end()):
+        return False
+    last_separator = re.split(r"3\.\d+", span)[-2]
+    return not _RANGE_WORDS.search(last_separator)
+
+
+def _interpreter_spans(paragraph: str) -> list[tuple[str, bool]]:
+    """``(span, about_macos_ci)`` for every interpreter span in one whitespace-normalized paragraph."""
+    return [
+        (match.group(0), _describes_macos_ci(paragraph, match))
+        for match in _INTERPRETER_SPAN.finditer(paragraph)
+        if not _lists_possessives(paragraph, match)
+    ]
+
+
+def _comment_header(path: Path) -> str:
+    """The comment lines a requirements file starts with, joined into one paragraph."""
+    lines = itertools.takewhile(lambda line: line.startswith("#"), _read(path).splitlines())
+    return " ".join(" ".join(line.lstrip("#").split()) for line in lines)
+
+
+def _package_strings(path: Path) -> str:
+    """The string literals a package module holds (messages, help text, docstrings), one per paragraph."""
+    tree = ast.parse(_read(path), filename=str(path))
+    strings = (
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    )
+    return "\n\n".join(strings)
+
+
+def _interpreter_claims() -> Iterator[tuple[str, str, bool]]:
+    """``(document, span, about_macos)`` for every interpreter span a current document or package
+    string states."""
+    texts = [(_relative(path), _current_text(path)) for path in _current_docs()]
+    texts += [(name, _comment_header(ROOT / name)) for name in _LOCK_HEADERS]
+    texts += [
+        (_relative(path), _package_strings(path)) for path in sorted((ROOT / "shadowscan").rglob("*.py"))
+    ]
+    for name, text in texts:
+        for paragraph in re.split(r"\n[ \t]*\n", text):
+            paragraph = " ".join(paragraph.split())
+            for span, macos in _interpreter_spans(paragraph):
+                yield name, span, macos
+
+
+def test_documented_interpreter_ranges_match_the_classifiers_and_ci() -> None:
+    """Every stated set of supported or CI-tested Pythons is the one pyproject and ci.yml declare.
+
+    A span tied to macOS alone in a clause about CI describes the macOS job's matrix. Any other span
+    describes what is supported and what the Linux job tests, which the matrix test above keeps
+    equal to the classifiers. Adding 3.14 to pyproject and CI left the rollout guide, the testing guide and the
+    lock headers promising 3.11 to 3.13 and macOS 3.11/3.13, and the Windows refusal message
+    still names 3.11-3.13; package string literals are read as well as documents.
+    """
+    expected = {False: _classified_minors(), True: _ci_matrix_minors("test-macos")}
+    claims = list(_interpreter_claims())
+    stale = [
+        f"{name}: {span!r} names {_versions(_span_minors(span))}, expected {_versions(expected[macos])}"
+        + (" (macOS CI)" if macos else "")
+        for name, span, macos in claims
+        if (name, span) not in _DATED_INTERPRETER_SPANS and _span_minors(span) != expected[macos]
+    ]
+    assert not stale, "interpreter ranges disagree with pyproject.toml and ci.yml:\n" + "\n".join(stale)
+    stating = {name for name, _, _ in claims}
+    required = {
+        "README.md",
+        "docs/testing.md",
+        "docs/production.md",
+        *_LOCK_HEADERS[:2],
+        "shadowscan/utils/platform.py",
+    }
+    assert required <= stating, f"{sorted(required - stating)} no longer state the interpreters they cover"
+    assert any(macos for _, _, macos in claims), "a document should state the macOS CI interpreters"
+    unused = set(_DATED_INTERPRETER_SPANS) - {(name, span) for name, span, _ in claims}
+    assert not unused, f"stale dated interpreter spans: {sorted(unused)}"
+
+
+@pytest.mark.parametrize(
+    ("paragraph", "expected"),
+    [
+        ("CPython 3.11 – 3.13 on Linux", [({11, 12, 13}, False)]),
+        ("Python 3.11 - 3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11—3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11-3.14", [({11, 12, 13, 14}, False)]),
+        ("Python 3.11 up to 3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11 through Python 3.13", [({11, 12, 13}, False)]),
+        ("Python `3.11`–`3.13`", [({11, 12, 13}, False)]),
+        ("requires-python >=3.11,<3.14", [({11, 12, 13}, False)]),
+        ("requires-python >=3.11, <=3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11, 3.12 and 3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11, 3.12, and 3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11 & 3.13", [({11, 13}, False)]),
+        ("Python 3.11 or 3.13", [({11, 13}, False)]),
+        ("Python 3.11 and later (tested through 3.13)", [({11, 12, 13}, False)]),
+        ("Python 3.11+ (tested through 3.13)", [({11, 12, 13}, False)]),
+        ("Python 3.11+, validated up to 3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11+ (tested on 3.13)", [({11, 12, 13}, False)]),
+        ("Python 3.11+ (tested with 3.13)", [({11, 12, 13}, False)]),
+        ("Python 3.11; 3.12; 3.13", [({11, 12, 13}, False)]),
+        ("from Python 3.11 up to and including 3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11 -- 3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11 ‐ 3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11−3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11...3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11…3.13", [({11, 12, 13}, False)]),
+        ("python3.11–python3.13", [({11, 12, 13}, False)]),
+        ("Python ≥3.11, <3.14", [({11, 12, 13}, False)]),
+        ("Python ≥ 3.11, ≤ 3.13", [({11, 12, 13}, False)]),
+        ("Python <3.14,>=3.11", [({11, 12, 13}, False)]),
+        ("Python <=3.13, >=3.11", [({11, 12, 13}, False)]),
+        ("Python 3.11–3.13's standard library", [({11, 12, 13}, False)]),
+        ("Python 3.11–3.13’s standard library", [({11, 12, 13}, False)]),
+        ("Python 3.11 through 3.13's tokenizer", [({11, 12, 13}, False)]),
+        ("Python 3.11, 3.12 and 3.13's tokenizers", []),
+        ("Python 3.11's tokenizer and 3.13's", []),
+        ("macOS runners use Python 3.11 – 3.13", [({11, 12, 13}, True)]),
+        ("CI runs on macOS for 3.11 and 3.14", [({11, 14}, True)]),
+        ("The macOS 3.11 and 3.14 CI jobs install the locks", [({11, 14}, True)]),
+        (
+            "The workflow covers Linux 3.11–3.14 and macOS 3.11/3.14 for lint, types and tests",
+            [({11, 12, 13, 14}, False), ({11, 14}, True)],
+        ),
+        ("ShadowScan supports Linux and macOS 3.11-3.14", [({11, 12, 13, 14}, False)]),
+        ("On macOS, ShadowScan supports 3.11 to 3.14", [({11, 12, 13, 14}, False)]),
+        (
+            "CI tests macOS 3.11/3.14. ShadowScan supports 3.11 to 3.14",
+            [({11, 14}, True), ({11, 12, 13, 14}, False)],
+        ),
+        ("Use CPython 3.12.4 or later rather than 3.12.0 to 3.12.3", []),
+        ("Python 3.12+ tokenizers stop at 200 levels and 3.11 has no limit", []),
+        ("SARIF 2.1.0, 3.11.6", []),
+        ("a `type` statement on Python 3.11, or Python 3.14's `except A, B:` on 3.13", []),
+        ("Python 3.11 is the minimum", []),
+    ],
+)
+def test_interpreter_span_matcher_reads_ordinary_spellings(
+    paragraph: str, expected: list[tuple[set[int], bool]]
+) -> None:
+    """The range check above is only as good as the matcher: each spelling here once passed it."""
+    assert [(_span_minors(span), macos) for span, macos in _interpreter_spans(paragraph)] == expected
 
 
 def test_distribution_rename_preserves_cli_and_plugin_contract() -> None:
@@ -878,6 +1148,24 @@ def test_make_secrets_runs_the_ci_credential_check_and_is_part_of_make_check() -
     assert command in "\n".join(_ci_run_lines())
     check = re.search(r"^check:(.*?)##", makefile, re.M)
     assert check is not None and "secrets" in check.group(1).split()
+
+
+@pytest.mark.parametrize(
+    ("target", "command"),
+    [
+        ("complexity", "python -m tools.complexity_gate"),
+        ("ocsf-schema", "python -m tools.ocsf_schema --check"),
+    ],
+)
+def test_make_check_runs_the_tool_gates_ci_runs(target: str, command: str) -> None:
+    """CI runs these before ruff and pytest, so a local `make check` that skipped them passed a red build."""
+    assert command in _ci_run_lines()
+    makefile = _read(ROOT / "Makefile")
+    recipe = makefile.split(f"\n{target}:", 1)[1].split("\n.PHONY", 1)[0]
+    assert f"\t{command}\n" in recipe
+    for gate in ("check", "check-fast"):
+        prerequisites = re.search(rf"^{gate}:(.*?)##", makefile, re.M)
+        assert prerequisites is not None and target in prerequisites.group(1).split(), gate
 
 
 def test_pre_commit_hooks_are_immutable_and_match_ci_versions() -> None:
@@ -1167,16 +1455,92 @@ def test_pre_commit_hooks_select_files_with_types_or() -> None:
             assert len(types) <= 1, f"hook {hook['id']} lists {types} under `types`; use `types_or`"
 
 
-def test_blind_except_suppressions_give_a_reason() -> None:
-    """Every suppressed broad `except` (ruff BLE001) states why it is intentional."""
-    bare = [
-        f"{path.relative_to(ROOT)}:{number}"
-        for directory in ("shadowscan", "tools", "tests")
-        for path in sorted((ROOT / directory).rglob("*.py"))
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
-        if re.search(r"#\s*noqa:\s*BLE001(?!\s+-\s+\S)", line)
+#: A suppression and its reason. One line can break two rules at once -- a
+#: broad `except ... : pass` in a teardown path is both BLE001 and S110 -- so
+#: the codes are a list, and the reason follows all of them.
+_SUPPRESSION = re.compile(r"#\s*noqa:\s*(?P<codes>[A-Z]+\d+(?:\s*,\s*[A-Z]+\d+)*)(?:\s*-\s*(?P<reason>.*))?$")
+#: Rules whose suppression must say why. Both mark a deliberately swallowed
+#: failure, which is exactly the kind a reader needs the reason for.
+_REASONED_RULES = ("BLE001", "S110", "S112")
+
+
+def test_suppressions_of_swallowed_failures_give_a_reason() -> None:
+    """Every suppressed broad `except` or silent pass states why it is intentional."""
+    bare = []
+    for directory in ("shadowscan", "tools", "tests"):
+        for path in sorted((ROOT / directory).rglob("*.py")):
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                match = _SUPPRESSION.search(line)
+                if match is None:
+                    continue
+                codes = {code.strip() for code in match.group("codes").split(",")}
+                if not codes & set(_REASONED_RULES):
+                    continue
+                if not (match.group("reason") or "").strip():
+                    bare.append(f"{path.relative_to(ROOT)}:{number}")
+    assert not bare, f"write `# noqa: <CODES> - <reason>`: {bare}"
+
+
+def _package_bandit_suppressions() -> Iterator[tuple[str, str, set[str], str]]:
+    """Each bandit (S) suppression in the shipped package: location, line, codes and reason."""
+    for path in sorted((ROOT / "shadowscan").rglob("*.py")):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            match = _SUPPRESSION.search(line)
+            if match is None:
+                continue
+            codes = {code.strip() for code in match.group("codes").split(",")}
+            if any(re.fullmatch(r"S\d+", code) for code in codes):
+                yield f"{path.relative_to(ROOT)}:{number}", line, codes, (match.group("reason") or "").strip()
+
+
+def test_package_bandit_suppressions_give_one_reason() -> None:
+    """pyproject.toml says every S suppression in the package is a reviewed decision with a reason."""
+    unreasoned = [
+        where
+        for where, line, _, reason in _package_bandit_suppressions()
+        if not reason or line.count("# noqa") != 1
     ]
-    assert not bare, f"write `# noqa: BLE001 - <reason>`: {bare}"
+    assert not unreasoned, f"write one `# noqa: <CODES> - <reason>` per line: {unreasoned}"
+
+
+#: A lint suppression comment: `noqa` for its line or, after `ruff:` or
+#: `flake8:`, for its whole file. Matched ignoring case, as ruff reads the
+#: line form.
+_NOQA_DIRECTIVE = re.compile(r"#\s*(?:(?:ruff|flake8)\s*:\s*)?noqa", re.IGNORECASE)
+_NOQA_CODES = re.compile(r"\s*:\s*[A-Z]+\d+(?:\s*,\s*[A-Z]+\d+)*")
+
+
+def test_noqa_comments_name_the_rules_they_suppress() -> None:
+    """A blanket `noqa` silences every rule, bandit's included, and names none.
+
+    The tests above read only `# noqa: <CODES>`, so a blanket one got past
+    them and still suppressed S602. Ruff's PGH004 rejects it in lint; this
+    holds the paths ruff checks to it should the select list change.
+    """
+    excluded = [ROOT / entry for entry in _pyproject()["tool"]["ruff"]["exclude"]]
+    blanket = []
+    for directory in ("shadowscan", "tests", "tools", "benchmarks"):
+        for path in sorted((ROOT / directory).rglob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            if "noqa" not in text.lower() or any(path.is_relative_to(entry) for entry in excluded):
+                continue
+            for token in tokenize.generate_tokens(io.StringIO(text).readline):
+                if token.type != tokenize.COMMENT:
+                    continue
+                for directive in _NOQA_DIRECTIVE.finditer(token.string):
+                    if not _NOQA_CODES.match(token.string, directive.end()):
+                        blanket.append(f"{_relative(path)}:{token.start[0]}")
+    assert not blanket, f"name the codes: `# noqa: <CODES> - <reason>`: {blanket}"
+
+
+def test_partial_path_suppressions_name_the_program_they_start() -> None:
+    """An S607 reason is about the executable on its own line, not one copied from another call."""
+    misnamed = []
+    for where, line, codes, reason in _package_bandit_suppressions():
+        program = re.search(r'\[\s*"([^"]+)"', line)
+        if "S607" in codes and (program is None or program.group(1) not in reason):
+            misnamed.append(where)
+    assert not misnamed, f"name the program each S607 suppression starts: {misnamed}"
 
 
 def test_dev_extra_is_fully_pinned_for_ci() -> None:
@@ -1259,22 +1623,36 @@ def test_signature_count_claims_are_recognised(text: str, claims: list[tuple[int
 
 
 # Root documents that describe the current tree. The site includes RELEASE_NOTES.md, SECURITY.md and
-# GOVERNANCE.md as snippets, so a stale number there is published too. CHANGELOG.md is a dated log
-# that quotes earlier counts and is left out, as are the released sections of RELEASE_NOTES.md,
-# which quote the counts of their own version (see ``_current_text``). benchmarks/ is left out for
-# the same reason: its READMEs and run reports describe runs made at a recorded commit, so a total
-# stated there belongs to that commit.
+# GOVERNANCE.md as snippets, so a stale number there is published too. CHANGELOG.md and the
+# engineering log (docs/engineering-log.md) are dated logs that quote earlier counts and are left
+# out, as are the released sections of RELEASE_NOTES.md, which quote the counts of their own
+# version (see ``_current_text``). benchmarks/ is left out for the same reason: its READMEs and run
+# reports describe runs made at a recorded commit, so a total stated there belongs to that commit.
 _CURRENT_ROOT_DOCS = ("README.md", "RELEASE_NOTES.md", "SECURITY.md", "GOVERNANCE.md", "CONTRIBUTING.md")
 # The first heading of a released section in RELEASE_NOTES.md: ``## 0.1.1 — 2026-10-08``.
 _RELEASED_HEADING = re.compile(r"^## \d+\.\d+", re.MULTILINE)
 
 
+# The dated engineering log quotes the counts of each entry's date, like CHANGELOG.md.
+_DATED_DOCS = frozenset({"engineering-log.md"})
+
+
 def _current_docs() -> list[Path]:
-    """Documents that describe the current tree; dated review logs may quote old numbers."""
+    """Documents that describe the current tree; dated review and engineering logs may quote old numbers.
+
+    ``docs/history/`` holds relocated dated logs (the production candidate
+    change history), which record numbers and defaults as they were at each
+    change, so they are history for these checks too. Their links, whitespace
+    and former-name hygiene are still checked by the walkers that enumerate
+    documents themselves.
+    """
     return [
         path
         for path in [*(ROOT / name for name in _CURRENT_ROOT_DOCS), *sorted((ROOT / "docs").rglob("*.md"))]
-        if "hardening-logs" not in path.parts and not re.search(r"review-\d{4}-\d{2}-\d{2}", path.name)
+        if "hardening-logs" not in path.parts
+        and path.name not in _DATED_DOCS
+        and "history" not in path.parts
+        and not re.search(r"review-\d{4}-\d{2}-\d{2}", path.name)
     ]
 
 
@@ -1427,6 +1805,146 @@ def test_documented_gcp_pagination_caps_match_the_connector(index) -> None:
     assert caps in help_text
 
 
+def test_endpoint_guide_names_every_google_ai_service_the_ebpf_host_rule_takes() -> None:
+    """endpoint.ebpf's AI host rule takes the GCP connector's AI services; the guide lists
+    them, so a service added there must be named in the guide too."""
+    text = " ".join(_read(ROOT / "docs" / "connectors" / "endpoint.md").split())
+    for host in GCP_AI_SERVICES:
+        assert f"`{host.removesuffix('.googleapis.com')}`" in text, host
+    assert "`aiplatform.mtls.googleapis.com`" in text
+
+
+# --- Migration notes ------------------------------------------------------------
+
+
+def _markdown_section(text: str, heading: str) -> str:
+    """The body under one heading line, up to the next heading of the same or a higher level."""
+    assert f"\n{heading}\n" in text, f"no {heading!r} heading"
+    level = len(heading) - len(heading.lstrip("#"))
+    start = text.index(f"\n{heading}\n") + len(heading) + 2
+    end = re.compile(rf"^#{{1,{level}}} ", re.MULTILINE).search(text, start)
+    return text[start : end.start() if end else len(text)]
+
+
+def _connector_stats(connector: Any, records: list[dict[str, Any]]) -> tuple[list[Any], ScanStats]:
+    connector.ctx.stats = ScanStats(connector=connector.name, started_at="2026-01-01T00:00:00Z")
+    return list(connector.analyze(records)), connector.ctx.stats
+
+
+def test_connector_migration_note_describes_the_connectors_as_they_behave() -> None:
+    """Regression: the note said endpoint.host reports a row only when an AI product signature
+    matches its name or path, which a bare osquery or MDM row for Ollama or LM Studio does not, and
+    it left out two changes operators see against a baseline: resource attributes merged into
+    nested gateway.otel spans, and native eBPF events with unread fields marking a scan incomplete.
+    Each statement is checked against the connector before the note is required to make it."""
+    heading = "## October 17 connector correctness migration (Unreleased)"
+    note = " ".join(_markdown_section(_read(ROOT / "docs" / "production-migrations.md"), heading).split())
+
+    # endpoint.host: a bare row naming a local runtime is reported, and so is every model store the
+    # catalog lists below a home directory (the GPT4All and Jan stores among them, which a check
+    # of ~/.ollama/models alone left unchecked); a directory merely named like one elsewhere is not.
+    for row in ({"name": "Ollama"}, {"name": "LM Studio.app", "path": "/Applications/LM Studio.app"}):
+        assert _connector_stats(HostConnector(ConnectorContext()), [row])[0], row
+    stores = [{"path": f"~/{store.root}"} for store in MODEL_STORES]
+    reported = [bool(_connector_stats(HostConnector(ConnectorContext()), [row])[0]) for row in stores]
+    assert len(set(reported)) == 1, f"the catalog's model stores are not reported alike: {stores}, {reported}"
+    elsewhere = {"path": "/srv/app/jan/models/user.rb"}
+    assert not _connector_stats(HostConnector(ConnectorContext()), [elsewhere])[0]
+    for phrase in (
+        "names a known AI product or runtime, or an AI category",
+        "known AI product or local model runtime",
+        "Ollama",
+        "LM Studio",
+        "GPT4All",
+        "`process`",
+    ):
+        assert phrase in note, f"the endpoint.host note should say {phrase!r}"
+    store_claim = "below a home directory, a model store the endpoint catalog lists"
+    assert (store_claim in note) is reported[0], "the endpoint.host note should say model stores are reported"
+    assert ("model-store directory" in note) is not reported[0], (
+        "the endpoint.host note should say whether a row naming only a model-store directory is reported"
+    )
+    assert "name or path matches an AI product signature or" not in note
+
+    # gateway.otel: resource attributes merge into nested spans, giving new findings and providers.
+    def nested(resource: dict[str, str], span: dict[str, str]) -> dict[str, Any]:
+        def attributes(values: dict[str, str]) -> list[dict[str, Any]]:
+            return [{"key": key, "value": {"stringValue": value}} for key, value in values.items()]
+
+        spans = [{"name": "call", "attributes": attributes(span)}]
+        return {
+            "resourceSpans": [
+                {"resource": {"attributes": attributes(resource)}, "scopeSpans": [{"spans": spans}]}
+            ]
+        }
+
+    resource_only = nested({"service.name": "svc", "gen_ai.system": "anthropic"}, {})
+    assert [finding.provider for finding in OtelConnector(ConnectorContext()).analyze([resource_only])] == [
+        "anthropic"
+    ]
+    model_only = nested({"service.name": "svc", "gen_ai.system": "openai"}, {"gen_ai.request.model": "m"})
+    assert [finding.provider for finding in OtelConnector(ConnectorContext()).analyze([model_only])] == [
+        "openai"
+    ]
+    for phrase in ("resource attributes", "span attributes", "`unknown`", "new findings"):
+        assert phrase in note, f"the gateway.otel note should say {phrase!r}"
+
+    # endpoint.ebpf: a recognized event with a wrong-typed field marks the scan incomplete, and
+    # the list limit, like malformed fields, is warned once per producer, not once per scan.
+    tracee = {"eventName": "security_socket_connect", "processName": "uvicorn", "args": "remote_addr"}
+    _, stats = _connector_stats(EbpfConnector(ConnectorContext()), [tracee, tracee])
+    assert stats.incomplete
+    assert len(stats.warnings) == 1
+    long_tracee = {**tracee, "args": [{"name": "fd", "value": 3}] * 101}
+    long_hubble = {
+        "flow": {"destination_names": ["a.example"] * 101, "l4": {"TCP": {"destination_port": 443}}}
+    }
+    _, stats = _connector_stats(EbpfConnector(ConnectorContext()), [long_tracee, long_hubble, long_hubble])
+    assert stats.incomplete
+    assert len(stats.warnings) == 2 and all("list limit" in warning for warning in stats.warnings)
+    for phrase in (
+        "wrong type",
+        "100 entries",
+        "one warning per producer",
+        "one per producer for the list limit",
+    ):
+        assert phrase in note, f"the endpoint.ebpf note should say {phrase!r}"
+
+
+def test_connector_finding_churn_has_a_migration_note() -> None:
+    """Regression: #256 changed three offline connectors' findings with no rebaseline guidance.
+
+    Nested OTLP exports reached gateway.otel without their resource attributes, so callers merged
+    into one ``unknown-service`` finding; each service is now its own finding under a new id.
+    endpoint.host stopped reporting rows nothing ties to AI, and endpoint.ebpf now reads native
+    exports and marks a scan with unrecognized records incomplete. A comparison with an older
+    baseline shows findings as resolved or new that are neither, and finding-identity changes
+    need a migration note (AGENTS.md).
+    """
+    # A nested span without a service.name still gets the resource every nested caller used to get.
+    span = {"attributes": [{"key": "gen_ai.system", "value": {"stringValue": "openai"}}]}
+    nested = {"resourceSpans": [{"resource": {"attributes": []}, "scopeSpans": [{"spans": [span]}]}]}
+    [former] = [finding.resource for finding in OtelConnector(ConnectorContext()).analyze([nested])]
+    heading = "## October 17 connector correctness migration (Unreleased)"
+    note = " ".join(_markdown_section(_read(ROOT / "docs" / "production-migrations.md"), heading).split())
+    for named in (
+        "`gateway.otel`",
+        "`endpoint.host`",
+        "`endpoint.ebpf`",
+        f"`{former}`",
+        "incomplete (exit 3)",
+    ):
+        assert named in note, f"the connector migration note should name {named}"
+    assert "baseline" in note, "the connector migration note should say to rebuild comparison baselines"
+    entry = _markdown_section(
+        _read(ROOT / "docs" / "engineering-log.md"),
+        "### Review fixes: connector correctness, CI check names, benchmark framing (October 17)",
+    )
+    assert "(production-migrations.md#october-17-connector-correctness-migration-unreleased)" in entry, (
+        "the #256 engineering-log entry should link its migration note"
+    )
+
+
 # --- Documented report and transport behaviour matches the code --------------
 
 # How the documents name each character after which the CSV reporter can put a
@@ -1485,6 +2003,84 @@ def test_documented_http_read_deadline_matches_the_client() -> None:
         assert claimed == expected, f"{_relative(path)} says {match.group(0)!r}; the client uses {expected}"
 
 
+def test_documented_automatic_deadline_ceiling_matches_the_probe() -> None:
+    """The engineering log states the most the filesystem probe can propose, not the engine's cap.
+
+    Regression: the entry said the deadline scales "capped at 30 minutes", the
+    engine's ceiling, which a probe that stops counting at 20,000 entries never
+    reaches: the proposal saturates at 200 seconds.
+    """
+    probe = FilesystemConnector
+    ceiling = DEFAULT_CONNECTOR_TIMEOUT * probe._PROBE_LIMIT / probe._ENTRIES_PER_DEFAULT_BUDGET
+    claim = (
+        f"counts up to {probe._PROBE_LIMIT:,} entries",
+        f"at most {ceiling:.0f} seconds at the {DEFAULT_CONNECTOR_TIMEOUT:.0f}-second default",
+    )
+    log = ROOT / "docs" / "engineering-log.md"
+    assert any(all(part in paragraph for part in claim) for paragraph in _paragraphs(log)), (
+        f"{_relative(log)} must say that code.filesystem {claim[0]} and proposes {claim[1]}"
+    )
+
+
+# A connector deadline set to the default's value, as a configuration key (YAML or Python) or a
+# command-line flag, on a line that is not a comment.
+_EXPLICIT_DEFAULT_TIMEOUT = re.compile(
+    r"^[^#\n]*?(?:\bconnector_timeout(?:_seconds)?\s*[:=]\s*|--connector-timeout(?:-seconds)?[ =]+)"
+    rf"{DEFAULT_CONNECTOR_TIMEOUT:.0f}(?:\.0*)?(?![\w.])",
+    re.MULTILINE,
+)
+_CODE_FENCE = re.compile(r"^[ \t]*(`{3,}|~{3,})[^\n]*\n(.*?)^[ \t]*\1[ \t]*$", re.MULTILINE | re.DOTALL)
+# Dated records quote what a page or a configuration once said; prose may name the setting it warns
+# against. Only the configurations and commands people copy are checked.
+_DATED_RECORDS = frozenset({"CHANGELOG.md", "RELEASE_NOTES.md", "docs/engineering-log.md"})
+
+
+def _copyable_samples() -> Iterator[tuple[str, str]]:
+    """Every code block of the live documentation, and every example file, with where it is."""
+    for path in _markdown_files():
+        dated = _relative(path) in _DATED_RECORDS or path.is_relative_to(ROOT / "docs" / "history")
+        if dated or any(path.is_relative_to(ROOT / folder) for folder in ("archive", "benchmarks")):
+            continue
+        for match in _CODE_FENCE.finditer(_read(path)):
+            yield _relative(path), match.group(2)
+    for path in sorted((ROOT / "examples").rglob("*")):
+        if path.is_file() and path.suffix != ".md":
+            yield _relative(path), _read(path)
+
+
+def test_explicit_default_timeout_check_flags_only_live_settings() -> None:
+    flagged = (
+        "  connector_timeout_seconds: 120      # cooperative deadline per connector\n",
+        "options:\n  connector_timeout: 120.0\n",
+        "shadowscan code . --connector-timeout-seconds 120\n",
+        "ScanConfig(connector_timeout_seconds=120)\n",
+    )
+    passed = (
+        "  # connector_timeout_seconds: 120    # omit it to let the deadline scale\n",
+        "  connector_timeout_seconds: 1200\n",
+        "  connector_timeout_seconds: 120.5\n",
+        "shadowscan code . --connector-timeout-seconds 300\n",
+    )
+    assert all(_EXPLICIT_DEFAULT_TIMEOUT.search(text) for text in flagged)
+    assert not any(_EXPLICIT_DEFAULT_TIMEOUT.search(text) for text in passed)
+    fenced = "Prose `connector_timeout_seconds: 120` stays.\n\n```yaml\noptions:\n  parallel: 2\n```\n"
+    assert [match.group(2) for match in _CODE_FENCE.finditer(fenced)] == ["options:\n  parallel: 2\n"]
+
+
+def test_no_sample_configuration_sets_the_default_connector_timeout() -> None:
+    """Regression: README's full reference, the getting-started page, the production guide and the
+    plugin example set ``connector_timeout_seconds: 120``. Only the unset default is raised to fit
+    a large tree; a value someone sets, 120 included, is honoured unchanged, so a configuration
+    copied from those samples gave a large repository a fixed 120 seconds and an incomplete scan.
+    A sample leaves the option out, or sets a value it means to fix."""
+    explicit = [
+        f"{where}: {match.group(0).strip()}"
+        for where, text in _copyable_samples()
+        for match in _EXPLICIT_DEFAULT_TIMEOUT.finditer(text)
+    ]
+    assert not explicit, f"samples fix the default connector deadline, which disables its scaling: {explicit}"
+
+
 _PLUGIN_EXECUTION_ROW = re.compile(r"^\| `plugin_execution` \| `(\w+)` \|", re.MULTILINE)
 _PLUGIN_EXECUTION_DEFAULT_CLAIM = re.compile(
     r"\bdefaults?\b[^.;`]{0,40}`(?:options\.)?(?:plugin_execution: )?(thread|process)`"
@@ -1524,6 +2120,99 @@ def test_documented_fixture_connector_count_matches_the_demo_configuration() -> 
     for path, match in claims:
         claimed = (int(match.group(1)), int(match.group(2)))
         assert claimed == actual, f"{_relative(path)} claims {claimed}, the demo configures {actual}"
+
+
+_GAP_BUDGET_CLAIM = re.compile(r"(\d+(?:\.\d+)?)% coverage budget")
+
+
+def test_documented_coverage_budget_matches_the_default() -> None:
+    """The README states the gap budget; the code sets it.
+
+    Every other count in this README is pinned to the code. The fail-closed
+    wording describes behaviour an operator relies on for a CI gate, so it is
+    pinned too rather than left to drift the way it did when the budget was
+    introduced.
+    """
+    actual = DEFAULT_MAX_GAP_RATIO * 100
+    claims = [(path, m) for path in _current_docs() for m in _GAP_BUDGET_CLAIM.finditer(_read(path))]
+    assert claims, "the README should state the coverage-gap budget"
+    for path, match in claims:
+        claimed = float(match.group(1))
+        assert claimed == actual, (
+            f"{_relative(path)} claims a {claimed}% budget; DEFAULT_MAX_GAP_RATIO is {actual}%"
+        )
+
+
+def test_ci_never_deselects_the_slow_timed_sweeps() -> None:
+    """``make test-fast`` is a local convenience; CI must still run everything.
+
+    The slow marker covers the ReDoS sweeps, which are the tests most worth
+    keeping and the most tempting to skip when a pipeline is over time.
+    """
+    for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        text = _read(workflow)
+        assert "not slow" not in text, (
+            f"{_relative(workflow)} deselects the slow tests; they are the ReDoS and "
+            "linearity sweeps and CI is the one place that must run them"
+        )
+
+
+def test_the_fail_closed_summary_names_the_coverage_budget() -> None:
+    """The one line an operator reads before wiring exit 3 into a CI gate.
+
+    Deliberately checks two known claims rather than scanning prose for
+    "limit" near "exit 3": that search matched a byte cap on a config read
+    and a lineage tracing bound, neither of which has anything to do with
+    coverage. A checker with false positives gets suppressed, and then it
+    guards nothing -- the same failure this budget exists to prevent.
+    """
+    readme = _read(ROOT / "README.md")
+    summary = next(
+        (line for line in readme.splitlines() if line.startswith("| **Fail-closed design**")),
+        None,
+    )
+    assert summary is not None, "the README should keep its fail-closed capability row"
+    assert "budget" in summary.lower(), (
+        "the fail-closed row must say that bounded gaps are budgeted, not that every "
+        f"limit produces exit 3: {summary}"
+    )
+    assert "report" in summary.lower(), "it must also say a tolerated gap is still reported"
+
+    pipeline = next((para for para in re.split(r"\n\s*\n", readme) if "fail closed:" in para), None)
+    assert pipeline is not None, "the README should keep its fail-closed pipeline paragraph"
+    assert "budget" in pipeline, "the pipeline paragraph must name the coverage budget"
+    assert "strict_coverage" in pipeline, "and the option that restores strict accounting"
+
+
+_LIVE_CLAIM = re.compile(r"(\d+) of the (\d+) connectors collect from a live API")
+
+
+def test_documented_live_connector_count_matches_the_declared_capability() -> None:
+    """The README says how many connectors reach a live API; the classes declare it.
+
+    "Live and offline modes" alone let a reader assume every connector does
+    both. Ten read an export something else produced and have no API to call,
+    so the split is published -- and pinned here, because a disclosure that
+    silently goes stale is worse than none.
+    """
+    names = builtin_connector_names()
+    live = sum(1 for name in names if get_connector_class(name).live_collection)
+    actual = (live, len(names))
+    claims = [(path, match) for path in _current_docs() for match in _LIVE_CLAIM.finditer(_read(path))]
+    assert claims, "the README should state how many connectors collect from a live API"
+    for path, match in claims:
+        claimed = (int(match.group(1)), int(match.group(2)))
+        assert claimed == actual, f"{_relative(path)} claims {claimed}, the classes declare {actual}"
+
+
+def test_every_offline_only_connector_actually_refuses_to_collect() -> None:
+    """``live_collection = False`` must describe the code, not merely annotate it."""
+    for name in builtin_connector_names():
+        cls = get_connector_class(name)
+        if cls.live_collection:
+            continue
+        source = inspect.getsource(cls.collect)
+        assert "raise" in source, f"{name} declares no live collection but its collect() does not refuse"
 
 
 _DEMO_COMMAND = "$ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows "
@@ -2032,3 +2721,69 @@ def test_assurance_results_synthetic_case_count_matches_corpus() -> None:
         f"negatives) but tools/evaluation/corpus.json has {len(cases)} ({present} positives, "
         f"{absent} negatives)"
     )
+
+
+@pytest.mark.parametrize("name", ["SECURITY.md", "docs/production.md", "docs/connectors.md"])
+def test_plugin_isolation_docs_name_the_parent_environment_route(name: str) -> None:
+    """Regression: the guides said a process-mode worker is started without the credentials, but
+    not that a plugin running as the scanner's user still reads every one of them from its
+    parent's ``/proc/<ppid>/environ``, nor what keeps a credential from an untrusted plugin."""
+    text = " ".join(_read(ROOT / name).split())
+    assert "/proc/<ppid>/environ" in text, f"{name} must name the parent's /proc/<ppid>/environ"
+    assert "lifecycle isolation, not a" in text, f"{name} must say process mode is not a sandbox"
+    assert "secrets manager" in text, f"{name} must recommend files or a secrets manager"
+    assert "under a separate user or in a separate container" in text, (
+        f"{name} must recommend a separate user or container for an untrusted plugin"
+    )
+
+
+# Statements the unified coverage semantics made false: strict accounting has two
+# spellings, the budget is judged per root and repository, and gaps the scanner can
+# bound are budgeted rather than fatal on their own. Matched case-insensitively on
+# whitespace-normalized text.
+_STALE_COVERAGE_CLAIMS = (
+    "restore the previous behaviour exactly",
+    "restores the previous accounting exactly",
+    "every other link makes the scan incomplete",
+    "charged to one coverage budget for the run",
+    "fails closed on every gap",
+    "dangling test certificate links each exit 3 by default",
+    "it conflicts with `strict_coverage`",
+    # The ci profile's other gaps are judged by the budget, not exit 3 on their own.
+    "every other gap still exits 3",
+    "every other gap still marks the scan incomplete",
+    # An incidental oversize file is one budgeted entry.
+    "still exits 3 under the default settings",
+    "any other oversize analyzable file makes coverage incomplete",
+    # Binary fixtures cost a whole entry each: about 2% of a root exhaust it.
+    "seeded with hundreds",
+    # A file left unread for credentials is never declared.
+    "unread for credentials; declared omission",
+)
+
+
+def test_coverage_docs_state_the_unified_semantics() -> None:
+    sources = [
+        *_current_docs(),
+        ROOT / "shadowscan" / "connectors" / "code" / "filesystem.py",
+        ROOT / "shadowscan" / "cli" / "_scan.py",
+    ]
+    for path in sources:
+        text = (
+            " ".join(_current_text(path).split()).lower()
+            if path.suffix == ".md"
+            else " ".join(_read(path).split()).lower()
+        )
+        for claim in _STALE_COVERAGE_CLAIMS:
+            assert claim not in text, f"{_relative(path)} still says {claim!r}"
+    scanning = " ".join(_read(ROOT / "docs" / "scanning.md").split())
+    assert "### Coverage budget and strict accounting" in _read(ROOT / "docs" / "scanning.md")
+    for statement in (
+        "are both strict accounting",
+        "The budget is judged per scan root, and per repository for `code.github` and `code.gitlab`",
+        "the `allowance` is the sum of their allowances",
+        "`summary.tolerated_gaps`",
+    ):
+        assert statement in scanning, f"docs/scanning.md no longer says {statement!r}"
+    keys = FilesystemConnector.config_keys
+    assert "strict accounting" in keys["max_coverage_gap"] and "strict accounting" in keys["strict_coverage"]

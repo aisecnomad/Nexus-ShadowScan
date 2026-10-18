@@ -39,6 +39,7 @@ from shadowscan.models import (
 from shadowscan.risk import (
     AUTONOMY_WEIGHTS,
     CAPABILITY_WEIGHTS,
+    COMBINATION_WEIGHTS,
     GOVERNANCE_WEIGHTS,
     KIND_BASE,
     PROVIDER_WEIGHTS,
@@ -367,6 +368,13 @@ def _reference_assess(finding: Finding, index, inventory_present: bool) -> Risk:
             w, d = TAG_WEIGHTS[tag]
             if w:
                 factors.append(RiskFactor(f"tag:{tag}", d, w))
+    # Capability interactions, in the same position as the real scorer emits
+    # them: after the individual capabilities, before providers.
+    present = set(finding.capabilities)
+    for cid in sorted(COMBINATION_WEIGHTS):
+        caps, weight, description = COMBINATION_WEIGHTS[cid]
+        if weight and caps <= present:
+            factors.append(RiskFactor(f"combination:{cid}", description, weight))
     for pid in finding.model_providers:
         if pid in PROVIDER_WEIGHTS:
             w, d = PROVIDER_WEIGHTS[pid]
@@ -948,3 +956,44 @@ def test_evidence_in_one_confidence_group_counts_once_at_its_strongest():
     # Different groups, and grouped plus ungrouped evidence, are independent of each other.
     assert _confidence(0.4, 0.5, groups=("one", "two")) == 0.7
     assert _confidence(0.4, 0.5, 0.4, groups=("g", "g", None)) == 0.7
+
+
+# ------------------------------------------------------- repeated list items
+
+
+def _secret(**overrides) -> Finding:
+    return _finding(kind=Kind.SECRET, resource_type="file", confidence=1.0, **overrides)
+
+
+def test_a_repeated_tag_counts_once():
+    # Regression: capabilities were deduplicated but tags and providers were
+    # not, so ``["hardcoded-credential"] * 3`` scored 100 where one scored 65.
+    once = assess(_secret(tags=["hardcoded-credential"]))
+    thrice = assess(_secret(tags=["hardcoded-credential"] * 3))
+    assert thrice.score == once.score
+    assert [factor.id for factor in thrice.factors].count("tag:hardcoded-credential") == 1
+
+
+def test_a_repeated_provider_and_capability_count_once():
+    once = assess(_finding(model_providers=["provider.openai"], capabilities=["code-exec"]))
+    repeated = assess(
+        _finding(model_providers=["provider.openai"] * 3, capabilities=["code-exec", "code-exec"])
+    )
+    assert repeated.score == once.score
+    assert [factor.id for factor in repeated.factors] == [factor.id for factor in once.factors]
+
+
+def test_imported_findings_are_canonicalized_before_they_reach_the_scorer():
+    # Reports, cache entries and plugin results all enter through from_dict.
+    exported = _secret(tags=["hardcoded-credential"]).to_dict()
+    exported["tags"] = ["hardcoded-credential", "hardcoded-credential", "test-code-only", "test-code-only"]
+    exported["model_providers"] = ["provider.openai", "provider.openai"]
+    imported = Finding.from_dict(exported)
+    assert imported.tags == ["hardcoded-credential", "test-code-only"]
+    assert imported.model_providers == ["provider.openai"]
+    assert (
+        assess(imported).score
+        == assess(
+            _secret(tags=["hardcoded-credential", "test-code-only"], model_providers=["provider.openai"])
+        ).score
+    )

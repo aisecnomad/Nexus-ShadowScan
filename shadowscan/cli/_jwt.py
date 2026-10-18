@@ -7,9 +7,7 @@ from typing import Any
 
 import click
 
-# Late-bound through the package: tests patch ``shadowscan.cli.<name>``, and the commands must see the
-# patched object, as they did when this was a single module.
-import shadowscan.cli as _cli_pkg
+import shadowscan.cli as _cli
 from shadowscan.cli import ScanOptions, _warn_argv_secret, main, scan_options
 from shadowscan.config import ConnectorSpec
 
@@ -62,4 +60,4 @@ def jwt(
             conf["tokens"] = [line.strip() for line in sys.stdin if line.strip()]
         else:
             raise click.UsageError("give tokens as arguments, --file, or on stdin")
-    _cli_pkg._run_scan(opts.config([ConnectorSpec(name="identity.jwt", config=conf)]), opts)
+    _cli._run_scan(opts.config([ConnectorSpec(name="identity.jwt", config=conf)]), opts)

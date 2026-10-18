@@ -28,8 +28,9 @@ from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, failure_summary
-from shadowscan.connectors.code.filesystem import FilesystemConnector
+from shadowscan.connectors.code.filesystem import FilesystemConnector, coverage_profile
 from shadowscan.connectors.code.manifests import is_manifest_name
+from shadowscan.connectors.common import config_boolean
 from shadowscan.connectors.posture import posture_client
 from shadowscan.models import Finding
 from shadowscan.utils.git import (
@@ -272,6 +273,20 @@ class RemoteRepositoryConnector(BaseConnector):
     clone_timeout_seconds: float
     http: HttpClient
 
+    def __init__(self, ctx: ConnectorContext) -> None:
+        super().__init__(ctx)
+        # The nested code.filesystem connector is built for each repository once
+        # collection has started. Refuse its options now, before anything is
+        # fetched, as code.filesystem refuses them: the ci profile under strict
+        # accounting (strict_coverage, or the scan-wide gap budget of 0 that
+        # this connector's checkouts are judged by).
+        options = self._filesystem_options()
+        coverage_profile(
+            {**options, "_max_coverage_gap": self._resolve_coverage_policy().max_gap_ratio},
+            strict_coverage=config_boolean(options.get("strict_coverage", False), "strict_coverage"),
+            connector=self.name,
+        )
+
     @classmethod
     def scanned_local_paths(cls, config: dict[str, Any]) -> list[str]:
         # Engine hook: an offline directory of clones is scanned content, like a
@@ -481,6 +496,14 @@ class RemoteRepositoryConnector(BaseConnector):
         fs.tree_listing_incomplete = repo.get("_tree_incomplete") is True
         # Share the diagnostic budget so repositories cannot each fill 1000 entries.
         fs.ctx._diagnostic_counts = self.ctx._diagnostic_counts
+        # Share the coverage ledger and this connector's gap budget too. The
+        # nested connector's run() never runs, so nothing would judge its
+        # gaps; this connector's finalize_coverage judges every repository's.
+        # The nested connector also reads the policy: a budget of 0 is strict
+        # accounting there (FilesystemConnector._strict_accounting), so no
+        # checkout gap is discounted as test code under --max-coverage-gap 0.
+        fs.ctx._coverage = self.ctx._coverage
+        fs.ctx.set_coverage_policy(self.ctx.coverage_policy)
         if isinstance(snapshot, dict) and snapshot.get("capture_method") == "git-clone":
             # Cloning already authorizes Git. Inspect gitlinks even without a
             # .gitmodules declaration; never fetch their remote contents.

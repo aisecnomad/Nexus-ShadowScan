@@ -20,7 +20,11 @@ AI product name.
 `users.list` (bots), `admin.apps.approved.list` / `restricted` / `requests`
 (scopes, pending requests), `team.integrationLogs` (who installed what).
 `team.info` must return an authenticated workspace identity. If `team_id` is
-configured, it must match exactly before inventory calls begin. Missing/null
+configured, it must match exactly before inventory calls begin. `team_id` is
+then sent with `users.list`, the `admin.apps.*` lists and `team.integrationLogs`:
+Slack requires it from an org-level token (the Enterprise token the
+`admin.apps.*` lists need) and ignores it from a workspace-level token, so set
+it whenever the token is an org-level one. Missing/null
 collection arrays and malformed pagination are incomplete coverage. Later
 network failures retain already collected observations; provider error text is
 not copied into diagnostics. Complete live acceptance generally requires an
@@ -59,6 +63,17 @@ AI-like name; write access alone does not make an app an agent. Set
 tagged `unrecognized-app` and capped at possible confidence. `workflows` or
 `actions` write access implies `code-exec`; contents and pull-request writes
 are SaaS write actions.
+
+Tokens: GitHub lists the fine-grained PATs approved for an organisation
+(`GET /orgs/{org}/personal-access-tokens`) only to a GitHub App installation or
+user access token with the organization "Personal access tokens" read
+permission; a classic or fine-grained personal token is refused there. A GitHub
+App token with the organization "Administration", "Personal access tokens" and
+"GitHub Copilot Business" read permissions covers the installations, Copilot
+billing and PAT calls alike. With an organization owner's personal token as
+`token`, set `app_token` (env `GITHUB_APP_TOKEN`) to a GitHub App token for the
+PAT list; without it that listing is refused and the scan is incomplete, with a
+warning that names `app_token`.
 
 Live installation pages must report a nonnegative integer `total_count` that
 stays unchanged throughout pagination. The connector compares it with unique

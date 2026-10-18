@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from pathlib import Path
 
 import pytest
+import yaml
 from click.testing import CliRunner
 
 from shadowscan.cli import main
@@ -12,8 +14,15 @@ from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import builtin_connector_names, get_connector_class
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.cloud import kubernetes as kubernetes_module
+from shadowscan.connectors.cloud.gcp import AI_SERVICES as GCP_AI_SERVICES
 from shadowscan.connectors.cloud.kubernetes import KubernetesConnector, OpenShiftConnector
 from shadowscan.connectors.endpoint import runtime as endpoint_runtime
+from shadowscan.connectors.endpoint.catalog import (
+    AMBIGUOUS_PRODUCT_CONTEXTS,
+    AMBIGUOUS_PRODUCT_NAMES,
+    CONFIG_LOCATIONS,
+    MODEL_STORES,
+)
 from shadowscan.connectors.endpoint.runtime import (
     EbpfConnector,
     HostConnector,
@@ -29,7 +38,8 @@ from shadowscan.models import ScanResult, ScanStats, Surface
 from shadowscan.registry import Inventory, card_stub_for
 from shadowscan.reporters import FORMATS, render
 
-FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+ROOT = Path(__file__).resolve().parents[2]
+FIXTURES = ROOT / "tests" / "fixtures"
 RUNTIME_CASES = [
     pytest.param(HostConnector, {}, {"name": "local-agent"}, id="host"),
     pytest.param(
@@ -369,10 +379,1107 @@ def test_ollama_and_model_artifact_risk_tags() -> None:
     assert "unsafe-serialization" in artifact_findings[0].tags
 
 
+def test_endpoint_host_reports_only_ai_relevant_inventory_rows() -> None:
+    """Regression: every named row of a general software inventory became a
+    0.7-confidence "Host AI runtime" finding with no AI check at all."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    findings = list(
+        connector.analyze(
+            [
+                {"name": "Random Updater", "type": "application"},
+                {"name": "Slack", "type": "application"},
+                {"name": "Claude Desktop", "type": "mcp-client"},
+                {"name": "Ollama", "type": "local-llm-runtime"},
+                {"name": "GitHub Copilot"},
+            ]
+        )
+    )
+    assert sorted(finding.resource for finding in findings) == [
+        "Claude Desktop",
+        "GitHub Copilot",
+        "Ollama",
+    ]
+    # Filtered rows are an informational note, not a coverage gap.
+    assert not connector.ctx.stats.incomplete
+    assert sum("not reported" in warning for warning in connector.ctx.stats.warnings) == 1
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"name": "Ollama"},
+        {
+            "name": "Ollama.app",
+            "path": "/Applications/Ollama.app",
+            "bundle_identifier": "com.electron.ollama",
+        },
+        {"process": "ollama"},
+        {"name": "Ollama version 0.5.7", "source": "osquery"},
+        {"name": "LM Studio"},
+        {"name": "LM Studio.app", "path": "/Applications/LM Studio.app"},
+        {"name": "GPT4All"},
+        {"name": "llama.cpp"},
+        {"name": "llama-server", "path": "/opt/homebrew/bin/llama-server"},
+        {"name": "vLLM"},
+        {"name": "LocalAI"},
+        {"path": "/usr/local/bin/local-ai"},
+        {"name": "Jan.exe"},
+        {"name": "Msty"},
+    ],
+)
+def test_endpoint_host_reports_local_model_runtimes_without_a_category(row) -> None:
+    """Regression: osquery ``apps``/``programs`` and MDM rows carry no type or
+    category, and the local runtime signatures have no display-name signal, so
+    Ollama, LM Studio and the other local runtimes were filtered as ordinary
+    software with an informational note on a scan that stayed complete."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    findings = list(connector.analyze([row]))
+    assert len(findings) == 1
+    assert findings[0].resource == next(row[key] for key in ("name", "path", "process") if key in row)
+    assert connector.ctx.stats.warnings == []
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Slack", "Google Chrome", "zoom.us.app", "Zoom 6.2.5", "Make", "Rivet", "Jane Doe", "Janitor.exe"],
+)
+def test_endpoint_host_still_filters_ordinary_software_named_alone(name) -> None:
+    """The whole-name comparison never reports a product that only contains or
+    resembles a runtime name, nor an ambiguous product name such as Make."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    assert list(connector.analyze([{"name": name}])) == []
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"name": "Open WebUI"},
+        {"name": "AnythingLLM"},
+        {"name": "AnythingLLM.app", "path": "/Applications/AnythingLLM.app"},
+        {"name": "LibreChat"},
+        {"name": "litellm", "path": "/usr/local/bin/litellm"},
+        {"name": "LiteLLM"},
+        {"path": "~/.ollama/models"},
+        {"path": "/Users/u/.ollama/models/blobs/sha256-0123"},
+        {"path": "/Users/u/.cache/lm-studio/models"},
+        {"name": "~/.lmstudio/models"},
+        {"path": "C:\\Users\\u\\.cache\\huggingface\\hub"},
+        {"path": "/Users/u/jan/models"},
+    ],
+)
+def test_endpoint_host_reports_self_hosted_platforms_and_model_store_paths(row) -> None:
+    """Regression: platform signatures were left out wholesale, so a self-hosted
+    chat UI (Open WebUI, AnythingLLM, LibreChat) or a LiteLLM row was filtered,
+    and the catalog's model store paths were never consulted, so a
+    ``~/.ollama/models`` or LM Studio model directory row was filtered too, each
+    with an informational note on a scan that stayed complete."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    findings = list(connector.analyze([row]))
+    assert len(findings) == 1
+    assert findings[0].resource == next(row[key] for key in ("name", "path") if key in row)
+    assert connector.ctx.stats.warnings == []
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"path": "/srv/app/jan/models/user.rb"},
+        {"path": "/home/jan/models/resnet50.pth"},
+        {"path": "/Users/jan/models"},
+        {"path": "/opt/jan/models"},
+        {"name": "jan/models"},
+        {"path": "/data/.cache/huggingface/hub"},
+    ],
+)
+def test_endpoint_host_model_store_names_elsewhere_are_not_stores(row) -> None:
+    """Regression: a model store matched as any run of path components, and the Jan
+    store is the plain ``jan/models``, so an application's ``jan/models`` directory and
+    a user named jan with a ``models`` directory were reported as local model stores.
+    A store counts below a home directory, where the catalog lists it, and elsewhere
+    only with its own layout below it."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    assert list(connector.analyze([row])) == []
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("home", ["~", "/home/u", "/Users/u", "C:\\Users\\u", "/root", "$HOME"])
+def test_endpoint_host_every_catalog_model_store_below_a_home_is_reported(home) -> None:
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    separator = "\\" if "\\" in home else "/"
+    rows = [{"path": separator.join([home, *store.root.split("/")])} for store in MODEL_STORES]
+    assert len(list(connector.analyze(rows))) == len(MODEL_STORES)
+    assert connector.ctx.stats.warnings == []
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"path": "/usr/share/ollama/.ollama/models/manifests/registry.ollama.ai"},
+        {"path": "/srv/models/.ollama/models/blobs/sha256-0123"},
+        {"path": "/data/.cache/huggingface/hub/models--org--model"},
+        {"path": "/srv/app/jan/models/llama3/model.gguf"},
+        {"path": "D:\\models\\.cache\\lm-studio\\models\\org\\model.safetensors"},
+    ],
+)
+def test_endpoint_host_model_store_elsewhere_with_its_layout_is_reported(row) -> None:
+    """A store outside a home directory (a service account's, a shared volume) still
+    counts with the store's own layout below it."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    assert len(list(connector.analyze([row]))) == 1
+    assert connector.ctx.stats.warnings == []
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"name": "goose", "path": "/opt/homebrew/bin/goose"},
+        {"name": "goose"},
+        {"path": "/opt/homebrew/Cellar/goose/3.24.1/bin/goose"},
+        {"name": "Codex 3"},
+        {"name": "Jan 2024"},
+        {"name": "Jan"},
+        {"process": "jan"},
+        {"name": "lms", "path": "/usr/bin/lms"},
+        {"name": "Continue"},
+        {"name": "Replicate"},
+        {"name": "Cohere"},
+        {"name": "Slack", "path": "/Users/claude/Applications/Slack.app"},
+    ],
+)
+def test_endpoint_host_ambiguous_names_need_context(row) -> None:
+    """Regression: the whole-name rule reported Homebrew's ``goose`` (the
+    pressly/goose database migration tool), ``lms``, a bare ``Jan`` and common
+    words as AI runtimes, and stripped any trailing number as a version, so
+    ``Codex 3`` and ``Jan 2024`` became product names. A plain directory on the
+    path, such as a user named claude, is no context either."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    assert list(connector.analyze([row])) == []
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"name": "Jan.app", "path": "/Applications/Jan.app"},
+        {"name": "Jan", "path": "/Applications/Jan.app"},
+        {"path": "C:/Users/u/AppData/Local/Programs/jan/Jan.exe"},
+        {"name": "Goose.app"},
+        {"path": "/Applications/Goose.app/Contents/MacOS/goose"},
+        {"path": "/Users/u/.lmstudio/bin/lms"},
+        {"path": "~/.continue"},
+        {"name": "Rivet.app"},
+        {"name": "Ollama v0.5.7"},
+        {"name": "LM Studio 0.3.14"},
+    ],
+)
+def test_endpoint_host_ambiguous_names_in_context_are_reported(row) -> None:
+    """An ambiguous product name counts with its own product's context: an application
+    bundle or executable the product installs, or a directory it keeps, as the catalog
+    lists them, on a path inside an application bundle or dot-directory named after a
+    product."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    assert len(list(connector.analyze([row]))) == 1
+    assert connector.ctx.stats.warnings == []
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"process": "make.exe"},
+        {"name": "make.exe", "path": "C:\\ProgramData\\chocolatey\\bin\\make.exe"},
+        {"name": "Make", "path": "C:\\msys64\\usr\\bin\\make.exe"},
+        {"path": "C:\\Program Files\\GnuWin32\\bin\\make.exe"},
+        {"name": "Make.app"},
+        {"name": "make", "path": "/home/u/.make/bin/make"},
+        {"name": "Cohere.exe"},
+        {"path": "/Applications/Cohere.app"},
+        {"name": "Replicate.app"},
+        {"process": "replicate.exe"},
+        {"name": "Continue.app"},
+        {"path": "C:/Users/u/go/bin/goose.exe"},
+    ],
+)
+def test_endpoint_host_ambiguous_names_need_their_own_products_context(row) -> None:
+    """Regression: any ``.app``/``.exe`` name or dot-directory named after an ambiguous
+    product counted as context, so GNU make on Windows (``make.exe`` as a process or
+    under Chocolatey, MSYS2 or GnuWin32), ``Make.app``, a ``.make`` directory,
+    ``Cohere.exe`` and ``Replicate.app`` were reported as AI runtimes. Make (Integromat),
+    Cohere and Replicate have no desktop application, and pressly/goose builds a
+    ``goose.exe`` too: only a bundle, executable or directory the catalog lists for the
+    product is context."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    assert list(connector.analyze([row])) == []
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"name": "Ollama.exe"},
+        {"process": "ollama.exe"},
+        {"path": "C:/Users/u/AppData/Local/Programs/Ollama/ollama app.exe"},
+        {"name": "LM Studio.exe", "path": "C:/Users/u/AppData/Local/Programs/LM Studio/LM Studio.exe"},
+        {"name": "Open WebUI.app"},
+        {"name": "AnythingLLM.exe"},
+        {"path": "/Applications/Ollama.app/Contents/Resources/ollama"},
+    ],
+)
+def test_endpoint_host_unambiguous_products_stay_reported_under_any_suffix(row) -> None:
+    """Narrowing the ambiguous names' context leaves the other products' whole-name rule
+    alone: Ollama, LM Studio, Open WebUI and AnythingLLM count as an application or
+    executable of any platform, and inside their own bundles."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    assert len(list(connector.analyze([row]))) == 1
+    assert connector.ctx.stats.warnings == []
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"name": "lms", "path": "/Users/u/.cache/lm-studio/bin/lms"},
+        {"path": "/home/u/.cache/lm-studio/bin/lms"},
+        {"path": "C:\\Users\\u\\.cache\\lm-studio\\bin\\lms.exe"},
+    ],
+)
+def test_endpoint_host_lms_in_the_older_lm_studio_directory_is_reported(row) -> None:
+    """Regression: once ``lms`` needed context, the older LM Studio CLI path
+    ``~/.cache/lm-studio/bin/lms`` was filtered, since ``.cache`` names no product and
+    ``lm-studio`` is no dot-directory, although the catalog lists ``.cache/lm-studio``
+    as LM Studio's directory."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    assert len(list(connector.analyze([row]))) == 1
+    assert connector.ctx.stats.warnings == []
+
+
+def test_endpoint_host_lms_context_is_every_lm_studio_catalog_directory() -> None:
+    """``lms`` counts in each directory the catalog lists LM Studio's configuration or
+    models in, so the CLI LM Studio installs beside them is never filtered."""
+    paths = [location.path for location in CONFIG_LOCATIONS if location.product == "LM Studio"]
+    paths += [store.path for store in MODEL_STORES if store.product == "LM Studio"]
+    directories = {path.rsplit("/", 1)[0] for path in paths}
+    assert directories == {".lmstudio", ".cache/lm-studio"}
+    assert directories <= set(AMBIGUOUS_PRODUCT_CONTEXTS["lms"])
+
+
+def test_endpoint_host_ambiguous_contexts_belong_to_their_products() -> None:
+    """Each ambiguous name the catalog lists has an entry, possibly empty, and none of
+    its contexts is a bare suffix or an unrelated dot-directory."""
+    assert set(AMBIGUOUS_PRODUCT_CONTEXTS) == set(AMBIGUOUS_PRODUCT_NAMES)
+    for name in ("Make", "Replicate", "Cohere"):
+        assert AMBIGUOUS_PRODUCT_CONTEXTS[name] == (), name
+    for contexts in AMBIGUOUS_PRODUCT_CONTEXTS.values():
+        for context in contexts:
+            assert context.casefold() not in {".app", ".exe"}, context
+            assert all(component for component in context.split("/")), context
+
+
+def test_endpoint_host_ambiguous_product_names_are_left_out_by_name() -> None:
+    """Make is a platform signature's product, left out because the name is
+    ambiguous, not because of its category; each ambiguous name the catalog
+    lists would otherwise be a product key, so the list holds no dead entry."""
+    index = HostConnector(ConnectorContext()).index
+    keys = endpoint_runtime._host_product_keys(index)
+    assert {"openwebui", "anythingllm", "librechat", "litellm", "dify", "flowise"} <= keys
+    for name in AMBIGUOUS_PRODUCT_NAMES:
+        key = endpoint_runtime._product_key(name)
+        assert key not in keys, name
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(endpoint_runtime, "AMBIGUOUS_PRODUCT_NAMES", ())
+            assert key in endpoint_runtime._host_product_keys(index), name
+
+
+class _CountingPattern:
+    """A compiled pattern that records the length of every text it substitutes in."""
+
+    def __init__(self, pattern: re.Pattern[str]) -> None:
+        self.pattern = pattern
+        self.lengths: list[int] = []
+
+    def sub(self, repl: str, string: str, count: int = 0) -> str:
+        self.lengths.append(len(string))
+        return self.pattern.sub(repl, string, count=count)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        " " * 1023 + "x",
+        " " * 65536 + "x",
+        "Ollama" + " " * 4000 + "0.5.7",
+        "/.x" * 400,
+        ("/" + " " * 150 + "1.0") * 7,
+        "C:\\" + "a b " * 300,
+    ],
+    ids=["spaces", "spaces-64k", "version-after-spaces", "dot-directories", "spaced-versions", "words"],
+)
+def test_endpoint_host_keys_a_bounded_label_per_path_component(value, monkeypatch) -> None:
+    """Regression: host values were read up to 1024 characters and keyed whole, through a
+    version pattern quadratic in a whitespace run, so a hostile row cost about 20 times
+    what it did with 160-character labels. A component is keyed only up to _MAX_LABEL
+    characters and each component of a value at most once, so the text the version
+    pattern reads per row is bounded, however long the row's values are."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    connector._product_keys = endpoint_runtime._host_product_keys(connector.index)
+    counter = _CountingPattern(endpoint_runtime._TRAILING_VERSION)
+    monkeypatch.setattr(endpoint_runtime, "_TRAILING_VERSION", counter)
+    list(connector.analyze([{"name": value, "path": value, "process": value}]))
+    assert max(counter.lengths, default=0) <= endpoint_runtime._MAX_LABEL
+    assert sum(counter.lengths) <= 3 * endpoint_runtime._MAX_HOST_PATH
+
+
+def test_endpoint_host_trailing_version_starts_only_where_a_whitespace_run_starts() -> None:
+    """Regression: the version pattern's ``\\s+`` could start at any space of a run, so
+    stripping a version rescanned the rest of the run from each of its spaces, quadratic
+    in the run's length. A match now starts only at the start of a run, so each run is
+    scanned from one place; the stripped names are unchanged."""
+    pattern = endpoint_runtime._TRAILING_VERSION
+    text = "Ollama" + " " * 8 + "0.5.7"
+    assert pattern.search(text).start() == len("Ollama")
+    assert all(pattern.match(text, start) is None for start in range(len("Ollama") + 1, len("Ollama") + 8))
+    for name, key in (
+        ("Ollama version 0.5.7", "ollama"),
+        ("LM Studio 0.3.14", "lmstudio"),
+        ("Jan v0.5.17", "jan"),
+        ("Codex 3", "codex3"),
+        ("Jan  2024", "jan2024"),
+        ("Ollama \t 0.5.7", "ollama"),
+    ):
+        assert endpoint_runtime._product_key(name) == key, name
+
+
 def test_ebpf_known_local_model_port_is_tagged() -> None:
     findings = list(EbpfConnector(ConnectorContext()).analyze([{"binary": "python", "port": 11434}]))
     assert len(findings) == 1
     assert "local-llm-traffic" in findings[0].tags
+
+
+def test_ebpf_reads_native_tetragon_events() -> None:
+    """Regression: the connector claimed Tetragon support but only read flat
+    top-level keys, so native exports produced zero findings on a scan that
+    looked complete."""
+    connector = EbpfConnector(ConnectorContext(config={"input": str(FIXTURES / "ebpf/tetragon.jsonl")}))
+    findings = connector.run()
+    assert sorted(finding.resource for finding in findings) == [
+        "ai/agent-0//usr/bin/python3",
+        "ai/model-0//usr/local/bin/ollama",
+    ]
+    by_resource = {finding.resource: finding for finding in findings}
+    assert "local-llm-traffic" in by_resource["ai/agent-0//usr/bin/python3"].tags
+    assert "llm-egress" in by_resource["ai/model-0//usr/local/bin/ollama"].tags
+    assert connector.ctx.stats is None or not connector.ctx.stats.incomplete
+
+
+def test_ebpf_reads_camel_case_tetragon_and_sockaddr_arguments() -> None:
+    findings = list(
+        EbpfConnector(ConnectorContext()).analyze(
+            [
+                {
+                    "processKprobe": {
+                        "process": {"binary": "python3", "pod": {"namespace": "ai", "name": "agent-1"}},
+                        "args": [{"sockaddrArg": {"family": "AF_INET", "addr": "10.0.0.8", "port": 11434}}],
+                    }
+                }
+            ]
+        )
+    )
+    assert [finding.resource for finding in findings] == ["ai/agent-1/python3"]
+    assert "local-llm-traffic" in findings[0].tags
+
+
+def test_ebpf_reads_every_socket_argument_of_the_example_tetragon_policy() -> None:
+    """Regression: only the first ``sock_arg``/``sockaddr_arg`` was read. The example
+    TracingPolicy hooks ``tcp_v4_connect`` with ``[sock, sockaddr]``, and at kprobe
+    entry the socket has no destination yet, so the address and port in the
+    ``sockaddr_arg`` were never read and the scan stayed complete with no finding."""
+    policy = yaml.safe_load((ROOT / "examples/ebpf/tetragon-tracingpolicy.yaml").read_text(encoding="utf-8"))
+    [hook] = [kprobe for kprobe in policy["spec"]["kprobes"] if kprobe["call"] == "tcp_v4_connect"]
+    arg_types = [arg["type"] for arg in sorted(hook["args"], key=lambda arg: arg["index"])]
+    assert arg_types == ["sock", "sockaddr"]
+    fixture = FIXTURES / "ebpf/tetragon-tcp-v4-connect.jsonl"
+    for line in fixture.read_text(encoding="utf-8").splitlines():
+        event = json.loads(line)["process_kprobe"]
+        # The fixture carries the arguments that hook emits, in its order.
+        assert event["function_name"] == "tcp_v4_connect"
+        assert [next(iter(arg)) for arg in event["args"]] == [f"{kind}_arg" for kind in arg_types]
+
+    connector = EbpfConnector(ConnectorContext(config={"input": str(fixture)}))
+    findings = connector.run()
+    assert [finding.resource for finding in findings] == ["ai/agent-0//usr/bin/python3"]
+    assert "local-llm-traffic" in findings[0].tags
+    assert connector.ctx.stats is None or not connector.ctx.stats.incomplete
+
+
+def test_ebpf_reads_every_tracee_sockaddr_argument() -> None:
+    connector = _ebpf_connector()
+    event = {
+        "eventName": "security_socket_connect",
+        "processName": "uvicorn",
+        "args": [
+            {"name": "local_addr", "value": {"sin_addr": "10.8.0.14", "sin_port": "53"}},
+            {"name": "remote_addr", "value": {"sin_addr": "10.8.0.21", "sin_port": "11434"}},
+        ],
+    }
+    findings = list(connector.analyze([event]))
+    assert [finding.resource for finding in findings] == ["uvicorn"]
+    assert "local-llm-traffic" in findings[0].tags
+    assert connector.ctx.stats.warnings == []
+
+
+def test_ebpf_reads_native_falco_alerts() -> None:
+    connector = EbpfConnector(ConnectorContext(config={"input": str(FIXTURES / "ebpf/falco.jsonl")}))
+    findings = connector.run()
+    assert [finding.resource for finding in findings] == ["ai/agent-0/python3"]
+    assert "llm-egress" in findings[0].tags
+
+
+def test_ebpf_reads_native_tracee_events() -> None:
+    connector = EbpfConnector(ConnectorContext(config={"input": str(FIXTURES / "ebpf/tracee.jsonl")}))
+    findings = connector.run()
+    assert [finding.resource for finding in findings] == ["ai/model-0/uvicorn"]
+    assert "local-llm-traffic" in findings[0].tags
+
+
+def test_ebpf_reads_native_hubble_flows() -> None:
+    connector = EbpfConnector(ConnectorContext(config={"input": str(FIXTURES / "ebpf/hubble.jsonl")}))
+    findings = connector.run()
+    assert [finding.resource for finding in findings] == ["ai/agent-0/runtime-process"]
+    assert "llm-egress" in findings[0].tags
+
+    bare_flow = {
+        "verdict": "FORWARDED",
+        "IP": {"source": "10.8.0.14", "destination": "203.0.113.9"},
+        "l4": {"TCP": {"destination_port": 11434}},
+        "source": {"namespace": "ai", "pod_name": "agent-2"},
+    }
+    bare = list(EbpfConnector(ConnectorContext()).analyze([bare_flow]))
+    assert [finding.resource for finding in bare] == ["ai/agent-2/runtime-process"]
+    assert "local-llm-traffic" in bare[0].tags
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ["static.example.com", "api.openai.com"],
+        ["static.example.com", "cdn.example.net", "api.anthropic.com"],
+        ["x" * 600 + ".example.com", "api.openai.com"],
+    ],
+)
+def test_ebpf_hubble_scores_every_destination_name(names) -> None:
+    """Regression: only the first ``destination_names`` entry was read, so a
+    CDN-shared address whose AI host name came second gave no finding on a
+    scan that stayed complete."""
+    connector = EbpfConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.ebpf", started_at="2026-01-01T00:00:00Z")
+    flow = {
+        "flow": {
+            "IP": {"source": "10.8.0.14", "destination": "162.159.140.245"},
+            "l4": {"TCP": {"destination_port": 443}},
+            "source": {"namespace": "ai", "pod_name": "agent-0"},
+            "destination_names": names,
+        }
+    }
+    findings = list(connector.analyze([flow]))
+    assert [finding.resource for finding in findings] == ["ai/agent-0/runtime-process"]
+    assert "llm-egress" in findings[0].tags
+    assert not connector.ctx.stats.incomplete
+
+    unrelated = {"flow": {**flow["flow"], "destination_names": ["static.example.com", "cdn.example.net"]}}
+    assert list(connector.analyze([unrelated])) == []
+
+
+def _google_front_end_flow(names: list[str]) -> dict[str, object]:
+    return {
+        "flow": {
+            "IP": {"source": "10.8.0.14", "destination": "142.250.1.1"},
+            "l4": {"TCP": {"destination_port": 443}},
+            "source": {"namespace": "web", "pod_name": "site-0"},
+            "destination_names": names,
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ["www.google.com", "fonts.googleapis.com"],
+        ["storage.googleapis.com", "www.googleapis.com", "maps.googleapis.com"],
+        ["xaiplatform.googleapis.com"],
+    ],
+)
+def test_ebpf_google_front_end_flow_with_only_non_ai_googleapis_names_stays_untagged(names) -> None:
+    """Regression: the AI host pattern took any ``*.googleapis.com`` host, and a
+    Google front-end address resolves from many such names, so a flow to fonts or
+    storage was tagged ``llm-egress`` once every destination name was scored."""
+    connector = _ebpf_connector()
+    assert list(connector.analyze([_google_front_end_flow(names)])) == []
+    assert list(connector.analyze([{"process_name": "web", "destination": names[-1], "port": 443}])) == []
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "generativelanguage.googleapis.com",
+        "aiplatform.googleapis.com",
+        "us-central1-aiplatform.googleapis.com",
+        "discoveryengine.googleapis.com",
+        "global-dialogflow.googleapis.com",
+    ],
+)
+def test_ebpf_google_ai_api_names_are_egress(name) -> None:
+    connector = _ebpf_connector()
+    [finding] = connector.analyze([_google_front_end_flow(["www.google.com", name])])
+    assert "llm-egress" in finding.tags
+
+
+def test_ai_host_pattern_matches_every_google_ai_api_host_the_signatures_name() -> None:
+    """The googleapis hosts the pattern takes are the ones bundled signatures name as domains."""
+    index = EbpfConnector(ConnectorContext()).index
+    hosts = {
+        value
+        for signature in index.signatures.values()
+        for signal in signature.signals
+        if signal.type == "domain"
+        for value in signal.values
+        if value.endswith(".googleapis.com") and not value.startswith("re:")
+    }
+    assert hosts >= {"generativelanguage.googleapis.com", "aiplatform.googleapis.com"}
+    for host in hosts:
+        assert endpoint_runtime._HOST.search(host), host
+        assert index.match_domain(host), host
+    assert hosts <= set(GCP_AI_SERVICES)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "aiplatform.mtls.googleapis.com",
+        "us-central1-aiplatform.mtls.googleapis.com",
+        "generativelanguage.mtls.googleapis.com",
+        "documentai.googleapis.com",
+        "eu-documentai.googleapis.com",
+        "contactcenteraiplatform.googleapis.com",
+        "speech.googleapis.com",
+        "eu-speech.googleapis.com",
+    ],
+)
+def test_ebpf_google_mtls_and_other_ai_service_names_are_egress(name) -> None:
+    """Regression: narrowing the AI host pattern to four Google APIs dropped the
+    mutual-TLS endpoints Google client libraries use with a client certificate
+    (``aiplatform.mtls.googleapis.com``) and the Document AI, Contact Center AI and
+    Speech hosts that the GCP connector's AI_SERVICES treats as AI services, all of
+    which were tagged ``llm-egress`` before."""
+    connector = _ebpf_connector()
+    [finding] = connector.analyze([_google_front_end_flow(["www.google.com", name])])
+    assert "llm-egress" in finding.tags
+
+
+def test_ai_host_pattern_matches_every_gcp_ai_service_host() -> None:
+    """The Google hosts the pattern takes are the GCP connector's AI services, each also
+    with a regional prefix and as its mutual-TLS endpoint; a non-AI googleapis host is
+    not one in either form."""
+    for host in GCP_AI_SERVICES:
+        service = host.removesuffix(".googleapis.com")
+        for name in (
+            host,
+            f"us-central1-{host}",
+            f"{service}.mtls.googleapis.com",
+            f"eu-{service}.mtls.googleapis.com",
+        ):
+            assert endpoint_runtime._HOST.fullmatch(name), name
+    for name in ("storage.mtls.googleapis.com", "fonts.googleapis.com", "aiplatform.mtls.example.com"):
+        assert not endpoint_runtime._HOST.search(name), name
+
+
+def test_ebpf_unrecognized_records_warn_once_and_mark_incomplete() -> None:
+    """An export full of unread events must not look like a clean scan."""
+    connector = EbpfConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.ebpf", started_at="2026-01-01T00:00:00Z")
+    findings = list(
+        connector.analyze(
+            [
+                {"unknown_tool": {"event": 1}},
+                {"another": "shape"},
+                {"binary": "python", "port": 11434},
+            ]
+        )
+    )
+    assert len(findings) == 1
+    assert connector.ctx.stats.incomplete
+    assert sum("unrecognized" in warning for warning in connector.ctx.stats.warnings) == 1
+
+
+_TETRAGON_PROCESS = {"binary": "/usr/bin/python3", "pod": {"namespace": "ai", "name": "agent-0"}}
+_TETRAGON_SOCK = {"sock_arg": {"family": "AF_INET", "daddr": "10.8.0.21", "dport": 11434}}
+_TRACEE_SOCKADDR = {"name": "remote_addr", "value": {"sin_addr": "10.8.0.21", "sin_port": "11434"}}
+_HUBBLE_FLOW = {
+    "IP": {"source": "10.8.0.14", "destination": "10.8.0.21"},
+    "l4": {"TCP": {"destination_port": 11434}},
+    "source": {"namespace": "ai", "pod_name": "agent-0"},
+}
+
+
+def _ebpf_connector() -> EbpfConnector:
+    connector = EbpfConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.ebpf", started_at="2026-01-01T00:00:00Z")
+    return connector
+
+
+@pytest.mark.parametrize(
+    ("producer", "records"),
+    [
+        pytest.param(
+            "Tetragon",
+            [
+                {"process_kprobe": {"process": "/usr/bin/ollama", "args": [_TETRAGON_SOCK]}},
+                {"process_kprobe": {"process": {**_TETRAGON_PROCESS, "pod": "ai/agent-0"}}},
+                {"process_kprobe": {"process": _TETRAGON_PROCESS, "args": _TETRAGON_SOCK}},
+                {"process_kprobe": {"process": _TETRAGON_PROCESS, "args": ["sock", _TETRAGON_SOCK]}},
+                {
+                    "process_kprobe": {
+                        "process": _TETRAGON_PROCESS,
+                        "args": [{"sock_arg": ["10.8.0.21", 11434]}],
+                    }
+                },
+                {
+                    "processKprobe": {
+                        "process": _TETRAGON_PROCESS,
+                        "args": [{"sockaddrArg": {"addr": 167772181}}],
+                    }
+                },
+            ],
+            id="tetragon",
+        ),
+        pytest.param(
+            "Falco",
+            [
+                {"rule": "r", "output_fields": {"proc.name": ["python3"], "fd.sip": "10.8.0.21"}},
+                {
+                    "rule": "r",
+                    "output_fields": {"proc.name": "python3", "fd.sip.name": {"name": "api.openai.com"}},
+                },
+                {"rule": "r", "output_fields": {"proc.name": "python3", "fd.sport": [443]}},
+                {
+                    "priority": "Notice",
+                    "output_fields": {"proc.name": "python3", "k8s.pod.name": ["agent-0"]},
+                },
+            ],
+            id="falco",
+        ),
+        pytest.param(
+            "Tracee",
+            [
+                {"eventName": "security_socket_connect", "processName": "uvicorn", "args": "remote_addr"},
+                {
+                    "eventName": "security_socket_connect",
+                    "processName": "uvicorn",
+                    "args": [7, _TRACEE_SOCKADDR],
+                },
+                {"eventName": "security_socket_connect", "processName": {"comm": "uvicorn"}, "args": []},
+                {"eventName": "security_socket_connect", "processName": "uvicorn", "kubernetes": ["ai"]},
+                {
+                    "eventName": "security_socket_connect",
+                    "processName": "uvicorn",
+                    "args": [
+                        {"name": "remote_addr", "value": {"sin_addr": ["10.8.0.21"], "sin_port": "11434"}}
+                    ],
+                },
+            ],
+            id="tracee",
+        ),
+        pytest.param(
+            "Hubble",
+            [
+                {"flow": {**_HUBBLE_FLOW, "IP": ["10.8.0.14", "10.8.0.21"]}},
+                {"flow": {**_HUBBLE_FLOW, "l4": [{"TCP": {"destination_port": 11434}}]}},
+                {"flow": {**_HUBBLE_FLOW, "l4": {"TCP": [11434]}}},
+                {"flow": {**_HUBBLE_FLOW, "destination_names": "api.openai.com"}},
+                {"flow": {**_HUBBLE_FLOW, "destination_names": [{"name": "api.openai.com"}]}},
+                {"flow": {**_HUBBLE_FLOW, "source": "ai/agent-0"}},
+            ],
+            id="hubble",
+        ),
+    ],
+)
+def test_ebpf_native_readers_report_malformed_fields_once_per_producer(producer, records) -> None:
+    """Regression: the native readers read a wrong-typed field (process, args,
+    an argument, a socket map, IP, l4, destination_names, a name or port) as
+    empty without a word, so a malformed export could hide a connection on a
+    scan that stayed complete, while the flat shape's malformed process marks
+    the scan incomplete."""
+    expected = [f"endpoint.ebpf: malformed {producer} event fields were not analyzed"]
+    for record in records:
+        connector = _ebpf_connector()
+        list(connector.analyze([record]))
+        assert connector.ctx.stats.incomplete, record
+        assert connector.ctx.stats.warnings == expected, record
+
+    connector = _ebpf_connector()
+    list(connector.analyze(records))
+    # One fixed-text warning however many events are malformed; no value is echoed.
+    assert connector.ctx.stats.warnings == expected
+
+
+@pytest.mark.parametrize(
+    ("producer", "event"),
+    [
+        pytest.param(
+            "Tetragon",
+            lambda filler: {
+                "process_kprobe": {
+                    "process": _TETRAGON_PROCESS,
+                    "args": [{"int_arg": 7}] * filler + [_TETRAGON_SOCK],
+                }
+            },
+            id="tetragon-args",
+        ),
+        pytest.param(
+            "Tracee",
+            lambda filler: {
+                "eventName": "security_socket_connect",
+                "processName": "uvicorn",
+                "args": [{"name": "sockfd", "value": 7}] * filler + [_TRACEE_SOCKADDR],
+            },
+            id="tracee-args",
+        ),
+        pytest.param(
+            "Hubble",
+            lambda filler: {
+                "flow": {
+                    **_HUBBLE_FLOW,
+                    "l4": {"TCP": {"destination_port": 443}},
+                    "destination_names": ["static.example.com"] * filler + ["api.openai.com"],
+                }
+            },
+            id="hubble-destination-names",
+        ),
+    ],
+)
+def test_ebpf_native_lists_past_the_limit_mark_the_scan_incomplete(producer, event) -> None:
+    """Regression: ``args`` and ``destination_names`` were cut at 100 entries in
+    silence, so a socket or AI host name in entry 101 went unread on a scan that
+    stayed complete."""
+    within = _ebpf_connector()
+    list(within.analyze([event(99)]))
+    assert within.ctx.stats.warnings == []
+    assert not within.ctx.stats.incomplete
+
+    past = _ebpf_connector()
+    assert list(past.analyze([event(100), event(150)])) == []
+    assert past.ctx.stats.incomplete
+    assert past.ctx.stats.warnings == [
+        f"endpoint.ebpf: {producer} event list limit reached; entries past it were not analyzed"
+    ]
+
+
+_TRACEE_CONNECT = {"eventName": "security_socket_connect", "processName": "uvicorn"}
+_FLAT_DEFECTS = [
+    {"process_name": "python3", "destination": ["api.openai.com"], "port": 443},
+    {"process_name": "python3", "destination": {"host": "api.openai.com"}, "port": 443},
+    {"process_name": "python3", "destination": "10.8.0.21", "port": [11434]},
+    {"process_name": "python3", "destination": "10.8.0.21", "destination_port": {"n": 11434}},
+    {"binary": "python3", "url": ["https://api.openai.com/v1"]},
+    {"binary": ["python3"], "hostname": "10.8.0.21"},
+    {"process_name": "python3", "destination": "10.8.0.21", "pod": {"name": "agent-0"}},
+    {"process_name": "python3", "destination": "10.8.0.21", "port": True},
+]
+
+
+@pytest.mark.parametrize(
+    ("producer", "record"),
+    [
+        *(pytest.param("flat", record, id=f"flat-{n}") for n, record in enumerate(_FLAT_DEFECTS)),
+        pytest.param(
+            "Tetragon",
+            {
+                "process_kprobe": {
+                    "process": _TETRAGON_PROCESS,
+                    "args": [{"sock_arg": {"daddr": "10.8.0.21", "dport": True}}],
+                }
+            },
+            id="tetragon-bool-port",
+        ),
+        pytest.param(
+            "Falco",
+            {"rule": "r", "output_fields": {"proc.name": "python3", "fd.sip": "10.8.0.21", "fd.sport": True}},
+            id="falco-bool-port",
+        ),
+        pytest.param(
+            "Hubble",
+            {"flow": {**_HUBBLE_FLOW, "l4": {"TCP": {"destination_port": True}}}},
+            id="hubble-bool-port",
+        ),
+        pytest.param(
+            "Tracee",
+            {
+                **_TRACEE_CONNECT,
+                "args": [
+                    {
+                        "name": "remote_addr",
+                        "type": "struct sockaddr*",
+                        "value": [{"sin_addr": "10.8.0.21", "sin_port": "11434"}],
+                    }
+                ],
+            },
+            id="tracee-remote-addr-list",
+        ),
+        pytest.param(
+            "Tracee",
+            {**_TRACEE_CONNECT, "args": [{"name": "remote_addr", "value": "10.8.0.21:11434"}]},
+            id="tracee-remote-addr-text",
+        ),
+        pytest.param(
+            "Tracee",
+            {**_TRACEE_CONNECT, "args": [{"name": "addr", "type": "struct sockaddr*", "value": "10.8.0.21"}]},
+            id="tracee-sockaddr-type-text",
+        ),
+    ],
+)
+def test_ebpf_wrong_typed_flat_fields_boolean_ports_and_tracee_addresses_mark_incomplete(
+    producer, record
+) -> None:
+    """Regression: a flat record read a wrong-typed destination, url, port, process
+    name or pod as empty without a word, a JSON ``true`` passed as a port because
+    ``bool`` subclasses ``int``, and a Tracee ``remote_addr`` that was not a map was
+    skipped, so each could hide a connection on a scan that stayed complete."""
+    connector = _ebpf_connector()
+    list(connector.analyze([record]))
+    assert connector.ctx.stats.incomplete, record
+    assert connector.ctx.stats.warnings == [
+        f"endpoint.ebpf: malformed {producer} event fields were not analyzed"
+    ], record
+
+
+def test_ebpf_flat_defects_warn_once_and_the_record_is_still_scored() -> None:
+    connector = _ebpf_connector()
+    findings = list(
+        connector.analyze(
+            [
+                *_FLAT_DEFECTS,
+                {"process": "/usr/bin/python3", "destination": "api.openai.com", "port": 443},
+                {"process_name": "python3", "destination": ["x"], "hostname": "api.openai.com", "port": 443},
+            ]
+        )
+    )
+    # One fixed-text warning however many flat records are malformed; no value is echoed.
+    assert connector.ctx.stats.warnings == ["endpoint.ebpf: malformed flat event fields were not analyzed"]
+    assert sorted(finding.resource for finding in findings) == ["python3", "runtime-process"]
+    assert all("llm-egress" in finding.tags for finding in findings if finding.resource == "python3")
+
+
+def test_ebpf_well_formed_flat_and_unix_socket_records_stay_complete() -> None:
+    connector = _ebpf_connector()
+    findings = list(
+        connector.analyze(
+            [
+                *json.loads((FIXTURES / "ebpf/events.json").read_text(encoding="utf-8")),
+                {"process": {"binary": "agent"}, "hostname": "api.openai.com", "timestamp": 1},
+                {"process": {"name": "agent"}, "server.address": "api.anthropic.com", "port": "443"},
+                {
+                    **_TRACEE_CONNECT,
+                    "args": [
+                        {"name": "sockfd", "type": "int", "value": 7},
+                        {
+                            "name": "remote_addr",
+                            "type": "struct sockaddr*",
+                            "value": {"sa_family": "AF_UNIX", "sun_path": "/run/agent.sock"},
+                        },
+                    ],
+                },
+            ]
+        )
+    )
+    assert len(findings) == 4
+    assert connector.ctx.stats.warnings == []
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        pytest.param(
+            {
+                "eventName": "connect",
+                "processName": "python",
+                "destination": "api.openai.com",
+                "destination_port": 443,
+            },
+            id="tracee-keys",
+        ),
+        pytest.param(
+            {
+                "process_name": "python",
+                "destination": "api.openai.com",
+                "port": 443,
+                "rule": "r",
+                "output_fields": {},
+            },
+            id="falco-keys",
+        ),
+    ],
+)
+def test_ebpf_flat_record_with_native_keys_keeps_its_destination(record) -> None:
+    """Regression: a flat record that also carries a key a native reader claims (a
+    string ``eventName`` with ``processName`` is Tracee, ``rule`` with an
+    ``output_fields`` map is Falco) was read by that reader alone, which found no
+    destination, so its top-level destination was lost on a complete scan."""
+    connector = _ebpf_connector()
+    findings = list(connector.analyze([record]))
+    assert [finding.resource for finding in findings] == ["python"]
+    assert "llm-egress" in findings[0].tags
+    assert connector.ctx.stats.warnings == []
+    assert not connector.ctx.stats.incomplete
+
+
+def test_ebpf_native_events_keep_their_own_top_level_fields() -> None:
+    """A Falco alert's ``hostname`` is the sensor's host and a bare Hubble flow's
+    ``destination`` is its destination endpoint: neither turns the event into a flat
+    record, so a node named after a runtime is not egress and the flow is not malformed."""
+    connector = _ebpf_connector()
+    falco = {
+        "hostname": "ollama-node-1",
+        "rule": "r",
+        "priority": "Notice",
+        "output_fields": {"proc.name": "cat"},
+    }
+    hubble = {
+        "verdict": "FORWARDED",
+        "l4": {"ICMPv4": {"type": 8}},
+        "source": {"namespace": "ai", "pod_name": "agent-0"},
+        "destination": {"namespace": "ai", "pod_name": "model-0"},
+    }
+    assert list(connector.analyze([falco, hubble])) == []
+    assert connector.ctx.stats.warnings == []
+    assert not connector.ctx.stats.incomplete
+
+
+def _tracee_remote(address: str, port: str) -> list[dict[str, object]]:
+    return [{"name": "remote_addr", "value": {"sin_addr": address, "sin_port": port}}]
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        pytest.param(
+            {
+                "eventName": "security_socket_connect",
+                "processName": "python",
+                "url": "https://api.openai.com",
+                "args": _tracee_remote("", "443"),
+            },
+            id="tracee-port-only",
+        ),
+        pytest.param(
+            {
+                "eventName": "security_socket_connect",
+                "processName": "python",
+                "url": "https://api.openai.com",
+                "args": _tracee_remote("10.0.0.5", "443"),
+            },
+            id="tracee-non-ai-address",
+        ),
+        pytest.param(
+            {
+                "rule": "r",
+                "output_fields": {"proc.name": "python", "fd.sip": "10.0.0.5"},
+                "url": "https://api.openai.com",
+            },
+            id="falco-non-ai-address",
+        ),
+        pytest.param(
+            {
+                "rule": "r",
+                "output_fields": {"proc.name": "python", "fd.sport": 443},
+                "destination": "api.anthropic.com",
+            },
+            id="falco-port-only",
+        ),
+    ],
+)
+def test_ebpf_native_port_or_non_ai_address_keeps_the_flat_destination(record) -> None:
+    """Regression: a record a native reader claims was read as flat only when that reader
+    found neither a destination nor a port, so a top-level ``url`` or ``destination`` was
+    lost in silence, on a complete scan, beside a native reading that found only a port
+    (an empty ``sin_addr``) or only a non-AI address."""
+    connector = _ebpf_connector()
+    findings = list(connector.analyze([record]))
+    assert [finding.resource for finding in findings] == ["python"]
+    assert "llm-egress" in findings[0].tags
+    assert connector.ctx.stats.warnings == []
+    assert not connector.ctx.stats.incomplete
+
+
+def test_ebpf_producer_keys_are_never_read_as_flat_fields() -> None:
+    """Regression: once another flat key made a Falco alert read as flat too, its own
+    ``hostname`` (the sensor's node) was scored as a destination, so a node named
+    ``ollama-node-1`` made the alert egress; and a bare Hubble flow's ``destination``
+    endpoint map was read as a flat destination and reported as malformed."""
+    connector = _ebpf_connector()
+    falco = {
+        "rule": "r",
+        "output_fields": {"proc.name": "python"},
+        "hostname": "ollama-node-1",
+        "url": "https://example.com",
+    }
+    assert list(connector.analyze([falco])) == []
+    hubble = {
+        "verdict": "FORWARDED",
+        "l4": {"ICMPv4": {"type": 8}},
+        "source": {"namespace": "ai", "pod_name": "agent-0"},
+        "destination": {"namespace": "ai", "pod_name": "model-0"},
+        "url": "https://api.openai.com",
+    }
+    [finding] = connector.analyze([hubble])
+    assert "llm-egress" in finding.tags
+    assert connector.ctx.stats.warnings == []
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        pytest.param(
+            {"process_name": "p", "destination": "10.0.0.1", "port": 443, "destination_port": 11434},
+            id="flat-destination-port",
+        ),
+        pytest.param(
+            {"process_name": "p", "destination": "10.0.0.1", "port": 11434, "destination_port": 443},
+            id="flat-port",
+        ),
+        pytest.param(
+            {
+                "eventName": "connect",
+                "processName": "p",
+                "args": _tracee_remote("10.0.0.1", "443"),
+                "port": 11434,
+            },
+            id="tracee-and-flat",
+        ),
+    ],
+)
+def test_ebpf_every_flat_port_is_scored(record) -> None:
+    """Regression: the flat reader took only the first of ``port`` and ``destination_port``,
+    while the native readers score every port, so a local model port in the second was
+    not tagged ``local-llm-traffic``."""
+    connector = _ebpf_connector()
+    findings = list(connector.analyze([record]))
+    assert [finding.resource for finding in findings] == ["p"]
+    assert "local-llm-traffic" in findings[0].tags
+    assert connector.ctx.stats.warnings == []
 
 
 def test_kubernetes_offline_resource_identity_and_security_tags() -> None:
@@ -426,6 +1533,7 @@ def test_offline_fixture_connectors_run_through_the_shared_loader() -> None:
     otel = OtelConnector(ConnectorContext(config={"input": str(FIXTURES / "otel/genai_spans.json")}))
     findings = otel.run()
     assert len(findings) == 1
+    assert findings[0].resource == "service:example-agent/agent:example-agent"
     assert "must not be retained" not in str(findings[0].to_dict())
 
     mcp = MCPInventoryConnector(ConnectorContext(config={"input": str(FIXTURES / "mcp/tool_inventory.json")}))
@@ -445,9 +1553,7 @@ def test_offline_fixture_connectors_run_through_the_shared_loader() -> None:
 
 def test_endpoint_malformed_records_limits_and_negative_detection() -> None:
     host_ctx = ConnectorContext()
-    host_findings = list(
-        HostConnector(host_ctx).analyze([{"name": 42}, {"path": "~/.config/codex/config.toml"}])
-    )
+    host_findings = list(HostConnector(host_ctx).analyze([{"name": 42}, {"path": "~/.codex/config.toml"}]))
     assert len(host_findings) == 1
 
     mcp = MCPInventoryConnector(ConnectorContext())
@@ -1153,6 +2259,47 @@ def test_kubernetes_malformed_cronjobs_retain_valid_findings_and_fail_closed(
     assert [finding.resource for finding in findings] == ["k8s:synthetic/ai/CronJob/scheduled-model"]
     assert ctx.stats is not None and ctx.stats.incomplete
     assert any("malformed" in warning for warning in ctx.stats.warnings)
+
+
+def test_otel_nested_export_keeps_resource_service_names() -> None:
+    """Regression: ``_records`` flattened resource attributes while ``analyze``
+    read ``resource["attributes"]``, so nested OTLP exports lost ``service.name``
+    and every caller collapsed into one ``unknown-service`` finding."""
+
+    def envelope(service: str, model: str) -> dict[str, object]:
+        return {
+            "resourceSpans": [
+                {
+                    "resource": {"attributes": [{"key": "service.name", "value": {"stringValue": service}}]},
+                    "scopeSpans": [
+                        {
+                            "spans": [
+                                {
+                                    "attributes": [
+                                        {"key": "gen_ai.system", "value": {"stringValue": "openai"}},
+                                        {"key": "gen_ai.request.model", "value": {"stringValue": model}},
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                }
+            ]
+        }
+
+    findings = list(
+        OtelConnector(ConnectorContext()).analyze(
+            [envelope("payments-agent", "model-a"), envelope("support-agent", "model-b")]
+        )
+    )
+
+    assert sorted(finding.resource for finding in findings) == [
+        "service:payments-agent/agent:payments-agent",
+        "service:support-agent/agent:support-agent",
+    ]
+    by_service = {finding.resource: finding for finding in findings}
+    assert by_service["service:payments-agent/agent:payments-agent"].metadata["models"] == ["model-a"]
+    assert by_service["service:support-agent/agent:support-agent"].metadata["models"] == ["model-b"]
 
 
 def test_otlp_prompt_completion_and_message_events_never_reach_findings():

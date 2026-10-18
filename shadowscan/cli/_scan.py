@@ -7,16 +7,8 @@ from typing import Any
 import click
 import yaml
 
-# Late-bound through the package: tests patch ``shadowscan.cli.<name>``, and the commands must see the
-# patched object, as they did when this was a single module.
-import shadowscan.cli as _cli_pkg
-from shadowscan.cli import (
-    ScanOptions,
-    _warn_argv_secret,
-    available_connectors,
-    main,
-    scan_options,
-)
+import shadowscan.cli as _cli
+from shadowscan.cli import ScanOptions, _warn_argv_secret, main, scan_options
 from shadowscan.config import (
     ConfigValidationError,
     ConnectorSpec,
@@ -62,7 +54,7 @@ def scan(config_path: str, only: tuple[str, ...], opts: ScanOptions) -> None:
         cfg.incremental = opts.incremental
     if opts.state_dir is not None:
         cfg.state_dir = opts.state_dir
-    _cli_pkg._run_scan(cfg, opts, only=list(only) or None)
+    _cli._run_scan(cfg, opts, only=list(only) or None)
 
 
 # ----------------------------------------------------------------------- run
@@ -84,7 +76,7 @@ def scan(config_path: str, only: tuple[str, ...], opts: ScanOptions) -> None:
 @scan_options
 def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts: ScanOptions) -> None:
     """Run a single connector, e.g. `shadowscan run identity.okta --set org_url=https://acme.okta.com`."""
-    if connector not in available_connectors():
+    if connector not in _cli.available_connectors():
         raise click.BadParameter(f"unknown connector {connector!r}; see `shadowscan connectors`")
     try:
         conf = parse_set_options(list(settings))
@@ -99,10 +91,46 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts:
     exposed = argv_credential_keys({k: v for k, v in conf.items() if k != "input"})
     if exposed:
         _warn_argv_secret(f"--set {', '.join(exposed)}", "a ${ENV_VAR} reference in a scan configuration")
-    _cli_pkg._run_scan(opts.config([ConnectorSpec(name=connector, config=conf)]), opts)
+    _cli._run_scan(opts.config([ConnectorSpec(name=connector, config=conf)]), opts)
 
 
 # ---------------------------------------------------------------------- code
+def _code_options(
+    exclude: tuple[str, ...],
+    no_default_excludes: bool,
+    no_secrets: bool,
+    strict_coverage: bool,
+    include_tests: bool,
+    triage: bool,
+    profile: str | None,
+    max_coverage_gap: float | None = None,
+) -> dict[str, Any]:
+    """The configuration every code connector of one `shadowscan code` run shares.
+
+    ``--strict-coverage`` and ``--max-coverage-gap 0`` are both strict accounting, which counts
+    every gap the ci profile exists to declare, so either one conflicts with ``--profile ci``.
+    """
+    common: dict[str, Any] = {"exclude": list(exclude), "scan_secrets": not no_secrets}
+    if no_default_excludes:
+        common["default_excludes"] = False
+    if strict_coverage:
+        common["strict_coverage"] = True
+    if include_tests:
+        common["include_tests"] = True
+    if triage:
+        common["triage"] = True
+    if profile:
+        if strict_coverage and profile == "ci":
+            raise click.UsageError("--profile ci and --strict-coverage conflict; pass one of them")
+        if max_coverage_gap == 0 and profile == "ci":
+            raise click.UsageError(
+                "--profile ci and --max-coverage-gap 0 conflict: a budget of 0 is strict accounting, "
+                "which counts every gap the profile declares; pass one of them"
+            )
+        common["profile"] = profile
+    return common
+
+
 @main.command()
 @click.argument("paths", nargs=-1, type=click.Path(exists=True))
 @click.option("--github-org", help="scan every repository of a GitHub organisation (GITHUB_TOKEN)")
@@ -124,7 +152,7 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts:
 @click.option(
     "--strict-coverage",
     is_flag=True,
-    help="record incomplete file and symlink coverage as errors (exit 3 in either mode)",
+    help="strict accounting: every coverage gap is an error (exit 3), none budgeted, discounted or declared",
 )
 @click.option(
     "--include-tests",
@@ -135,6 +163,18 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts:
     "--triage",
     is_flag=True,
     help="fast subset scan (manifests, MCP/agent configs, flows, IaC); always exits incomplete",
+)
+@click.option(
+    "--profile",
+    type=click.Choice(["default", "ci"]),
+    default=None,
+    help=(
+        "ci: declare unread links, non-regular entries, unparsed content, analysis limits and (with "
+        "credential detection off) oversize files under test, fixture, documentation, example and "
+        "generated paths as omissions (warnings the report counts) instead of gaps; every other gap is "
+        "judged by the coverage budget as usual, and agent configuration and credential limits are never "
+        "declared; conflicts with --strict-coverage and --max-coverage-gap 0"
+    ),
 )
 @click.option(
     "--diff-base",
@@ -157,21 +197,23 @@ def code(
     strict_coverage: bool,
     include_tests: bool,
     triage: bool,
+    profile: str | None,
     diff_base: str | None,
     opts: ScanOptions,
 ) -> None:
     """Scan local directories and/or remote repositories for agent code, MCP, coding agents, IaC and
     secrets."""
     specs: list[ConnectorSpec] = []
-    common: dict[str, Any] = {"exclude": list(exclude), "scan_secrets": not no_secrets}
-    if no_default_excludes:
-        common["default_excludes"] = False
-    if strict_coverage:
-        common["strict_coverage"] = True
-    if include_tests:
-        common["include_tests"] = True
-    if triage:
-        common["triage"] = True
+    common = _code_options(
+        exclude,
+        no_default_excludes,
+        no_secrets,
+        strict_coverage,
+        include_tests,
+        triage,
+        profile,
+        opts.max_coverage_gap,
+    )
     if diff_base and not paths:
         raise click.UsageError("--diff-base applies only to local PATHS")
     if mode and not (github_org or github_repo or gitlab_group):
@@ -198,7 +240,7 @@ def code(
         specs.append(ConnectorSpec(name="code.gitlab", config=gl))
     if not specs:
         raise click.UsageError("give at least one PATH, --github-org/--github-repo or --gitlab-group")
-    _cli_pkg._run_scan(opts.config(specs), opts)
+    _cli._run_scan(opts.config(specs), opts)
 
 
 # ------------------------------------------------------------------- gateway
@@ -271,4 +313,4 @@ def gateway(
             conf["label"] = label
         instance = f"gateway.logs#{i + 1}" if len(logs) > 1 else None
         specs.append(ConnectorSpec(name="gateway.logs", config=conf, label=instance))
-    _cli_pkg._run_scan(opts.config(specs), opts)
+    _cli._run_scan(opts.config(specs), opts)

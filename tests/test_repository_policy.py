@@ -60,11 +60,10 @@ COVERAGE_FLOOR = 80.0
 # workflow: a newer pull-request push supersedes the older run, while every
 # main push run finishes and leaves a complete record for its commit.
 PULL_REQUEST_ONLY_CANCELLATION = "${{ github.event_name == 'pull_request' }}"
-# Push-triggered workflows whose superseded push runs may be cancelled, and why.
-CANCELLABLE_PUSH_RUNS = {
-    "docs.yml": "it only rebuilds the site; CI's docs job builds every main commit, "
-    "and release evidence cites CI and CodeQL runs only",
-}
+# Push-triggered workflows whose superseded push runs may be cancelled, and why. The Docs
+# workflow was one until a push run could deploy Pages (``DOCS_PUBLISH``): a newer docs push
+# then cancelled the earlier run's deployment.
+CANCELLABLE_PUSH_RUNS: dict[str, str] = {}
 # Explicit, justified exceptions to the failure-suppression rule, keyed by the
 # workflow and the exact stripped `run:` line.
 SUPPRESSION_EXCEPTIONS: dict[tuple[str, str], str] = {}
@@ -1177,35 +1176,57 @@ def test_ci_gate_executes_fail_closed(
 def test_one_linux_leg_enforces_both_coverage_floors_and_every_leg_runs_the_suite() -> None:
     jobs = _load(GITHUB / "workflows" / "ci.yml")["jobs"]
     matrix = jobs["test"]["strategy"]["matrix"]
-    # Exactly one include entry, extending an existing leg rather than adding one.
-    (leg,) = matrix["include"]
-    assert leg == {"python": leg["python"], "coverage": True} and leg["python"] in matrix["python"]
+    # The coverage leg is selected by an environment expression, never a
+    # matrix ``include`` key: an added matrix value joins the job's check
+    # name, renaming the leg to ``test (3.11, true)`` so the required
+    # ``test (3.11)`` status could never report.
+    assert "include" not in matrix
+    coverage_leg = jobs["test"]["env"]["COVERAGE_LEG"]
+    python = re.fullmatch(r"\$\{\{ matrix\.python == '(3\.\d+)' \}\}", coverage_leg).group(1)
+    assert python in matrix["python"]
     steps = jobs["test"]["steps"]
     pytest_steps = [
         step for step in steps if re.search(r"(?:^|\s)(?:python -m )?pytest\b", step.get("run", ""))
     ]
     traced = [step for step in pytest_steps if "--cov=shadowscan" in step["run"]]
-    assert [step.get("if") for step in traced] == ["${{ matrix.coverage }}"]
+    assert [step.get("if") for step in traced] == ["${{ env.COVERAGE_LEG == 'true' }}"]
     assert "--cov-fail-under=80" in traced[0]["run"]
     # The suite is spread over pytest-xdist workers, one per CPU: the same tests, with no selection flag.
     # pytest-cov combines the workers' data before it checks the floor, so the gate reads it all.
-    assert traced[0]["run"].strip() == (
+    assert _without_junit_report(traced[0]["run"]) == (
         "python -m pytest -q -n auto --dist worksteal --cov=shadowscan --cov-report=term-missing --cov-fail-under=80"
     )
     gate = [step for step in steps if "python -m tools.coverage_gate" in step.get("run", "")]
-    assert [step.get("if") for step in gate] == ["${{ matrix.coverage }}"]
+    assert [step.get("if") for step in gate] == ["${{ env.COVERAGE_LEG == 'true' }}"]
     assert steps.index(gate[0]) > steps.index(traced[0])
-    # Every other leg, and macOS, still runs the whole suite (workers, but no selection flags).
+    # Every other leg, and macOS, still runs the whole suite (workers, but no selection
+    # flags; a JUnit report for the failure annotations selects nothing).
     untraced = [step for step in pytest_steps if step not in traced]
-    assert [(step.get("if"), step["run"].strip()) for step in untraced] == [
-        ("${{ !matrix.coverage }}", "python -m pytest -q -n auto --dist worksteal")
+    assert [(step.get("if"), _without_junit_report(step["run"])) for step in untraced] == [
+        ("${{ env.COVERAGE_LEG != 'true' }}", "python -m pytest -q -n auto --dist worksteal")
     ]
     # macOS runs the whole suite through the console entry point, which must
     # import the checkout-only tools packages without a caller-supplied PYTHONPATH.
     macos = [
         step for step in jobs["test-macos"]["steps"] if re.search(r"(?:^|\s)pytest\b", step.get("run", ""))
     ]
-    assert [(step.get("if"), step["run"].strip()) for step in macos][-1] == (None, "pytest -q")
+    assert [(step.get("if"), _without_junit_report(step["run"])) for step in macos][-1] == (None, "pytest -q")
+    # Each job names its failing tests in the checks API from those reports.
+    for job in ("test", "test-macos"):
+        annotate = [
+            step for step in jobs[job]["steps"] if "python -m tools.test_annotations" in step.get("run", "")
+        ]
+        assert [step.get("if") for step in annotate] == ["failure()"]
+        assert jobs[job]["steps"].index(annotate[0]) > max(
+            jobs[job]["steps"].index(step)
+            for step in jobs[job]["steps"]
+            if "--junitxml=" in step.get("run", "")
+        )
+
+
+def _without_junit_report(run: str) -> str:
+    """``run`` without its ``--junitxml`` option, which only writes a report."""
+    return re.sub(r"\s--junitxml=(?:\"[^\"]*\"|\S+)", "", run).strip()
 
 
 def test_coverage_floors_count_branches_and_are_not_lowered() -> None:
@@ -2134,14 +2155,45 @@ def test_pages_requires_explicit_manual_publication_from_main() -> None:
     publish = triggers["workflow_dispatch"]["inputs"]["publish"]
     assert publish["type"] == "boolean" and publish["default"] is False
     deploy = workflow["jobs"]["deploy"]
-    expression = deploy.get("if", "").strip().removeprefix("${{").removesuffix("}}").strip()
-    clauses = {re.sub(r"\s+", " ", clause.strip()).replace('"', "'") for clause in expression.split("&&")}
-    assert clauses == {
-        "github.event_name == 'workflow_dispatch'",
-        "inputs.publish",
-        "github.ref == 'refs/heads/main'",
-    }, "Pages deployment must require a manual dispatch, publish=true, and the main branch"
+    expression = re.sub(r"\s+", " ", deploy.get("if", "")).strip()
+    expression = expression.removeprefix("${{").removesuffix("}}").strip().replace('"', "'")
+    # Publication stays an explicit maintainer choice, from main only: a
+    # one-off manual dispatch with publish=true, or the maintainer-set
+    # repository variable DOCS_PUBLISH for continuous publication of pushes.
+    # A pull request can never deploy.
+    assert expression == (
+        "github.ref == 'refs/heads/main' && "
+        "((github.event_name == 'workflow_dispatch' && inputs.publish) || "
+        "(github.event_name == 'push' && vars.DOCS_PUBLISH == 'true'))"
+    ), "Pages deployment must require main plus an explicit publish dispatch or the DOCS_PUBLISH variable"
     assert "build" in ([deploy["needs"]] if isinstance(deploy["needs"], str) else deploy["needs"])
+    # A push run may deploy, so no run that can deploy is cancelled by a newer one: the workflow
+    # cancels only superseded pull-request builds (test_push_runs_are_not_cancelled_by_a_newer_push),
+    # and the deploy jobs of a push run and a manual run queue in one non-cancelling group
+    # instead of publishing at once.
+    assert workflow["concurrency"]["cancel-in-progress"] == PULL_REQUEST_ONLY_CANCELLATION
+    assert deploy.get("concurrency") == {"group": "pages", "cancel-in-progress": False}, (
+        "the Pages deploy job must run in the non-cancelling `pages` concurrency group"
+    )
+
+
+def test_documents_name_every_way_the_docs_workflow_publishes() -> None:
+    """Regression: #256 let a docs push to main deploy Pages when DOCS_PUBLISH is true, but the
+    documentation index still said the Docs workflow publishes only on a publish=true dispatch.
+
+    The documents that state the publication policy name each trigger the deploy job admits."""
+    condition = re.sub(r"\s+", " ", _load(GITHUB / "workflows" / "docs.yml")["jobs"]["deploy"]["if"])
+    triggers = {"publish": "inputs.publish" in condition, "DOCS_PUBLISH": "vars.DOCS_PUBLISH" in condition}
+    assert all(triggers.values()), f"the deploy condition changed; update this test: {condition}"
+    for document in (ROOT / "docs" / "index.md", GITHUB / "workflows" / "README.md"):
+        [paragraph] = [
+            " ".join(block.split())
+            for block in re.split(r"\n[ \t]*\n", document.read_text(encoding="utf-8"))
+            if "docs.yml" in block and "publish" in block
+        ]
+        for trigger in triggers:
+            assert f"`{trigger}" in paragraph, f"{document.relative_to(ROOT)} should name `{trigger}`"
+        assert "publishes only" not in paragraph, f"{document.relative_to(ROOT)} names one publish path only"
 
 
 def test_stale_automation_never_closes_issues_or_pull_requests() -> None:

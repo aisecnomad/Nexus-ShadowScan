@@ -1101,6 +1101,8 @@ def _assign_owner(f: Finding, c: _Caller) -> None:
 
 
 class GatewayLogConnector(BaseConnector, _NoDump):
+    # No live API: reads exported gateway logs.
+    live_collection: ClassVar[bool] = False
     # Engine hook: identical sources in one report share opaque caller/scope IDs.
     uses_run_identity_key: ClassVar[bool] = True
 

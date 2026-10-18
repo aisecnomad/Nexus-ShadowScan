@@ -35,8 +35,10 @@ Offline input: n/a (path is the input).
 | `inspect_model_artifacts` | opt in to bounded GGUF/safetensors/ONNX header and PyInstaller footer inventory; never executes or loads tensor payloads (default false) |
 | `model_metadata_bytes` | maximum bytes read per selected binary/model artifact (128..1048576; default 65536) |
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
-| `strict_coverage` | report coverage gaps (unread analyzable oversize files, non-regular entries named like configuration files, symbolic links whose alias path is not covered) as errors instead of warnings; either way the scan is incomplete (default false) |
+| `max_coverage_gap` | share of examined entries that may be left unread before this scan reports itself incomplete (default: the scan-wide options.max\_coverage\_gap, 0.02); 0 is strict accounting, as strict\_coverage is: any gap fails and none is discounted or declared. A gap the scanner cannot bound always fails closed, whatever this allows |
+| `strict_coverage` | strict accounting: report every coverage gap (unread analyzable oversize files, non-regular entries named like configuration files, symbolic links whose alias path is not covered, unreadable test fixtures) as an error that marks the scan incomplete, with no gap budget, test-code discount or ci declaration (default false) |
 | `include_tests` | let test and fixture code establish agents and credential findings at full weight (default false) |
+| `profile` | default \| ci; ci declares as omissions, with a warning that leaves the scan complete, the coverage gaps a source gate accepts in advance: unread symbolic links, non-regular entries, unparsed content, analysis limits and, while scan\_secrets is off, oversize files under test, fixture, documentation, example and generated paths (documentation and example directories below the file's project root, test paths only while include\_tests is false); every other gap is judged by the coverage budget as usual, an MCP configuration, coding-agent file, agent card or credential limit is never declared, and the report counts the omissions; refused with strict\_coverage or a max\_coverage\_gap of 0 (default: default) |
 | `triage` | fast subset scan: manifests, MCP and coding-agent configuration, flow exports and IaC only; source analysis, credential detection and content sweeps are skipped and the scan is always reported incomplete so a triage result is never mistaken for a full scan (default false) |
 | `agent_granularity` | project (default) \| source; source additionally inventories unique named straight-line Python agent constructions by file and scoped binding; other source remains project evidence |
 | `label` | prefix for resource ids (e.g. 'github:org/repo'); defaults to the path |
@@ -73,6 +75,7 @@ Offline input: directory of cloned repositories.
 | `include_tests` | see code.filesystem (default false) |
 | `triage` | see code.filesystem (default false) |
 | `agent_granularity` | project (default) \| source; see code.filesystem |
+| `profile` | default \| ci; see code.filesystem |
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
 | `exclude` | forwarded to the filesystem scanner (see code.filesystem) |
 | `max_file_size` | forwarded to the filesystem scanner (see code.filesystem) |
@@ -112,6 +115,7 @@ Offline input: directory of cloned projects.
 | `include_tests` | see code.filesystem (default false) |
 | `triage` | see code.filesystem (default false) |
 | `agent_granularity` | project (default) \| source; see code.filesystem |
+| `profile` | default \| ci; see code.filesystem |
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
 | `exclude` | forwarded to the filesystem scanner (see code.filesystem) |
 | `max_file_size` | forwarded to the filesystem scanner (see code.filesystem) |
@@ -223,7 +227,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | --- | --- |
 | `org_url` | https://&lt;org&gt;.okta.com (env OKTA\_ORG\_URL) |
 | `token` | SSWS API token (env OKTA\_API\_TOKEN); ignored when `bearer` is set |
-| `bearer` | OAuth 2.0 access token with okta.apps.read, sent as Bearer instead of `token` (env OKTA\_ACCESS\_TOKEN) |
+| `bearer` | OAuth 2.0 access token with okta.apps.read and okta.appGrants.read, sent as Bearer instead of `token` (env OKTA\_ACCESS\_TOKEN) |
 | `include_inactive` | include INACTIVE apps (default false) |
 | `fetch_tokens` | call /tokens per OIDC app to count user consents (default true) |
 | `input` | offline: JSON export of /api/v1/apps (with optional \_grants/\_tokens) |
@@ -457,7 +461,8 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | Key | Description |
 | --- | --- |
 | `org` | organisation login (env GITHUB\_ORG) |
-| `token` | org admin token (env GITHUB\_TOKEN, which code.github also reads by default: give each connector a variable of its own) |
+| `token` | org admin token (env GITHUB\_TOKEN, which code.github also reads by default: give each connector a variable of its own); a GitHub App token with organization Administration, Personal access tokens and GitHub Copilot Business read permissions covers every call |
+| `app_token` | GitHub App installation or user access token for the fine-grained PAT inventory, which GitHub serves only to GitHub Apps (env GITHUB\_APP\_TOKEN; default: token) |
 | `api_url` | API base URL (default https://api.github.com, env GITHUB\_API\_URL) |
 | `input` | offline: installations JSON |
 | `include_unrecognized_apps` | also report write-capable apps with no AI signature or AI-like name, capped at possible confidence (default false) |
@@ -514,7 +519,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | Key | Description |
 | --- | --- |
 | `token` | xoxb/xoxp token (env SLACK\_TOKEN); admin.apps.\* need an org admin user token |
-| `team_id` | expected workspace id for live collection (env SLACK\_TEAM\_ID); required for offline exports without a team record |
+| `team_id` | expected workspace id for live collection (env SLACK\_TEAM\_ID), sent with users.list, admin.apps.\* and team.integrationLogs as an org-level token requires; required for offline exports without a team record |
 | `input` | offline: JSON export of users / apps / integration logs |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
@@ -683,7 +688,7 @@ Offline input: JSON / JSONL / YAML export.
 
 | Key | Description |
 | --- | --- |
-| `input` | Offline Tetragon, Falco, Tracee, or Hubble JSON / JSONL export. |
+| `input` | Offline Tetragon, Falco, Tracee, or Hubble JSON / JSONL export (native shapes). |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
@@ -698,7 +703,7 @@ Offline input: JSON / JSONL / YAML export.
 
 | Key | Description |
 | --- | --- |
-| `input` | Offline host inventory JSON, JSONL, or YAML export. |
+| `input` | Offline host inventory JSON, JSONL, or YAML export; rows are reported when the name or path matches an AI product signature, the whole application or executable name is a known AI product, local model runtime or self-hosted AI platform (Ollama, LM Studio, GPT4All, llama.cpp, vLLM, LocalAI, Jan, Msty, Open WebUI, AnythingLLM, LiteLLM, ...), the path lies in a local model store (~/.ollama/models, ...), or the record's type/category names an AI category (ai, agent, assistant, copilot, llm, mcp, model). |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |

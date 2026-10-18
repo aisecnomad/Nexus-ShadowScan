@@ -371,6 +371,8 @@ def _add_serving_evidence(finding: Finding, model_argument: bool, serving: bool,
 
 
 class KubernetesConnector(BaseConnector):
+    # No live API: reads a manifest or API dump someone else exported.
+    live_collection: ClassVar[bool] = False
     name = "cloud.kubernetes"
     surface = Surface.CLOUD
     provider = "kubernetes"

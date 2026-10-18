@@ -22,6 +22,7 @@ import shadowscan
 from shadowscan import engine as engine_module
 from shadowscan.cli import main
 from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig
+from shadowscan.coverage import CoverageGap, CoverageLedger, CoveragePolicy
 from shadowscan.engine import Engine
 from shadowscan.models import DERIVED_METADATA_KEYS, ScanStats
 from shadowscan.plugin_process import (
@@ -32,6 +33,9 @@ from shadowscan.plugin_process import (
     _receive,
     _worker,
     _WorkerHandle,
+    is_credential_name,
+    is_credential_variable,
+    scrub_credential_environment,
 )
 from shadowscan.signatures import SignatureIndex
 
@@ -105,6 +109,31 @@ class Connector(BaseConnector):
                 metadata.update(
                     env_has_identity_key="SHADOWSCAN_IDENTITY_KEY" in os.environ,
                     ctx_has_identity_key=self.ctx.gateway_identity_key is not None,
+                )
+            if mode == "credential-env":
+                metadata.update(
+                    seen=sorted(
+                        name for name in os.environ
+                        if name.startswith("SHADOWSCAN_PROBE_") or name in ("PATH", "HOME")
+                    ),
+                )
+            if mode == "initial-env":
+                # The environment the worker was started with, which removing a variable from
+                # os.environ does not change. Darwin has no /proc: the worker's current
+                # environment stands in, which the start-up scrub has already cleaned, so the
+                # strict started-with check is the /proc-gated test only.
+                try:
+                    with open("/proc/self/environ", "rb") as initial:
+                        entries = initial.read().split(b"\\0")
+                    names = [entry.partition(b"=")[0].decode() for entry in entries if entry]
+                except FileNotFoundError:
+                    names = list(os.environ)
+                metadata.update(
+                    initial=sorted(
+                        name for name in names
+                        if name.startswith("SHADOWSCAN_PROBE_")
+                        or name in ("PATH", "HOME", "SHADOWSCAN_IDENTITY_KEY")
+                    ),
                 )
             # "forge" builds the finding under a built-in connector's name; "forge-id" gives a
             # finding under its own name that finding's id, and "forge-replace" re-labels a copy.
@@ -652,6 +681,13 @@ def test_result_encoder_still_rejects_nan():
         ("warnings", "ok"),
         ("started_at", []),
         ("skip_reason", {}),
+        ("name", ["code.filesystem"]),
+        ("declared_paths", "tests/a.json"),
+        ("declared_paths", [3]),
+        # The coverage ledger (#254) is checked like every other statistic.
+        ("coverage", "within budget"),
+        ("coverage", []),
+        ("coverage", {"within_budget": True}),
     ],
 )
 def test_result_stats_schema_is_not_trusted(field, value):
@@ -660,6 +696,31 @@ def test_result_stats_schema_is_not_trusted(field, value):
     payload = json.dumps({"stats": stats, "findings": [], "exports": []}).encode()
     with pytest.raises(ValueError):
         _decode_result(payload, 1, ConnectorSpec(ENTRY))
+
+
+def test_result_stats_count_an_unknown_incomplete_reason_as_other():
+    # The plugin process writes its own reason keys; the scanner prints them in the
+    # table banner and the exit-3 line, so only the fixed categories pass.
+    stats = {
+        **asdict(ScanStats(ENTRY, "now")),
+        "incomplete": True,
+        "warnings": ["connector timed out"],
+        "incomplete_reasons": {"\x1b]0;pwned\x07\x1b[2J": 2, "src/app.py": 1, "timeout": 1},
+    }
+    payload = json.dumps({"stats": stats, "findings": [], "exports": []}).encode()
+    _, decoded, _ = _decode_result(payload, 1, ConnectorSpec(ENTRY))
+    assert decoded.incomplete_reasons == {"other": 3, "timeout": 1}
+
+
+def test_result_stats_keep_a_coverage_ledger_the_worker_computed():
+    ledger = CoverageLedger()
+    ledger.add_examined(40)
+    ledger.record(CoverageGap(detail="code.filesystem: tests/a.bin: unreadable", path="tests/a.bin"))
+    _, summary = ledger.evaluate(CoveragePolicy())
+    stats = {**asdict(ScanStats(ENTRY, "now")), "coverage": summary}
+    payload = json.dumps({"stats": stats, "findings": [], "exports": []}).encode()
+    _, decoded, _ = _decode_result(payload, 1, ConnectorSpec(ENTRY))
+    assert decoded.coverage == summary
 
 
 @pytest.mark.parametrize("value", [None, True, 1, [], "fork", "Process", ""])
@@ -761,6 +822,253 @@ def test_a_decoded_plugin_finding_never_keeps_the_id_it_carries():
     assert finding.id == Finding(connector=ENTRY, **shape).id != builtin.id
 
 
+def test_spawned_plugin_does_not_inherit_credential_environment(installed_probe, monkeypatch):
+    """A process-mode worker inherited the whole environment, so an approved plugin could read the
+    GITHUB_TOKEN, cloud credentials and every other secret exported for the built-in connectors."""
+    monkeypatch.setenv("SHADOWSCAN_PROBE_GITHUB_TOKEN", "synthetic")
+    monkeypatch.setenv("SHADOWSCAN_PROBE_AWS_SECRET_ACCESS_KEY", "synthetic")
+    monkeypatch.setenv("SHADOWSCAN_PROBE_OPENAI_API_KEY", "synthetic")
+    monkeypatch.setenv("SHADOWSCAN_PROBE_DB_PASSWORD", "synthetic")
+    monkeypatch.setenv("SHADOWSCAN_PROBE_AZURE_DEVOPS_EXT_PAT", "synthetic")
+    monkeypatch.setenv("SHADOWSCAN_PROBE_REDIS_URL", "redis://:synthetic@cache:6379/0")
+    monkeypatch.setenv("SHADOWSCAN_PROBE_SERVER_URL", "https://api.example")  # no password: stays
+    monkeypatch.setenv("SHADOWSCAN_PROBE_VENDOR_TOKEN", "synthetic")  # the plugin's own, allowlisted
+    monkeypatch.setenv("SHADOWSCAN_PROBE_REGION", "eu-west-1")  # not credential-shaped: stays
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "credential-env")
+    result = _engine(plugin_env=["SHADOWSCAN_PROBE_VENDOR_TOKEN"]).run()
+    assert result.complete, result.stats
+    assert result.findings[0].metadata["seen"] == [
+        "HOME",
+        "PATH",
+        "SHADOWSCAN_PROBE_REGION",
+        "SHADOWSCAN_PROBE_SERVER_URL",
+        "SHADOWSCAN_PROBE_VENDOR_TOKEN",
+    ]
+    # The scanner's own environment is untouched.
+    assert os.environ["SHADOWSCAN_PROBE_GITHUB_TOKEN"] == "synthetic"
+    _assert_reaped(installed_probe)
+
+
+@pytest.mark.skipif(not os.path.exists("/proc/self/environ"), reason="reads /proc/<pid>/environ")
+def test_spawned_plugin_initial_environment_holds_no_withheld_variable(installed_probe, monkeypatch):
+    """Regression: the worker removed the credentials from os.environ, but spawn had already
+    started it with the scanner's whole environment, so a plugin still read every withheld value
+    from /proc/self/environ, which removing a variable does not change. The identity key is
+    withheld even when ``plugin_env`` names it."""
+    monkeypatch.setenv("SHADOWSCAN_PROBE_GITHUB_TOKEN", "synthetic")
+    monkeypatch.setenv("SHADOWSCAN_PROBE_DB_PASSWORD", "synthetic")
+    monkeypatch.setenv("SHADOWSCAN_PROBE_VENDOR_TOKEN", "synthetic")  # the plugin's own, allowlisted
+    monkeypatch.setenv("SHADOWSCAN_PROBE_REGION", "eu-west-1")  # not credential-shaped: stays
+    monkeypatch.setenv("SHADOWSCAN_IDENTITY_KEY", "hex:" + bytes(range(32)).hex())
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "initial-env")
+    before = dict(os.environ)
+    result = _engine(plugin_env=["SHADOWSCAN_PROBE_VENDOR_TOKEN", "SHADOWSCAN_IDENTITY_KEY"]).run()
+    assert result.complete, result.stats
+    assert result.findings[0].metadata["initial"] == [
+        "HOME",
+        "PATH",
+        "SHADOWSCAN_PROBE_REGION",
+        "SHADOWSCAN_PROBE_VENDOR_TOKEN",
+    ]
+    _assert_reaped(installed_probe)
+    # The scanner's environment, and the one its later programs inherit, are unchanged.
+    assert dict(os.environ) == before
+    later = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import os; print(' '.join(sorted(n for n in os.environ if n.startswith('SHADOWSCAN_P'))))",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    assert later.stdout.split() == sorted(name for name in before if name.startswith("SHADOWSCAN_P"))
+
+
+def test_program_another_thread_starts_during_a_plugin_spawn_keeps_its_environment(
+    installed_probe, monkeypatch
+):
+    """Regression: the spawn took the withheld variables out of the whole process's environment
+    (``os.unsetenv``) and set PYTHONSAFEPATH for as long as ``Process.start()`` ran. A program a
+    built-in connector's thread started meanwhile with the inherited environment (botocore's
+    ``credential_process``, a thread-mode plugin's helper) started without the credentials it
+    needed, and with PYTHONSAFEPATH set. The concurrent launch runs while the spawn pickles the
+    worker, inside ``Process.start()``."""
+    import multiprocessing.reduction
+    from multiprocessing.process import BaseProcess
+
+    monkeypatch.setenv("SHADOWSCAN_PROBE_GITHUB_TOKEN", "synthetic")
+    monkeypatch.setenv("SHADOWSCAN_IDENTITY_KEY", "hex:" + bytes(range(32)).hex())
+    monkeypatch.setenv("PYTHONSAFEPATH", "sentinel")
+    monkeypatch.delenv("PYTHONSAFEPATH")
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "initial-env")
+    script = 'printf %s "${SHADOWSCAN_PROBE_GITHUB_TOKEN-unset} ${SHADOWSCAN_IDENTITY_KEY:+key} ${PYTHONSAFEPATH-unset}"'
+    seen: list[str] = []
+    original = multiprocessing.reduction.dump
+
+    def launch() -> None:
+        # Inherits the process environment (env=None), as subprocess users on other threads do.
+        seen.append(subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=60).stdout)
+
+    def dump(obj, file, protocol=None):
+        if isinstance(obj, BaseProcess):
+            other = threading.Thread(target=launch)
+            other.start()
+            other.join(60)
+        return original(obj, file, protocol)
+
+    monkeypatch.setattr(multiprocessing.reduction, "dump", dump)
+    result = _engine().run()
+    assert result.complete, result.stats
+    assert seen == ["synthetic key unset"]
+    # The worker itself still starts without them.
+    assert result.findings[0].metadata["initial"] == ["HOME", "PATH"]
+    _assert_reaped(installed_probe)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["GITHUB_TOKEN", ["GITHUB_TOKEN", "GITHUB_TOKEN"], ["not a name"], ["X=1"], [1], ["A" * 129]],
+)
+def test_plugin_env_option_is_validated(value):
+    with pytest.raises(ConfigValidationError, match="plugin_env"):
+        ScanConfig(connectors=[ConnectorSpec(ENTRY)], plugins=[ENTRY], plugin_env=value)
+
+
+@pytest.mark.parametrize(
+    ("name", "withheld"),
+    [
+        ("GITHUB_TOKEN", True),
+        ("token", True),
+        ("AWS_SECRET_ACCESS_KEY", True),
+        ("AWS_ACCESS_KEY_ID", True),
+        ("GOOGLE_APPLICATION_CREDENTIALS", True),
+        ("AZURE_CLIENT_SECRET", True),
+        ("OCI_CLI_PASSPHRASE", True),
+        ("DOCKER_PASSWD", True),
+        ("DATABASE_URL", True),
+        ("SHADOWSCAN_IDENTITY_KEY", True),
+        # CI and cloud credentials the first list missed (#258 review).
+        ("SYSTEM_ACCESSTOKEN", True),  # Azure Pipelines job token
+        ("AZURE_DEVOPS_EXT_PAT", True),
+        ("GITHUB_PAT", True),
+        ("SENDGRID_APIKEY", True),
+        ("AZURE_STORAGE_CONNECTION_STRING", True),
+        ("APPLICATIONINSIGHTS_CONNECTION_STRING", True),
+        ("CI_JOB_JWT", True),
+        ("CI_JOB_JWT_V2", True),
+        ("IDENTITY_HEADER", True),  # Azure managed-identity endpoint secret
+        ("CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE", True),
+        ("CLOUDSDK_AUTH_ACCESS_TOKEN_FILE", True),
+        ("GOOGLE_GHA_CREDS_PATH", True),
+        ("AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", True),
+        ("BW_SESSION", True),
+        ("OP_SESSION_my", True),
+        # Tooling credentials the second list missed (#258 review): the credential word is a
+        # prefix, has no underscore before it, or the name says nothing about a credential.
+        ("TF_TOKEN_app_terraform_io", True),  # Terraform's TF_TOKEN_<host>
+        ("npm_config__authToken", True),
+        ("NPM_CONFIG__AUTH", True),
+        ("npm_config_//registry.example/:_authToken", True),  # npm's per-registry token
+        ("NGROK_AUTHTOKEN", True),
+        ("DOCKER_AUTH_CONFIG", True),  # GitLab's registry credentials
+        ("COMPOSER_AUTH", True),
+        ("BUNDLE_GITHUB__COM", True),  # Bundler's credentials for github.com
+        ("BUNDLE_GEMS__CONTRIBSYS__COM", True),
+        ("CUSTOMCONNSTR_db", True),  # Azure App Service connection strings
+        ("SQLAZURECONNSTR_db", True),
+        ("SQLCONNSTR_db", True),
+        ("MYSQLCONNSTR_db", True),
+        ("POSTGRESQLCONNSTR_db", True),
+        ("SERVICEBUSCONNSTR_bus", True),
+        ("ConnectionStrings__Default", True),  # .NET configuration
+        ("SLACK_WEBHOOK_URL", True),  # the secret is in the URL path
+        ("SLACK_WEBHOOK_URL_V2", True),
+        ("DISCORD_WEBHOOK", True),
+        ("WEBHOOK_URL", True),
+        ("PATH", False),
+        ("HOME", False),
+        ("LANG", False),
+        ("LC_ALL", False),
+        ("HTTPS_PROXY", False),
+        ("SSL_CERT_FILE", False),
+        ("KUBECONFIG", False),
+        ("AWS_PROFILE", False),
+        ("AWS_REGION", False),
+        ("AWS_ROLE_SESSION_NAME", False),
+        ("IDENTITY_ENDPOINT", False),
+        ("DESKTOP_SESSION", False),
+        ("XDG_SESSION_TYPE", False),
+        ("GIT_CONFIG_KEY_0", False),  # names a Git setting; GIT_CONFIG_COUNT needs it
+        ("CLASSPATH", False),
+        ("LD_LIBRARY_PATH", False),
+        ("GITHUB_SERVER_URL", False),
+        ("MAX_TOKENS", False),
+        ("TURKEY", False),
+        ("PYTHONHASHSEED", False),
+        # Neighbours of the tooling credentials, which programs in a plugin need.
+        ("TF_LOG", False),
+        ("TF_CLI_ARGS", False),
+        ("TF_TOKENS_DIR", False),
+        ("NPM_CONFIG_REGISTRY", False),
+        ("npm_config_cache", False),
+        ("NPM_CONFIG_USERCONFIG", False),
+        ("NGROK_REGION", False),
+        ("DOCKER_CONFIG", False),
+        ("DOCKER_HOST", False),
+        ("COMPOSER_HOME", False),
+        ("COMPOSER_AUTHOR", False),
+        ("BUNDLE_GEMFILE", False),
+        ("BUNDLE_PATH", False),
+        ("BUNDLE_WITHOUT", False),
+        ("CONNSTR", False),
+        ("MY_CONNECTION_STRINGS_DIR", False),
+        ("WEBHOOK_EVENTS", False),
+        ("XDG_CONFIG_HOME", False),
+        ("TMPDIR", False),
+        ("SHELL", False),
+    ],
+)
+def test_credential_environment_names(name, withheld):
+    assert is_credential_name(name) is withheld
+    environ = {name: "x", "PATH": "/usr/bin"}
+    removed = scrub_credential_environment(environ)
+    assert (name in removed) is withheld and "PATH" in environ
+    assert scrub_credential_environment({name: "x"}, keep=[name]) == []
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "withheld"),
+    [
+        # The values carry no user and password pair, which tools/check_secrets.py reports;
+        # any user information is withheld.
+        ("REDIS_URL", "redis://:synthetic@cache:6379/0", True),
+        ("MONGODB_URI", "mongodb+srv://synthetic@cluster.example/db", True),
+        ("SQLALCHEMY_DATABASE_URI", "postgresql://user:syn/thetic@db.example/app", True),  # unescaped /
+        ("SENTRY_DSN", "https://synthetic@o0.ingest.example/1", True),
+        ("CI_REPOSITORY_URL", "https://synthetic@gitlab.example/group/project.git", True),
+        ("PIP_INDEX_URL", "https://synthetic@pypi.example/simple", True),
+        ("url", "amqp://:synthetic@queue.example", True),
+        ("REDIS_URL", "redis://cache:6379/0", False),
+        ("GITHUB_SERVER_URL", "https://github.com", False),
+        ("CI_API_V4_URL", "https://gitlab.example/api/v4", False),
+        ("SSH_REMOTE_URL", "git@github.com:org/repo.git", False),  # not scheme://, a user name only
+        ("HTTPS_PROXY", "http://synthetic@proxy.example:3128", False),  # proxy settings stay
+        ("CONTACT", "https://synthetic@host.example", False),  # not a URL name
+    ],
+)
+def test_credential_environment_url_values(name, value, withheld):
+    """A connection URL carries its password or token as user information, under a name
+    (``REDIS_URL``, ``MONGODB_URI``) that says nothing about a credential."""
+    assert is_credential_variable(name, value) is withheld
+    environ = {name: value, "PATH": "/usr/bin"}
+    assert (name in scrub_credential_environment(environ)) is withheld and "PATH" in environ
+    assert scrub_credential_environment({name: value}, keep=[name]) == []
+
+
 def test_spawned_plugin_scrubs_identity_key_from_worker_environment(installed_probe, monkeypatch):
     """Regression: the spawned worker inherited SHADOWSCAN_IDENTITY_KEY in os.environ, so a plugin
     that does not declare uses_run_identity_key (or any child it starts) could read the raw key."""
@@ -771,3 +1079,45 @@ def test_spawned_plugin_scrubs_identity_key_from_worker_environment(installed_pr
     assert result.findings[0].metadata["env_has_identity_key"] is False
     assert result.findings[0].metadata["ctx_has_identity_key"] is False
     _assert_reaped(installed_probe)
+
+
+def _worker_ledger(gaps: int) -> dict:
+    ledger = CoverageLedger()
+    ledger.add_examined(40)
+    for number in range(gaps):
+        ledger.record(
+            CoverageGap(detail=f"code.filesystem: tests/{number}.bin: unreadable", path=f"tests/{number}.bin")
+        )
+    return ledger.evaluate(CoveragePolicy())[1]
+
+
+def test_result_stats_refuse_a_ledger_within_budget_that_lost_more_than_it_was_allowed():
+    summary = {**_worker_ledger(1), "weighted_gap_entries": 9.0}
+    stats = {**asdict(ScanStats(ENTRY, "now")), "coverage": summary}
+    payload = json.dumps({"stats": stats, "findings": [], "exports": []}).encode()
+    with pytest.raises(ValueError):
+        _decode_result(payload, 1, ConnectorSpec(ENTRY))
+
+
+def test_result_stats_over_budget_are_incomplete_whatever_the_worker_says():
+    summary = _worker_ledger(10)
+    assert summary["within_budget"] is False
+    stats = {**asdict(ScanStats(ENTRY, "now")), "coverage": summary, "incomplete": False}
+    payload = json.dumps({"stats": stats, "findings": [], "exports": []}).encode()
+    _, decoded, _ = _decode_result(payload, 1, ConnectorSpec(ENTRY))
+    assert decoded.incomplete
+
+
+def test_result_stats_accept_a_combined_ledger_and_check_its_part_counts():
+    from shadowscan.coverage import combine_coverage_summaries
+
+    combined = combine_coverage_summaries([_worker_ledger(1), _worker_ledger(10)])
+    assert combined is not None and (combined["parts"], combined["parts_over_budget"]) == (2, 1)
+    stats = {**asdict(ScanStats(ENTRY, "now")), "coverage": combined, "incomplete": False}
+    payload = json.dumps({"stats": stats, "findings": [], "exports": []}).encode()
+    _, decoded, _ = _decode_result(payload, 1, ConnectorSpec(ENTRY))
+    assert decoded.incomplete and decoded.coverage["tolerated_gap_entries"] == 1
+    forged = {**stats, "coverage": {**combined, "tolerated_gap_entries": 11}}
+    payload = json.dumps({"stats": forged, "findings": [], "exports": []}).encode()
+    with pytest.raises(ValueError):
+        _decode_result(payload, 1, ConnectorSpec(ENTRY))

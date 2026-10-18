@@ -5,7 +5,8 @@ from __future__ import annotations
 import click
 from rich.text import Text
 
-from shadowscan.cli import _load_report, err_console, main
+import shadowscan.cli as _cli
+from shadowscan.cli import _load_report, main
 from shadowscan.controls import ControlSelectionError, build_control_evidence, check_sources, control_catalogs
 from shadowscan.fleet import merge_reports, source_names
 from shadowscan.reporters.controls import CONTROL_FORMATS, render_controls
@@ -66,7 +67,9 @@ def controls_command(
             raise click.ClickException(
                 "could not write control evidence; check output path and permissions"
             ) from None
-        err_console.print(Text(terminal_text(f"wrote {fmt} control evidence to {output}"), style="green"))
+        _cli.err_console.print(
+            Text(terminal_text(f"wrote {fmt} control evidence to {output}"), style="green")
+        )
     else:
         click.echo(encodable_text(terminal_report_text(text, fmt)), nl=False)
     raise click.exceptions.Exit(0 if evidence["evidence_scope"]["complete"] else 3)

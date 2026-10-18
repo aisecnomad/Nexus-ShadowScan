@@ -32,10 +32,53 @@ the policy passed. An incomplete scan may omit findings above the threshold and
 cannot establish that the policy passed either. Use the code only to choose the
 follow-up: 2 needs finding triage, 1 and 3 need the scan fixed and rerun.
 
+When the scan exits 3 the CLI says why on stderr, by reason category
+(`scan incomplete (exit 3): oversize-file 2, unresolved-link 1`), and the
+report counts the same categories in `summary.incomplete_reasons`; the named
+diagnostics are in the report's `stats`. The categories name no path or value,
+so the stderr line can stay in a public job log that the private report should
+not reach. See [coverage policy](../scanning.md#coverage-policy) for the list.
+A complete scan can still have left entries unread within its coverage
+budget: `summary.tolerated_gaps` counts them, as `summary.declared_omissions`
+counts what `--profile ci` declared, and the table banner shows both.
+
+A repository's test cassettes, fixtures over a megabyte and dangling test
+certificate links are coverage gaps by default, because the credential pass
+would have read them: a few are tolerated within the coverage budget and counted
+in `summary.tolerated_gaps`, and enough of them exit 3. A gate on the
+repository's source can declare some of those gaps in advance with `--profile
+ci`: a dangling link, a non-regular entry, unparsed content or an analysis limit
+under a test, fixture, documentation, example or generated path becomes a
+warning that names it and is counted in `summary.declared_omissions`, and is
+never charged to the budget; a gap in `src/`, at the root or in any directory
+that holds a manifest of its own is judged by the budget as usual. Such a
+directory is a project whatever it is called: a `demo/` or `examples/svc/` with
+a `pyproject.toml`, and also a documentation site with its own
+`docs/package.json`, whose blog posts and static assets are then its source. The
+documentation and example directories below a project are still declared
+(`docs/docs/` in that layout); its own content is not. Generated files are
+recognised by name wherever they lie (`*_pb2.py`, `*.generated.*`), so one under
+`src/` is declared too. A file over `max_file_size` is declared only while
+credential detection is off: with it on, a cassette or fixture over the limit
+may hide a key, and credentials are never declared without a read, so its gap is
+charged to the budget as without the profile (raise `max_file_size` for a
+repository whose recorded cassettes exceed it). A credential limit, and a gap in
+an MCP configuration, coding-agent file or agent card, are never declared. The
+example workflow passes the flag. Leave it out when the gate should also
+establish that every undecodable documentation, example or generated file was
+read for credentials (the profile still declares those without a credential
+read), and never combine it with `--strict-coverage` or `--max-coverage-gap 0`:
+both are
+[strict accounting](../scanning.md#coverage-budget-and-strict-accounting), which
+counts every gap the profile declares, so the CLI refuses either pairing.
+
 To gate on drift between two reports, `shadowscan diff baseline.json current.json
 --fail-on-new` exits 2 when the current report has new findings or findings
-whose risk level rose, and 3 when the comparison is incomplete (differing scope
-or an incomplete scan). Without the flag, `diff` exits 0 unless the comparison
+whose risk level rose, and 3 when the comparison is incomplete (differing scope,
+an incomplete scan, or a missing finding in content the current scan declared or
+tolerated as unread, so a `--profile ci` report never resolves a credential in a
+file it declared or a budget tolerated; a gap the default profile discounts in
+test code is recorded as neither). Without the flag, `diff` exits 0 unless the comparison
 is incomplete. Local `code.filesystem` scans, offline exports from built-in
 connectors and live `cloud.aws`, `cloud.azure`, `cloud.gcp` and
 `identity.entra` collections attest a comparable scope, `gateway.logs` only

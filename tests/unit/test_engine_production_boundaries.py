@@ -15,6 +15,7 @@ import pytest
 from click.testing import CliRunner
 
 import shadowscan.connectors as registry
+from shadowscan import cli as cli_module
 from shadowscan.cli import main
 from shadowscan.config import ConnectorSpec, ScanConfig, parse_set_options
 from shadowscan.connectors.base import (
@@ -215,6 +216,18 @@ def test_connector_deadline_returns_incomplete_and_discards_late_results(monkeyp
     assert "cooperative" in blocked.warnings[0]
     assert {finding.resource for finding in result.findings} == ({"healthy"} if workers == 2 else set())
     assert all(finding.resource != "blocked" for finding in result.findings)
+    # Regression: the supervisor's own stats named no reason, so the exit-3 explanation said "a
+    # connector was skipped or recorded no diagnostic" for a timeout, and for the sibling a single
+    # worker left unstarted.
+    assert blocked.incomplete_reasons == {"timeout": 1}
+    if workers == 1:
+        unstarted = next(stats for stats in result.stats if stats.connector == "healthy")
+        assert unstarted.skipped and "all worker slots" in unstarted.errors[0]
+        assert unstarted.incomplete_reasons == {"timeout": 1}
+    assert result.summary()["incomplete_reasons"] == {"timeout": 3 - workers}
+    assert cli_module._incomplete_explanation(result).startswith(
+        f"scan incomplete (exit 3): timeout {3 - workers}; see the report's"
+    )
 
 
 def test_timed_out_connector_preserves_queued_siblings_when_a_worker_remains(monkeypatch):
@@ -322,6 +335,7 @@ def test_queued_siblings_are_incomplete_if_all_workers_remain_stuck(monkeypatch)
     assert all("deadline" in stat.errors[0] for stat in result.stats[:2])
     assert result.stats[2].incomplete and result.stats[2].skipped
     assert "all worker slots" in result.stats[2].errors[0]
+    assert [stat.incomplete_reasons for stat in result.stats] == [{"timeout": 1}] * 3
 
 
 def test_record_checkpoint_stops_after_cancellation():

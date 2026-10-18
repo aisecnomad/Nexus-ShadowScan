@@ -1,9 +1,13 @@
 """Conservative collection-scope provenance and report comparison.
 
 A finding disappearing from a report is only evidence of resolution when both
-scans completed under the same collection and detection settings and its ID is
-stable across scans. Scope hashes identify inputs, not their contents: a file
-changing is what comparisons measure.
+scans completed under the same collection and detection settings, its ID is
+stable across scans and the current scan did not record the content it was
+observed in as unread: a declared omission (``stats[].declared_omissions``) or a
+tolerated coverage gap (``stats[].coverage``). A gap the default profile
+discounts in test code is a warning recorded in neither, so it holds nothing
+back. Scope hashes identify
+inputs, not their contents: a file changing is what comparisons measure.
 
 Each substantive change is labelled with a drift class (:data:`DRIFT_CLASSES`)
 and whether it is adverse: it widens what the finding can do or weakens how it
@@ -14,6 +18,7 @@ the comparison incomplete.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import hmac
 import json
@@ -22,13 +27,15 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from shadowscan import __version__
 from shadowscan.autonomy import _INITIATION_RANK, _OVERSIGHT_RANK, UNDERSTATED_TAG, valid_autonomy
 from shadowscan.config import PATH_KEYS, ConnectorSpec, ScanConfig
 from shadowscan.connectors import _BUILTIN, get_connector_class
 from shadowscan.connectors.base import LIVE_SCOPE_SCHEMA
+from shadowscan.connectors.code.path_context import may_be_declared
+from shadowscan.coverage import validate_coverage_summary
 from shadowscan.models import FINDING_IDENTITY_SCHEMA, Finding
 from shadowscan.registries import RECONCILIATION_KEY, RECONCILIATION_STATUSES
 from shadowscan.risk import MITIGATING_TAGS
@@ -41,6 +48,8 @@ from shadowscan.utils.safe_json import JSONIntegrityError, strict_json_loads
 _SCHEMA = "shadowscan.collection-scope/v1"
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _EMBEDDED_CREDENTIAL_FINGERPRINT = re.compile(r"credential:(?:hmac-)?sha256:[a-f0-9]{64}")
+# An evidence location names a file and, after a colon, the line it was observed on.
+_LINE_SUFFIX = re.compile(r":\d+$")
 MAX_REPORT_BYTES = 64 * 1024 * 1024
 # Environment variable with the operator's stable identity key; the engine
 # reads it. Gateway identities and credential pseudonyms are stable under one key.
@@ -399,6 +408,216 @@ def _connector_coverage(report: dict[str, Any]) -> list[str]:
     one appearing between scans does not change what was collected.
     """
     return sorted(s["connector"] for s in report["stats"] if not s["connector"].startswith("engine."))
+
+
+@dataclasses.dataclass
+class _Unread:
+    """What one connector of a complete report left unread, and whether it says where."""
+
+    declared: int = 0  # omissions a profile declared (``stats.declared_omissions``)
+    declared_paths: set[str] = dataclasses.field(default_factory=set)  # where (``stats.declared_paths``)
+    declared_parents: set[str] = dataclasses.field(default_factory=set)  # every directory holding one
+    gaps: int = 0  # coverage gaps the budget tolerated (``stats.coverage``)
+    gap_paths: set[str] = dataclasses.field(default_factory=set)
+    gap_parents: set[str] = dataclasses.field(default_factory=set)  # every directory holding a gap path
+    # False when the report cannot say where: a malformed count or ledger, a ledger
+    # whose gap list is truncated, or declared omissions of a connector without the
+    # ci profile's path rule. Every missing finding of the connector may lie there.
+    located: bool = True
+    # False when a declared omission is not listed (a list cut at MAX_DECLARED_PATHS,
+    # a malformed list, a report from before the list): it may lie in any project.
+    declared_listed: bool = True
+
+    def __bool__(self) -> bool:
+        """Whether the connector left anything unread, or cannot say."""
+        return not self.located or bool(self.declared or self.gaps)
+
+
+def _declares_by_path(name: str) -> bool:
+    """Whether ``name`` is a built-in connector whose declared omissions are the ``ci`` profile's.
+
+    Those lie only under a path :func:`may_be_declared` names. Any other
+    connector's declared omission could be anywhere (False if it cannot be loaded).
+    """
+    if name not in _BUILTIN:
+        return False
+    try:
+        return "profile" in get_connector_class(name).config_keys
+    except Exception:  # noqa: BLE001 - an unloadable connector locates nothing
+        return False
+
+
+def _parents(path: str) -> list[str]:
+    """The directories ``path`` lies below, nearest first: ``a/b`` and ``a`` for ``a/b/c``."""
+    parents = []
+    while "/" in path:
+        path = path.rpartition("/")[0]
+        parents.append(path)
+    return parents
+
+
+def _list_declared(entry: _Unread, paths: Any, declared: int) -> None:
+    """Add a record's ``declared_paths`` to ``entry``, unless they leave one of its ``declared`` unlisted."""
+    if not isinstance(paths, list) or len(paths) != declared or not all(isinstance(p, str) for p in paths):
+        entry.declared_listed = False
+        return
+    listed = {path.replace("\\", "/") for path in paths}
+    if listed & {"", "."}:
+        entry.declared_listed = False
+        return
+    entry.declared_paths |= listed
+    entry.declared_parents.update(parent for path in listed for parent in _parents(path))
+
+
+def _near(directory: str, paths: set[str], parents: set[str]) -> bool:
+    """Whether one of ``paths`` lies inside ``directory``, is it, or lies above it (a directory entry)."""
+    if directory == ".":
+        return bool(paths)
+    return directory in parents or directory in paths or not paths.isdisjoint(_parents(directory))
+
+
+class _UnreadContent(NamedTuple):
+    """What the connectors of a complete report left unread."""
+
+    named: dict[str, _Unread]  # by the connector name a record states, which its findings carry
+    unowned: list[_Unread]  # records that state none (an older report): any finding may be theirs
+
+
+def _unread_content(report: dict[str, Any]) -> _UnreadContent:
+    """What each connector of a complete ``report`` left unread.
+
+    A record's ``connector`` is its configured id, the label when one is set,
+    while its findings carry the connector's ``name``, which the record states
+    beside it. A record without a name, from a report written before it was
+    recorded, could be any finding's; its declared omissions are located by
+    the path rule of its id, which a label has none of.
+    """
+    named: dict[str, _Unread] = {}
+    unnamed: dict[str, _Unread] = {}
+    for stats in report["stats"]:
+        name = stats.get("name")
+        if isinstance(name, str) and name.strip():
+            entry = named.setdefault(name, _Unread())
+        else:
+            name = stats["connector"]
+            entry = unnamed.setdefault(name, _Unread())
+        declared = stats.get("declared_omissions", 0)
+        if type(declared) is not int or declared < 0:
+            entry.located = False
+        elif declared:
+            entry.declared += declared
+            entry.located = entry.located and _declares_by_path(name)
+            _list_declared(entry, stats.get("declared_paths"), declared)
+        try:
+            coverage = validate_coverage_summary(stats.get("coverage"))
+        except ValueError:
+            entry.located = False
+            continue
+        if coverage is not None and coverage["gaps"]:
+            paths = {gap["path"].replace("\\", "/") for gap in coverage["details"]}
+            entry.gaps += coverage["gaps"]
+            entry.gap_paths |= paths
+            entry.gap_parents.update(parent for path in paths for parent in _parents(path))
+            if len(coverage["details"]) != coverage["gaps"] or paths & {"", "."}:
+                entry.located = False
+    unowned = [entry for entry in unnamed.values() if entry]
+    return _UnreadContent({name: entry for name, entry in named.items() if entry}, unowned)
+
+
+class _Observed(NamedTuple):
+    """Where a finding was observed."""
+
+    files: set[str]  # its ``metadata.path`` and the file each evidence location names
+    written: set[str]  # locations as written, for a file whose name ends in a colon and digits
+    project: str | None  # the directory a project finding describes
+
+
+def _observed(record: dict[str, Any]) -> _Observed:
+    """Where ``record`` was observed; a location's file is the location without its line."""
+    metadata = record.get("metadata")
+    subject = metadata.get("path") if isinstance(metadata, dict) else None
+    evidence = record.get("evidence")
+    written = {
+        item["location"].replace("\\", "/")
+        for item in (evidence if isinstance(evidence, list) else ())
+        if isinstance(item, dict) and isinstance(item.get("location"), str)
+    }
+    files = {_LINE_SUFFIX.sub("", location) for location in written}
+    if isinstance(subject, str):
+        files.add(subject.replace("\\", "/"))
+    files.discard("")
+    # Normalized as the files and the published gap and declared paths are, so
+    # a project whose report-safe name holds a backslash (a literal one, or the
+    # \xNN escape of an undecodable byte) still meets unread content inside it.
+    project = (
+        subject.replace("\\", "/")
+        if record.get("resource_type") == "project" and isinstance(subject, str)
+        else None
+    )
+    return _Observed(files, written - files, project)
+
+
+def _may_be_unread(observed: _Observed, unread: _Unread) -> bool:
+    """Whether a missing finding was observed where ``unread`` says its connector did not read.
+
+    A project's evidence can come from any file in it, so a gap or a declared
+    omission inside its directory, or above it, may have hidden it; one the
+    report does not list may lie in any project.
+    """
+    files, gaps = observed.files, unread.gap_paths
+    if not unread.located or not files:
+        return True
+    if observed.written & gaps or any(path in gaps or gaps.intersection(_parents(path)) for path in files):
+        return True
+    project = observed.project
+    if project is None:
+        return bool(unread.declared) and any(may_be_declared(path) for path in files)
+    if _near(project, gaps, unread.gap_parents):
+        return True
+    declared = unread.declared_paths
+    return bool(unread.declared) and (
+        not unread.declared_listed
+        or _near(project, declared, unread.declared_parents)
+        or any(path in declared or not declared.isdisjoint(_parents(path)) for path in files)
+    )
+
+
+def _unread_reasons(current: dict[str, Any], missing: list[dict[str, Any]]) -> list[str]:
+    """Why a complete current scan still cannot resolve ``missing``: it left their content unread.
+
+    A ``ci`` profile scan is complete although it declared omissions, and any
+    scan is complete although its budget tolerated coverage gaps. A missing
+    finding observed in such content, by the gap paths ``stats.coverage``
+    lists or the paths the profile declares in, may have gone unread rather
+    than away. When the report cannot say where its connector stopped
+    reading, every missing finding of that connector is held back.
+    """
+    if not missing or not _complete(current):
+        return []
+    unread = _unread_content(current)
+    every = [*unread.named.values(), *unread.unowned]
+    declared = sum(entry.declared for entry in every)
+    gaps = sum(entry.gaps for entry in every)
+    # A summary that counts omissions no connector record holds cannot say whose they are.
+    counted = current["summary"].get("declared_omissions", 0)
+    attributed = type(counted) is int and counted == declared
+    hidden = 0
+    for record in missing:
+        connector = record.get("connector")
+        if isinstance(connector, str):
+            own = [unread.named[connector]] if connector in unread.named else []
+            entries = own + unread.unowned
+        else:
+            entries = every
+        if not attributed or any(_may_be_unread(_observed(record), entry) for entry in entries):
+            hidden += 1
+    if not hidden:
+        return []
+    return [
+        f"{hidden} missing finding(s) may lie in content the current scan did not read "
+        f"({declared} declared omission(s), {gaps} tolerated coverage gap(s)); "
+        "absence there is not resolution"
+    ]
 
 
 def _scope_digest(report: dict[str, Any]) -> str | None:
@@ -773,6 +992,7 @@ def _comparison_reasons(
             f"set {IDENTITY_KEY_ENV} for both scans to compare gateway callers and generic SaaS "
             "apps whose resource a credential redacted"
         )
+    reasons += _unread_reasons(current, [b[i] for i in sorted(b.keys() - c.keys() - set(local_b))])
     reasons += baseline_lifecycle_reasons(baseline, current, max_age_days=max_baseline_age_days, now=moment)
     return reasons, local_b, local_c
 

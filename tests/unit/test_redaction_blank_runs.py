@@ -9,6 +9,9 @@ and the file ran into the connector deadline: the scan was incomplete and
 every finding was discarded. The tokenizer now reads long runs shortened,
 which yields the same tokens, and positions are mapped back to the text.
 """
+# Timing guards here measure CPU time, not wall time: they bound algorithmic
+# cost, and wall time additionally measures whatever else the machine is doing,
+# which failed honest code under a parallel run. See tests/perf.py.
 
 from __future__ import annotations
 
@@ -57,9 +60,9 @@ cases = [
     "password = \\\n" + '\t' * 60_000 + "?'" + key + "'\n",
 ]
 for source in cases:
-    started = time.perf_counter()
+    started = time.process_time()
     safe = sanitize_text(source)
-    elapsed = time.perf_counter() - started
+    elapsed = time.process_time() - started
     assert elapsed < 5, (source[:30], elapsed)
     assert key not in safe and REDACTED in safe, (source[:30], safe[-80:])
     assert safe.count('\n') == source.count('\n')

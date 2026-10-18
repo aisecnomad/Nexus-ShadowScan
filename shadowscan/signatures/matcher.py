@@ -16,6 +16,7 @@ from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, fields
+from functools import partial
 from itertools import islice
 from operator import itemgetter
 from typing import Any, NamedTuple
@@ -24,6 +25,7 @@ import regex
 
 from shadowscan.signatures.loader import Signal, Signature, load_signatures, normalise_package_name
 from shadowscan.utils.redaction import sanitize_text
+from shadowscan.utils.redaction_rules import environment_read_name, pasted_key_name
 
 _SCAN_EXECUTION_CAP: ContextVar[float | None] = ContextVar("signature_scan_execution_cap", default=None)
 REGEX_TIMEOUT_SECONDS = 0.1
@@ -156,6 +158,66 @@ def _run_regex(operation: Callable[[float], Any], context: str, *, max_seconds: 
                 ) from exc
 
 
+def _plan_candidates(
+    plan: _RegexPlan, text: str, scan: LiteralScan | None
+) -> tuple[set[int], dict[str, bool], str | None, dict[str, bool]]:
+    """The plan entries whose first literal group occurs in ``text``, with the literal memos.
+
+    Returns the candidates, the plain and casefolded presence memos and the
+    casefolded text (None when no case-insensitive pattern needs it).
+    """
+    candidates = set(plan.unhinted)
+    folded_text: str | None = None
+    folded_present: dict[str, bool] = {}
+    if scan is not None and scan.text is text:
+        # A shared scan holds the union of the plans' literals; a plan's
+        # candidates are the entries its own literals hit. The dicts also
+        # memoise the remaining groups, so an absent literal is a False
+        # entry, not a missing one.
+        present = scan.present
+        for literal in plan.plain_literals:
+            if present.get(literal):
+                candidates.update(plan.plain_first[literal])
+        if plan.folded_literals:
+            folded_text, folded_present = scan.folded_text, scan.folded_present
+            for literal in plan.folded_literals:
+                if folded_present.get(literal):
+                    candidates.update(plan.folded_first[literal])
+    else:
+        present = {literal: True for literal in plan.plain_literals if literal in text}
+        for literal in present:
+            candidates.update(plan.plain_first[literal])
+        if plan.folded_literals:
+            folded_text = _fold(text)
+            folded_present = {literal: True for literal in plan.folded_literals if literal in folded_text}
+            for literal in folded_present:
+                candidates.update(plan.folded_first[literal])
+    return candidates, present, folded_text, folded_present
+
+
+def _quota_matches(
+    rx: Any,
+    text: str,
+    signature_id: str,
+    quota: int,
+    excluded: Callable[[int], bool] | None,
+    limited: set[str] | None,
+    selected: Callable[[Any], bool] | None = None,
+) -> list[Any]:
+    """At most ``quota`` selected matches of ``rx``; with ``limited``, one past it is looked for.
+
+    A match past the quota is never returned. It records ``signature_id`` in
+    ``limited``, so the caller can disclose that the matches are a lower bound.
+    """
+    if limited is None:
+        return _finditer(rx, text, signature_id, quota, excluded, selected)
+    found = _finditer(rx, text, signature_id, quota + 1, excluded, selected)
+    if len(found) > quota:
+        limited.add(signature_id)
+        del found[quota:]
+    return found
+
+
 def _finditer(
     rx: Any,
     text: str,
@@ -164,6 +226,9 @@ def _finditer(
     excluded: Callable[[int], bool] | None = None,
     selected: Callable[[Any], bool] | None = None,
 ) -> list[Any]:
+    if selected is not None:
+        return _judged_finditer(rx, text, context, limit, excluded, selected)
+
     def collect(timeout: float) -> list[Any]:
         # Tiny patterns dominate this workload. Releasing/reacquiring the GIL
         # for every token under parallel connectors can spend the entire wall
@@ -176,13 +241,64 @@ def _finditer(
         matches = rx.finditer(text, timeout=timeout, concurrent=False)
         if excluded is not None:
             matches = (match for match in matches if not excluded(match.start()))
-        if selected is not None:
-            # Only selected matches count toward the limit.
-            matches = (match for match in matches if selected(match))
         return list(islice(matches, limit))
 
     result: list[Any] = _run_regex(collect, context)
     return result
+
+
+# The raw matches a judged pattern reads per regex execution (``_judged_finditer``).
+_JUDGED_BATCH = 64
+
+
+def _judged_finditer(
+    rx: Any,
+    text: str,
+    context: str,
+    limit: int,
+    excluded: Callable[[int], bool] | None,
+    selected: Callable[[Any], bool],
+) -> list[Any]:
+    """At most ``limit`` matches of ``rx`` that ``selected`` accepts, judged between regex executions.
+
+    The regex engine's iterator timeout charges the CPU spent between two
+    next() calls to the pattern. A judge run inside the iteration (the
+    credential judge reads up to ``_FOLLOWER_CHARS`` after each match) spent
+    the pattern's execution allowance, which scales with the input's size and
+    not with its matches, so a file of a few thousand credential reads timed
+    out (MatchTimeoutError, exit 3) where the pattern alone finishes in time.
+
+    The matches are read in batches of ``_JUDGED_BATCH`` instead. Each
+    execution resumes where the last batch ended and is given only what the
+    earlier ones left of one execution allowance, so the engine's own work is
+    held to the allowance an unjudged run has. The judge runs between the
+    executions and is charged to the input's execution budget, which still
+    ends the input, and marks it incomplete, when spent.
+    """
+    allowance = _remaining_timeout()
+    spent = 0.0
+    found: list[Any] = []
+    position = 0
+    while True:
+
+        def batch(timeout: float, start: int = position) -> list[Any]:
+            return list(islice(rx.finditer(text, start, timeout=timeout, concurrent=False), _JUDGED_BATCH))
+
+        started = time.thread_time()
+        matches: list[Any] = _run_regex(batch, context, max_seconds=allowance - spent)
+        spent += time.thread_time() - started
+        for match in matches:
+            if (excluded is None or not excluded(match.start())) and selected(match):
+                found.append(match)
+                if len(found) >= limit:
+                    return found
+        _remaining_timeout()
+        if len(matches) < _JUDGED_BATCH:
+            return found
+        # Secret patterns never match empty text; were one to, the next
+        # execution must still move on.
+        last = matches[-1]
+        position = last.end() + (last.end() == last.start())
 
 
 def _search(rx: Any, text: str, context: str) -> Any:
@@ -210,6 +326,10 @@ def _budgeted_search(rx: Any, text: str, context: str, timeout: float) -> Any:
 
 GENERIC_CREDENTIAL = "heuristic.inline-credential"
 UNATTRIBUTED_KEY = "heuristic.unattributed-api-key"
+# Credential matches kept per secret signal and text. A text with more
+# credentials of one format than this is reported with the quota's worth of
+# evidence and a disclosure that the count is a lower bound (``match_secrets``).
+MAX_SECRETS_PER_SIGNAL = 5
 # An unattributed sk- value shorter than this after the prefix must look random.
 _SHORT_KEY_BODY = 32
 _VALUE_END = frozenset("\"',;")
@@ -230,16 +350,608 @@ def _assigned_value(value: str) -> str:
     return rest
 
 
-def _high_entropy_credential(value: str) -> bool:
-    """Require a generic assigned credential to be long and sufficiently diverse."""
-    candidate = _assigned_value(value)
-    if len(candidate) < 16:
+# A value that names something instead of holding it: a member chain
+# ('process.env.OPENAI_API_KEY', 'self.cleaned_data', 'config.fireCrawlApiKey',
+# 'hasher.encode') or a single identifier. The generic pattern's value class
+# admits '.' and '_', so these passed as long, diverse credentials.
+_IDENTIFIER_CHAIN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
+# A lower-case letter followed by a capital: the word boundary of camelCase.
+_CASE_BOUNDARY = re.compile(r"[a-z][A-Z]")
+# The words of a name: 'fireCrawlApiKey' is fire, Crawl, Api, Key; 'ANTHROPIC_API_KEY'
+# is ANTHROPIC, API, KEY.
+_NAME_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+# Three or more letter words joined by '-' or '_': a label or a test value
+# ('request-scoped-credential', 'fc-shared-env-must-not-be-used'), or a
+# generated passphrase ('snout-fiber-thump-bloom-gravel'); see _label_slug.
+_WORD_SLUG = re.compile(r"[A-Za-z]{2,}(?:[-_][A-Za-z]{2,}){2,}")
+# Password managers also join words with '.', but a dotted string of words in
+# source code or configuration names something: a package or an Android key
+# ('net.openid.appauth.state', 'com.google.android.geo'), an i18n message
+# ('forms.login.field.hint'), a namespace ('Microsoft.Identity.Client') or a
+# member chain ('config.openai.apiKey'). Only a password's value outside
+# source code (in an env or credential file, YAML, a compose file) is a dotted
+# slug whose words are each lower case, Capitalized or upper case a passphrase
+# ('snout.fiber.thump', 'Snout.Fiber.Thump'); see _high_entropy_credential.
+_SLUG_WORD = r"(?:[a-z]{2,}|[A-Z][a-z]+|[A-Z]{2,})"
+_DOTTED_SLUG = re.compile(_SLUG_WORD + r"(?:\." + _SLUG_WORD + r"){2,}")
+_SLUG_SEPARATOR = re.compile(r"[-_.]")
+# Words that make a word slug a label on their own, read with a plural '-s'
+# or a past '-ed' taken off (``_label_strength``): credential, placeholder,
+# development and filler words that passphrase word lists leave out
+# ('request-scoped-credential', 'rotate-these-tokens', 'foo-bar-baz-qux-quux').
+_LABEL_WORDS = frozenset(
+    {
+        # What the value stands for.
+        "api",
+        "auth",
+        "credential",
+        "env",
+        "environment",
+        "jwt",
+        "passwd",
+        "password",
+        "pwd",
+        "secret",
+        "token",
+        # Test values and placeholders.
+        "demo",
+        "dummy",
+        "example",
+        "fake",
+        "fixture",
+        "mock",
+        "placeholder",
+        "sample",
+        "stub",
+        "testing",
+        # Development defaults ('local-development-only', 'insecure-default-for-dev').
+        "development",
+        "insecure",
+        "localhost",
+        "production",
+        # Filler text ('foo-bar-baz-qux-quux', 'lorem-ipsum-dolor-sit-amet').
+        "baz",
+        "foo",
+        "foobar",
+        "ipsum",
+        "quux",
+        "qux",
+    }
+)
+# Label vocabulary that is also an ordinary word of a passphrase word list, as
+# are its plural and past forms ('passed', 'valued', 'keyed', 'tested', 'devs',
+# 'locals'): a slug is a label by these only with another label word or with a
+# function word ('unsafe-dev-only-default', 'this-should-be-changed'). The
+# account and service words name what a credential belongs to
+# ('pg-replica-sync-user', 'mq-broker-admin-user', 'ai-gateway-internal-route').
+_COMMON_LABEL_WORDS = frozenset(
+    {
+        "admin",
+        "change",
+        "commit",
+        "default",
+        "dev",
+        "internal",
+        "invalid",
+        "key",
+        "local",
+        "lorem",
+        "pass",
+        "prod",
+        "replace",
+        "scoped",
+        "shared",
+        "strong",
+        "test",
+        "unsafe",
+        "user",
+        "value",
+        "your",
+    }
+)
+# Words that join a sentence, which generated passphrases leave out but labels
+# written as instructions need ('dont-use-this-in-prod', 'for-local-dev-use-only',
+# 'change-me-please', 'must-be-set-at-runtime', 'not-configured-yet'): two of
+# them, or one with a word of the label vocabulary, make a slug an instruction.
+_FUNCTION_WORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "at",
+        "be",
+        "before",
+        "by",
+        "do",
+        "does",
+        "dont",
+        "for",
+        "from",
+        "here",
+        "in",
+        "is",
+        "it",
+        "me",
+        "must",
+        "my",
+        "never",
+        "no",
+        "not",
+        "now",
+        "of",
+        "on",
+        "only",
+        "or",
+        "please",
+        "should",
+        "the",
+        "these",
+        "this",
+        "to",
+        "use",
+        "via",
+        "was",
+        "were",
+        "with",
+        "yet",
+    }
+)
+
+
+def _label_strength(word: str) -> int:
+    """How a lower-case slug word marks a label, read with a plural or past ending taken off.
+
+    2: label vocabulary on its own (``_LABEL_WORDS``); 1: vocabulary that is
+    also a common word (``_COMMON_LABEL_WORDS``); 0: neither.
+    """
+    stems = {word, word[:-1] if word.endswith("s") else word}
+    if word.endswith("ed"):
+        stems.update((word[:-1], word[:-2]))  # 'changed' is change, 'tested' is test
+    if not stems.isdisjoint(_LABEL_WORDS):
+        return 2
+    return int(not stems.isdisjoint(_COMMON_LABEL_WORDS))
+
+
+def _label_word(word: str) -> bool:
+    """Whether a lower-case word is label vocabulary of either kind (``_label_strength``)."""
+    return _label_strength(word) > 0
+
+
+_VALUE_QUOTES = "\"'"
+
+
+def _assignment_parts(value: str) -> tuple[str, bool]:
+    """The assigned value of a ``NAME = value`` match, and whether a quote opened it."""
+    positions = [i for i in (value.find("="), value.find(":")) if i >= 0]
+    if not positions:
+        return value, False
+    rest = value[min(positions) + 1 :].lstrip(" \t")
+    return _assigned_value(value), rest[:1] in _VALUE_QUOTES
+
+
+def _identifier_shaped(value: str) -> bool:
+    """Whether ``value`` reads as a program name rather than random key material.
+
+    Names are made of words: at least 60% of their letters fall in words of
+    three letters or more ('os.environ', 'encode_md5_hash', 'SetUnusablePasswordMixin').
+    Random keys split into one- and two-letter fragments ('eyJhbGciOiJIUzI1NiJ9':
+    ey, Jhb, Gci, Oi, JI ...) and carry more digits.
+    """
+    letters = sum(char.isalpha() for char in value)
+    if not letters or sum(char.isdigit() for char in value) * 3 > len(value):
+        return False
+    in_words = sum(len(word) for word in _NAME_WORD.findall(value) if word.isalpha() and len(word) >= 3)
+    return in_words * 5 >= letters * 3
+
+
+# What follows a member chain in code but never a literal in configuration: a
+# call, a subscript, the end of a statement, the end of an argument or member.
+_CODE_FOLLOWERS = frozenset("([;),}")
+# Chains that are references wherever they are written.
+_REFERENCE_ROOTS = ("process.env.", "import.meta.env.", "os.environ.", "self.", "this.")
+
+
+def _reference_value(value: str, *, code: bool, follower: str = "") -> bool:
+    """Whether a generic match assigns a reference to a credential rather than a literal.
+
+    In source code (``code``) an unquoted value is an expression, so an
+    identifier or a member chain names a variable ('self.api_key = api_key',
+    'k = settings.OPENAI_API_KEY'). Elsewhere an unquoted value is a literal
+    ('DB_PASSWORD=Summer.Vacation2024' in an env file), so only a member chain
+    that code follows (``follower``, the text after the match, starts with '('
+    after 'hasher.encode' or ';' after 'process.env.KEY' in a documentation
+    snippet) or that starts from the environment or the instance is one. A
+    quoted value is always a literal, and a random-looking value is never a
+    name. Operands after a reference are read by ``_fallback_literal``. A
+    match that assigns nothing (the bare ``AKIA...`` and ``ghp_...`` token
+    patterns) is the token itself, never a name for one.
+    """
+    if "=" not in value and ":" not in value:
+        return False
+    candidate, quoted = _assignment_parts(value)
+    if quoted or not _IDENTIFIER_CHAIN.fullmatch(candidate) or not _identifier_shaped(candidate):
+        return False
+    if code:
+        return True
+    return "." in candidate and (follower[:1] in _CODE_FOLLOWERS or candidate.startswith(_REFERENCE_ROOTS))
+
+
+# How much of the text after a generic match is read for operands that follow it.
+_FOLLOWER_CHARS = 512
+# The text after a reference, read as tokens: each one is matched where the
+# last one ended, so the read is linear in the follower. Blanks (any white
+# space but a line end, such as U+00A0, U+2009, U+3000, '\f' and '\v', the
+# zero-width space, word joiner and byte order mark that an editor or a paste
+# leaves between tokens, and Python's backslash continuation), a line end, a
+# comment, a string literal with its prefix ('f"..."', C#'s '$"..."') and
+# Python's triple quotes on one line ('"""..."""'), a member access ('.trim',
+# '?.trim', '?.' before a call), an operator, TypeScript's non-null '!', a
+# word, a bracket, and any other single character.
+_OPERAND_TOKEN = re.compile(
+    r"(?P<blank>(?:[^\S\r\n]|[\u200b\u2060\ufeff]|\\(?:\r\n|\r|\n))++)"
+    r"|(?P<newline>\r\n|\r|\n)"
+    r"|(?P<comment>(?://|#)[^\r\n]*+|/\*(?:[^*]|\*(?!/))*+\*/)"
+    r"|(?P<string>(?P<prefix>[rRbBuUfF]{1,2}|[@$])?(?P<quote>\"\"\"|'''|[\"'`])"
+    r"(?P<body>(?:\\[^\r\n]|(?!(?P=quote))[^\\\r\n])*+)(?P=quote))"
+    r"|(?P<member>\??\.[A-Za-z_$][\w$]*+|\?\.(?=[(\[]))"
+    r"|(?P<operator>\|\||\?\?|\?:|&&|===?|!==?|[?:+])"
+    r"|(?P<postfix>!)"
+    r"|(?P<word>[A-Za-z_$][\w$]*+)"
+    r"|(?P<open>[(\[{])|(?P<close>[)\]}])"
+    r"|(?P<other>[\s\S])"
+)
+_CLOSERS = {"(": ")", "[": "]", "{": "}"}
+# Operators whose next operand is the value when the reference is unset: a
+# fallback ('||', '??', Kotlin's '?:', Python's 'or'), a ternary branch ('?',
+# ':', Python's 'else') or a concatenation ('+').
+_FALLBACK_OPERATORS = frozenset({"||", "??", "?:", "?", ":", "+", "or", "else"})
+# Operators the value goes on past whose next operand is no fallback: a
+# comparison, a conjunction, the condition of Python's 'a if c else b' and the
+# type of a TypeScript cast ('process.env.X as string || "<key>"').
+_OTHER_OPERATORS = frozenset({"&&", "==", "===", "!=", "!==", "and", "if", "as", "satisfies"})
+# A fallback literal is one token of the generic value class, as an assigned
+# value is: a sentence ('"OPENAI_API_KEY is not set"') is a message.
+_FALLBACK_TOKEN = re.compile(r"[A-Za-z0-9_./+=-]{16,256}")
+# What any such literal starts with: a quote and 16 characters of the class.
+# A follower without one holds no fallback literal, and the operand reader,
+# Python at several microseconds a token, is not run (``_fallback_literal``).
+_FALLBACK_HINT = re.compile(r"[\"'`][A-Za-z0-9_./+=-]{16}")
+
+
+class _OperandToken(NamedTuple):
+    kind: str
+    token: re.Match[str]
+    # Whether blanks, a comment or a line end came before the token, how many
+    # line ends, and whether a line between was empty: no token, no comment.
+    spaced: bool
+    lines: int
+    gap: bool
+
+
+def _operand_tokens(follower: str) -> Iterator[_OperandToken]:
+    """The tokens of ``follower`` other than blanks, comments and line ends, which they annotate."""
+    position = 0
+    spaced, lines, gap = False, 0, False
+    # Whether the current line holds a token or a comment; the follower's
+    # first line is the match's own.
+    filled = True
+    while position < len(follower):
+        token = _OPERAND_TOKEN.match(follower, position)
+        if token is None:  # pragma: no cover - the last alternative matches any character
+            return
+        position = token.end()
+        kind = token.lastgroup or "other"
+        if kind == "blank":
+            spaced = True
+        elif kind == "comment":
+            spaced = filled = True
+        elif kind == "newline":
+            spaced, lines, gap, filled = True, lines + 1, gap or not filled, False
+        else:
+            yield _OperandToken(kind, token, spaced, lines, gap)
+            spaced, lines, gap, filled = False, 0, False, True
+
+
+def _closed_group(tokens: Iterator[_OperandToken], opener: str) -> bool:
+    """Read the tokens of a call, subscript or other bracketed group up to its closing bracket.
+
+    False when the group does not close, or closes with the wrong bracket,
+    within the follower.
+    """
+    expected = [_CLOSERS[opener]]
+    for item in tokens:
+        if item.kind == "open":
+            expected.append(_CLOSERS[item.token.group()])
+        elif item.kind == "close":
+            if item.token.group() != expected.pop():
+                return False
+            if not expected:
+                return True
+    return False
+
+
+# What a type argument list holds besides names, members ('System.String') and
+# nested lists: separators, nullable and array marks, unions and intersections.
+_TYPE_ARGUMENT_MARKS = frozenset({",", "?", "[", "]", "|", "&"})
+
+
+def _type_arguments(tokens: Iterator[_OperandToken]) -> bool:
+    """Read the type arguments of a generic call, after its '<', up to the matching '>'.
+
+    'configService.get<string>("X") ?? "<key>"' (NestJS), C#'s
+    'GetValue<string>("X")' and Kotlin's 'getProperty<String>("x")' read the
+    same setting as the untyped call. False when anything but a type's names
+    and marks comes first, or the list does not close within the follower.
+    """
+    depth = 1
+    for item in tokens:
+        text = item.token.group()
+        if text in {"<", ">"}:
+            depth += 1 if text == "<" else -1
+            if not depth:
+                return True
+        elif item.kind not in {"word", "member"} and text not in _TYPE_ARGUMENT_MARKS:
+            return False
+    return False
+
+
+def _operator(item: _OperandToken) -> str | None:
+    """The operator a token is, or None: a symbol, or one of Python's word operators.
+
+    Python's 'if' at the start of a line begins a statement, not the
+    condition of a conditional expression.
+    """
+    text = item.token.group()
+    if item.kind == "operator" or (item.kind == "word" and text in _FALLBACK_OPERATORS | _OTHER_OPERATORS):
+        return None if text == "if" and item.lines else text
+    return None
+
+
+def _fallback_literal(value: str, follower: str) -> str | None:
+    """The key-shaped literal that is a direct fallback operand after a reference, or None.
+
+    The generic pattern's value stops at the first blank, so for
+    'apiKey = process.env.OPENAI_API_KEY || "<key>"' it covers only the read.
+    The value goes on only through operators (``_FALLBACK_OPERATORS`` and
+    ``_OTHER_OPERATORS``) between operands: string literals, names and member
+    chains ('?? process.env.B ?? "<key>"'), each with its calls, subscripts,
+    generic type arguments (``_type_arguments``: 'get<string>("X") ??') and
+    non-null or optional members ('GetEnvironmentVariable("X") ??',
+    'process.env.X?.trim() ||', 'getKey()!.value ??') and a TypeScript cast
+    ('as string ||'), and bracketed groups. Parentheses around an operand
+    ('|| ("<key>")', '|| (a || "<key>")') are read through, so the operand
+    inside is direct.
+    An operator may end a line or start a later one, after comment lines or
+    a backslash continuation; an empty line before an operator, a value end
+    (';', ',', a closing bracket) or any other token ends the value. After an
+    operator its operand must follow, so empty and comment lines may come
+    between them ('||\n  // dev fallback\n  "<key>"'). A string literal right after
+    a fallback operator is a hard-coded credential when it is one token of the
+    value class (``_FALLBACK_TOKEN``) that looks like a key
+    (``_high_entropy_credential``). A literal inside a call
+    ('?? getSecret("<path>")', '?: error("X is not set")') is no fallback,
+    nor is an empty, word-like or interpolated one ('|| ""', '|| f"{x}"').
+    Whether the literal is a placeholder is the caller's test, on the literal
+    itself (see ``reported_credential``). A follower without the start of
+    such a literal anywhere (``_FALLBACK_HINT``) is not read at all.
+    """
+    if _FALLBACK_HINT.search(follower) is None:
+        return None
+    tokens = _operand_tokens(follower)
+    operand = fallback = False
+    # Parentheses opened where an operand belongs and not closed yet.
+    grouping = 0
+    for item in tokens:
+        kind, token = item.kind, item.token
+        if item.gap and not operand:
+            return None
+        if operand:
+            if kind == "open" and token.group() == "(":
+                grouping += 1  # '|| ("<key>")': the operand is inside
+                continue
+            if kind == "string" and fallback and _fallback_credential(value, token):
+                return str(token["body"])
+            if kind not in {"string", "word", "open"} or (
+                kind == "open" and not _closed_group(tokens, token.group())
+            ):
+                return None
+            operand = False
+        elif kind == "close" and grouping and token.group() == ")":
+            grouping -= 1
+        elif kind == "member" or (not item.spaced and kind in {"open", "postfix"}):
+            # A member, call, subscript or non-null assertion on the operand before.
+            if kind == "open" and not _closed_group(tokens, token.group()):
+                return None
+        elif token.group() == "<" and not item.spaced:
+            # A generic call's type arguments ('get<string>(...)', 'GetValue<string>(...)').
+            if not _type_arguments(tokens):
+                return None
+        else:
+            operator = _operator(item)
+            if operator is None:
+                return None
+            operand, fallback = True, operator in _FALLBACK_OPERATORS
+    return None
+
+
+def _fallback_credential(value: str, token: re.Match[str]) -> bool:
+    """Whether a string literal after a fallback operator is a key: one plain token that looks random.
+
+    A token made of words and numbers is a mode, a label, a path or a name
+    (``_worded_literal``), not a key, wherever it is a fallback.
+    """
+    body = token["body"]
+    plain = not _interpolated_literal(token) and _FALLBACK_TOKEN.fullmatch(body) is not None
+    return plain and not _worded_literal(body) and _high_entropy_credential(value, literal=body)
+
+
+# The separators of a fallback literal's segments, and a segment that reads
+# as a word or a number: a lower-case, Capitalized or upper-case word, digits,
+# a word with a short version ('oauth2', 'v2') or three characters or fewer
+# ('x', '4o', '07').
+_LITERAL_SEPARATOR = re.compile(r"[-_./:]")
+_WORDED_SEGMENT = re.compile(r"[a-z]+|[A-Z][a-z]*|[A-Z]+|[0-9]+|[A-Za-z]+[0-9]{1,2}|[A-Za-z0-9]{1,3}")
+
+
+def _worded_literal(literal: str) -> bool:
+    """Whether a literal is two or more segments that each read as a word or a number.
+
+    A default mode or label ('anonymous-public-access',
+    'disabled-in-this-build', 'managed-identity-fallback'), a header name
+    ('x-api-key-header-name'), a URL path ('/oauth2/v2.0/authorize') and a
+    model id ('gpt-4o-mini-2024-07-18') are; a key has a segment that mixes
+    letters and digits at random ('3f9a8b7c-...', 'R4nd0m9Qx2Vb7Lp6'). A
+    fallback is held to looking like a token, not like a passphrase: a word
+    slug there reads as a setting's default.
+    """
+    segments = [segment for segment in _LITERAL_SEPARATOR.split(literal) if segment]
+    return len(segments) >= 2 and all(_WORDED_SEGMENT.fullmatch(segment) for segment in segments)
+
+
+def _interpolated_literal(token: re.Match[str]) -> bool:
+    """Whether a string token assembles its text from expressions ('f"{x}"', '`${x}`', C#'s '$"..."')."""
+    prefix, body = (token["prefix"] or "").lower(), token["body"]
+    return prefix == "$" or ("f" in prefix and "{" in body) or (token["quote"] == "`" and "${" in body)
+
+
+# Below this share of digits a separated single-case value reads as an identifier
+# with a version or size in it, not as a hex or base-36 token such as ``dop_v1_<64 hex>``.
+_IDENTIFIER_MAX_DIGIT_SHARE = 0.25
+# A value without digits is kept only when its letters mix cases the way a random
+# token does; camelCase keeps upper case rarer, CONSTANT_CASE has no lower case.
+_RANDOM_UPPER_SHARE = (0.3, 0.7)
+
+
+def _single_case_identifier(candidate: str) -> bool:
+    """Whether an assigned value is the name of another variable rather than a literal token.
+
+    A snake_case, CONSTANT_CASE or dotted attribute path:
+    ``include_tracing_api_key``, ``ANTHROPIC_API_KEY``,
+    ``settings.openai_api_key_v2``. The generic credential patterns accept an
+    unquoted value because ``.env`` and shell assignments carry none, so
+    ``api_key=resolved_api_key`` matches the same way ``api_key=9f86d0...``
+    does. A name is told from a token by its shape: separated by ``_`` or
+    ``.`` into identifier segments, its letters all one case, and few digits.
+    A snake_case password with a year in it (``my_secret_password_2024``) is
+    given up for that; the specific provider patterns do not pass through
+    here.
+    """
+    if not _IDENTIFIER_CHAIN.fullmatch(candidate) or ("_" not in candidate and "." not in candidate):
+        return False
+    letters = [char for char in candidate if char.isalpha()]
+    single_case = all(char.islower() for char in letters) or all(char.isupper() for char in letters)
+    if not letters or not single_case:
+        return False
+    digits = sum(char.isdigit() for char in candidate)
+    return digits / len(candidate) < _IDENTIFIER_MAX_DIGIT_SHARE
+
+
+def _assigned_name(value: str) -> str:
+    """The name of a ``NAME = value`` or ``NAME: value`` match, or '' when it is no assignment.
+
+    The blanks and the quote between the name and its operator are no part
+    of it: python-dotenv and Node's dotenv read ``POSTGRES_PASSWORD = value``,
+    and JSON quotes a key (``"db_password": ...``).
+    """
+    positions = [i for i in (value.find("="), value.find(":")) if i >= 0]
+    return value[: min(positions)].rstrip(" \t\"'") if positions else ""
+
+
+def _label_slug(value: str, candidate: str, *, names: bool = True) -> bool:
+    """Whether a word slug assigned in ``value`` is a label rather than a generated passphrase.
+
+    Password managers generate passphrases as random words joined by '-', '_'
+    or '.' ('snout-fiber-thump-bloom-gravel', 'Ostrich-Lantern-Volcano-Tangerine',
+    'snout.fiber.thump.bloom.gravel', 'SNOUT-FIBER-THUMP-BLOOM-GRAVEL'), which
+    is also the shape of a label. A label says what it stands for: one of its
+    words is credential, placeholder, development or filler vocabulary that
+    word lists leave out ('request-scoped-credential',
+    'fc-shared-env-must-not-be-used', 'local-development-only',
+    'lorem-ipsum-dolor-sit-amet'), two are vocabulary that is also a common
+    word ('unsafe-dev-only-default', 'defaults-were-replaced'), one such word
+    comes with a function word that joins a sentence
+    ('this-should-be-changed', 'change-me-please'), two function words make
+    it an instruction ('do-not-commit-this', 'must-be-set-at-runtime',
+    'not-configured-yet'), see ``_label_strength``, or a word has three
+    letters or more of the name it is assigned to
+    ('OPENAI_API_KEY=sua_chave_openai'). A two-letter word of the name ('pg'
+    in 'PG_PASSWORD', 'db', 'mq', 'ai') counts as a common word: with another
+    one it labels the slug ('pg-replica-sync-user'), alone it does not
+    ('db-fiber-thump-bloom-gravel'). One common word alone does not make a
+    label either: a passphrase may hold 'passed', 'keyed', 'default' or
+    'lorem'. With ``names``, an upper-case slug joined by '_' only is
+    CONSTANT_CASE, an environment variable's name.
+    """
+    if names and candidate.isupper() and "-" not in candidate and "." not in candidate:
+        return True
+    words = [word.lower() for word in _SLUG_SEPARATOR.split(candidate)]
+    name = {word.lower() for word in _NAME_WORD.findall(_assigned_name(value)) if word.isalpha()}
+    if any(word in name and len(word) >= 3 for word in words):
+        return True
+    strengths = [1 if word in name else _label_strength(word) for word in words]
+    common = strengths.count(1)
+    function = sum(word in _FUNCTION_WORDS for word in words)
+    return 2 in strengths or common >= 2 or (common == 1 and function > 0) or function >= 2
+
+
+def _name_shaped(candidate: str) -> bool:
+    """Whether a value is built like a program name: snake_case, dotted, CONSTANT_CASE or camelCase.
+
+    A single run of letters ('correcthorsebatterystaple', an AKIA key's
+    digit-free body) is not: it carries no name structure to tell it from a
+    token, so only the entropy tests judge it.
+    """
+    return _IDENTIFIER_CHAIN.fullmatch(candidate) is not None and (
+        "_" in candidate or "." in candidate or _CASE_BOUNDARY.search(candidate) is not None
+    )
+
+
+def _program_name(candidate: str, body: str, *, passphrase: bool) -> bool:
+    """Whether a value is built like another variable's name rather than a token (#258's shape rules).
+
+    A name-shaped value with no digit (``_name_shaped``) that does not mix
+    cases evenly is one, unless it is a passphrase of words; a value with
+    digits is one when it is a single-case identifier
+    (``_single_case_identifier``).
+    """
+    if any(char.isdigit() for char in body):
+        return _single_case_identifier(candidate)
+    letters = [char for char in body if char.isalpha()]
+    if passphrase or not letters or not _name_shaped(candidate):
+        return False
+    upper_share = sum(char.isupper() for char in letters) / len(letters)
+    low, high = _RANDOM_UPPER_SHARE
+    return upper_share < low or upper_share > high
+
+
+def _high_entropy_credential(
+    value: str, *, literal: str | None = None, names: bool = True, dotted: bool = False
+) -> bool:
+    """Require a generic assigned credential to be long, diverse and shaped like a token, not a name.
+
+    Shannon entropy alone does not separate the two: ordinary identifiers
+    clear 3 bits per character. With ``names`` the value may be another
+    variable's name, so one built like a name is none (``_program_name``)
+    and a CONSTANT_CASE word slug is a label (``_label_slug``). A dotted
+    string of words is a name (``_DOTTED_SLUG``) unless ``dotted`` or not
+    ``names`` says the value is a password outside source code. ``literal``
+    is the value to judge when it is not the one ``value`` assigns (a
+    fallback after a reference); ``value`` still names it.
+    """
+    candidate = _assigned_value(value) if literal is None else literal
+    passphrase = _WORD_SLUG.fullmatch(candidate) is not None or (
+        (dotted or not names) and _DOTTED_SLUG.fullmatch(candidate) is not None
+    )
+    if len(candidate) < 16 or (passphrase and _label_slug(value, candidate, names=names)):
         return False
     body = re.sub(r"[^A-Za-z0-9]", "", candidate)
     if len(body) < 2 or len(set(body)) <= 2:
         return False
     adjacent = sum(abs(ord(left) - ord(right)) <= 1 for left, right in zip(body, body[1:], strict=False))
     if adjacent / (len(body) - 1) >= 0.5:
+        return False
+    if names and _program_name(candidate, body, passphrase=passphrase):
         return False
     counts = Counter(candidate)
     entropy = -sum((count / len(candidate)) * math.log2(count / len(candidate)) for count in counts.values())
@@ -270,15 +982,236 @@ def keep_file_matches(signatures: Sequence[Signature]) -> list[bool]:
     return [s.category == "coding-agent" or s.vendor not in agents for s in signatures]
 
 
-def keep_secret_matches(matches: Sequence[tuple[str, str, int | None]]) -> list[bool]:
+def _generic_literal(value: str, *, code: bool, follower: str, env_file: bool = False) -> str | None:
+    """The literal a generic match reports, or None when it holds no key-shaped one.
+
+    A literal value reports itself when it looks random; a reference reports
+    the key pasted as its variable's name (``_pasted_key_read``), else the
+    fallback literal after it, if any (``_fallback_literal``). In an env or
+    credential file (``env_file``) a password's value is never another
+    variable's name: such a file has no variables to name, only values, and
+    only a label phrase (``_label_phrase``) is no password there. A template
+    of one (``.env.example``), a Helm values file, a compose file, a workflow
+    or a document is no such file: a PASSWORD value there may name a
+    setting, a secret or a placeholder (``springDatasourcePassword``,
+    ``useExistingSecretKey``), so the name rules still apply, but a
+    password's words joined by '.' are a passphrase outside source code.
+    """
+    if _reference_value(value, code=code, follower=follower):
+        return _pasted_key_read(value, follower) or _fallback_literal(value, follower)
+    password = _assigned_name(value).lower().endswith(_PASSWORD_NAMES)
+    names = code or not env_file or not password
+    if not names and _label_phrase(value, _assigned_value(value)):
+        return None
+    # Outside source code a password's dotted words are a passphrase, as in an env file.
+    dotted = password and not code
+    return _assigned_value(value) if _high_entropy_credential(value, names=names, dotted=dotted) else None
+
+
+def _label_phrase(value: str, candidate: str) -> bool:
+    """Whether a password built like a name is a label phrase: each of its words says what it stands for.
+
+    A person's password in an env file can be built like a name
+    (``TrustNoOneEverAgain``, ``PostgresProd2024Secure``,
+    ``snout_passed_thump_bloom``), so the name rules do not drop it there. A
+    value is a label only when every word is label vocabulary of either
+    strength, a function word or a word of the name it is assigned to, and
+    every number is the name's own (``KeycloakAdminPassword`` under
+    ``KEYCLOAK_ADMIN_PASSWORD``, ``svc1_local_dev_password`` under
+    ``SVC1_DB_PASSWORD``, ``change_me_to_a_strong_password``). Any other
+    word or number (a year, a generated word, a letter) makes it a password;
+    a word slug is then read as ``_label_slug`` reads it anywhere.
+    """
+    if not _name_shaped(candidate):
+        return False
+    name = {word.lower() for word in _NAME_WORD.findall(_assigned_name(value))}
+    return all(
+        word in name or (word.isalpha() and (_label_word(word) or word in _FUNCTION_WORDS))
+        for word in (word.lower() for word in _NAME_WORD.findall(candidate))
+    )
+
+
+# Python's environment mapping read as an attribute ('os.environ.<NAME>'),
+# which no evidence pass reads as a lookup: it raises, but its name is still
+# written in the code.
+_ENVIRON_ATTRIBUTE = re.compile(r"os\.environ\.(?P<name>[A-Z_][A-Z0-9_]*+)")
+
+
+def _pasted_key_read(value: str, follower: str) -> str | None:
+    """The key pasted in place of the variable's name in an environment read, or None.
+
+    'process.env.JBSWY3DPEHPK3PXP...' or 'os.environ.QWERTYUIOP...' reads
+    no variable: the name is the credential, written into the code. The
+    test is the redactor's (``pasted_key_name``), which withholds the same
+    read from evidence, so a credential withheld there is reported here.
+    """
+    candidate = _assigned_value(value)
+    name = environment_read_name(candidate + follower)
+    if name is None:
+        attribute = _ENVIRON_ATTRIBUTE.fullmatch(candidate)
+        name = attribute["name"] if attribute else None
+    return name if name is not None and pasted_key_name(name) else None
+
+
+# The generic patterns' names whose value a person chose (DB_PASSWORD,
+# SERVICE_CREDENTIAL), as opposed to the tokens a service issues (API_KEY,
+# ACCESS_TOKEN, CLIENT_SECRET).
+_PASSWORD_NAMES = ("password", "credential")
+
+
+def reported_credential(match: Match) -> str:
+    """The credential a secret match stands for: a generic match's literal, or the match itself.
+
+    ``OPENAI_KEY=ghp_...`` read as a line and ``ghp_...`` read as that line's
+    parsed value are one credential, however the match was cut. A generic
+    match of a reference stands for the fallback literal after it, which
+    ``match_secrets`` records as ``extra["credential"]``: that literal, not
+    the reference, is what a placeholder test judges and what a finding
+    counts.
+    """
+    credential = match.extra.get("credential")
+    if isinstance(credential, str):
+        return credential
+    return _assigned_value(match.value) if match.signature_id == GENERIC_CREDENTIAL else match.value
+
+
+class _CredentialJudge:
+    """Judges each regex match of a secret signature as ``match_secrets`` finds it.
+
+    Called with (signature, signal, match), it says whether the match is a
+    credential the quota should count. A second match of a signature over text
+    one of its matches already covers is the same credential; a generic match
+    that holds no key-shaped literal (``_generic_literal``) is none, nor is a
+    short ``sk-`` value that does not look random or that a counted generic
+    assignment covers (the rules ``keep_secret_matches`` applies). With
+    ``placeholder`` (the caller's documentation-sample test, run on the
+    credential a match stands for) a sample counts toward nothing either: up
+    to :data:`MAX_SECRETS_PER_SIGNAL` of them per signature are kept in
+    ``samples`` for the caller's example evidence, and the rest are dropped,
+    since none of them is reported. ``accepted`` holds the spans counted or
+    kept per signature, a bounded number.
+
+    The quota counts distinct credentials: a credential a signature already
+    counted, repeated on another line (one password in each service of a
+    compose file, one key in each document of a manifest), is the same
+    credential and counts again toward nothing. It is recognized by a digest
+    keyed with a secret of this judge alone (``_seen``), so no credential is
+    kept past its match, and the digests cannot be compared with another
+    text's.
+    """
+
+    def __init__(
+        self,
+        text: str,
+        code: bool,
+        placeholder: Callable[[str], object] | None = None,
+        *,
+        env_file: bool = False,
+    ) -> None:
+        self.text, self.code, self.placeholder, self.env_file = text, code, placeholder, env_file
+        self.accepted: dict[str, list[tuple[int, int]]] = {}
+        self.samples: list[tuple[Signature, Signal, Any]] = []
+        self._kept_samples: Counter[str] = Counter()
+        self._key = os.urandom(32)
+        self._seen: set[bytes] = set()
+
+    def _repeated(self, signature_id: str, credential: str) -> bool:
+        """Whether ``signature_id`` already counted ``credential``; records it when not."""
+        keyed = hashlib.blake2b(f"{signature_id}\0{credential}".encode(), key=self._key, digest_size=16)
+        digest = keyed.digest()
+        if digest in self._seen:
+            return True
+        self._seen.add(digest)
+        return False
+
+    def _covered(self, signature_id: str, start: int, end: int) -> bool:
+        spans = self.accepted.get(signature_id, ())
+        return any(start < other_end and other_start < end for other_start, other_end in spans)
+
+    def __call__(self, signature: Signature, signal: Signal, match: Any) -> bool:
+        start, end = match.span()
+        if self._covered(signature.id, start, end):
+            return False
+        credential: str | None = match.group(0)
+        if signature.id == GENERIC_CREDENTIAL:
+            follower = self.text[end : end + _FOLLOWER_CHARS]
+            credential = _generic_literal(
+                match.group(0), code=self.code, follower=follower, env_file=self.env_file
+            )
+        elif signature.id == UNATTRIBUTED_KEY and len(match.group(0)) - len("sk-") < _SHORT_KEY_BODY:
+            body = match.group(0)[len("sk-") :]
+            if self._covered(GENERIC_CREDENTIAL, start, end) or not _random_key_body(body):
+                credential = None
+        if credential is None:
+            return False
+        if self.placeholder is not None and self.placeholder(credential):
+            if self._kept_samples[signature.id] < MAX_SECRETS_PER_SIGNAL:
+                self._kept_samples[signature.id] += 1
+                self.accepted.setdefault(signature.id, []).append((start, end))
+                self.samples.append((signature, signal, match))
+            return False
+        if self._repeated(signature.id, credential):
+            return False
+        self.accepted.setdefault(signature.id, []).append((start, end))
+        return True
+
+
+def _sample_matches(text: str, samples: Sequence[tuple[Signature, Signal, Any]]) -> list[Match]:
+    """The documentation samples a ``_CredentialJudge`` kept, as matches of ``text``."""
+    if not samples:
+        return []
+    newlines = [newline.start() for newline in re.finditer("\n", text)]
+    return [
+        Match(
+            signature,
+            signal,
+            match.group(0),
+            signal.weight,
+            line=bisect_left(newlines, match.start()) + 1,
+            extra={"start": match.start(), "end": match.end()},
+        )
+        for signature, signal, match in samples
+    ]
+
+
+def keep_secret_matches(
+    matches: Sequence[tuple[str, str, int | None]],
+    *,
+    code: bool = False,
+    followers: Sequence[str] | None = None,
+    env_file: bool = False,
+) -> list[bool]:
     """Which ``(signature id, value, line)`` secret matches to keep.
 
-    A generic assigned-credential match is kept only when its value looks
-    random and no specific credential pattern matched the same value on the
-    same line: ``OPENAI_API_KEY=sk-...`` is one OpenAI key, not two findings.
-    A short unattributed ``sk-`` value only adds keys nothing else reports: it
-    is kept when it looks random and no kept generic match covers it.
+    A generic assigned-credential match is kept only when its value is a
+    literal that looks random and no specific credential pattern matched the
+    same value on the same line: ``OPENAI_API_KEY=sk-...`` is one OpenAI key,
+    not two findings. A value that only names a credential is not one (see
+    ``_reference_value``: ``code`` says the text is source code, and
+    ``followers`` holds the text after each match, '' at the end), unless the
+    operands after the reference hold a literal key (``_fallback_literal``).
+    ``env_file`` says the text is an env or credential file, where a
+    password's value names nothing (``_generic_literal``). A short
+    unattributed ``sk-`` value only adds keys nothing else reports: it is
+    kept when it looks random and no kept generic match covers it.
     """
+    credentials = _kept_credentials(matches, code=code, followers=followers, env_file=env_file)
+    return [credential is not None for credential in credentials]
+
+
+def _kept_credentials(
+    matches: Sequence[tuple[str, str, int | None]],
+    *,
+    code: bool = False,
+    followers: Sequence[str] | None = None,
+    env_file: bool = False,
+) -> list[str | None]:
+    """The credential each match of ``keep_secret_matches`` stands for, or None where it is not kept.
+
+    A generic match stands for its literal: the value it assigns, or the
+    fallback literal after a reference. Any other match stands for itself.
+    """
+    after = list(followers) if followers is not None else [""] * len(matches)
     short = [
         signature_id == UNATTRIBUTED_KEY and len(value) - len("sk-") < _SHORT_KEY_BODY
         for signature_id, value, _ in matches
@@ -287,22 +1220,24 @@ def keep_secret_matches(matches: Sequence[tuple[str, str, int | None]]) -> list[
     for (signature_id, value, line), is_short in zip(matches, short, strict=True):
         if signature_id != GENERIC_CREDENTIAL and not is_short:
             specific.setdefault(line, []).append(value)
-    keep = []
+    kept: list[str | None] = []
     generic: dict[int | None, list[str]] = {}
-    for signature_id, value, line in matches:
+    for (signature_id, value, line), follower in zip(matches, after, strict=True):
         if signature_id != GENERIC_CREDENTIAL:
-            keep.append(True)
+            kept.append(value)
             continue
-        candidate = _assigned_value(value)
-        repeated = any(other in value or candidate in other for other in specific.get(line, ()))
-        keep.append(not repeated and _high_entropy_credential(value))
-        if keep[-1]:
-            generic.setdefault(line, []).append(value)
+        literal = _generic_literal(value, code=code, follower=follower, env_file=env_file)
+        others = specific.get(line, ())
+        if literal is None or any(other in value or other in literal or literal in other for other in others):
+            kept.append(None)
+            continue
+        kept.append(literal)
+        generic.setdefault(line, []).extend((value, literal))
     for position, ((_, value, line), is_short) in enumerate(zip(matches, short, strict=True)):
         if is_short:
             covered = any(value in other for other in generic.get(line, ()))
-            keep[position] = not covered and _random_key_body(value[len("sk-") :])
-    return keep
+            kept[position] = None if covered or not _random_key_body(value[len("sk-") :]) else value
+    return kept
 
 
 # ------------------------------------------------------- domain prefilters
@@ -1199,11 +2134,13 @@ class SignatureIndex:
         max_per_signal: int = 3,
         ignore_spans: Sequence[tuple[int, int]] = (),
         scan: LiteralScan | None = None,
+        limited: set[str] | None = None,
+        accept: Callable[[Signature, Signal, Any], bool] | None = None,
     ) -> list[Match]:
         # One deadline covers the whole signal class even outside filesystem scans.
         with self._input_budget():
             return self._match_regex_signals_with_budget(
-                signal_type, text, language, max_per_signal, ignore_spans, scan
+                signal_type, text, language, max_per_signal, ignore_spans, scan, limited, accept
             )
 
     def _match_regex_signals_with_budget(
@@ -1214,7 +2151,22 @@ class SignatureIndex:
         max_per_signal: int,
         ignore_spans: Sequence[tuple[int, int]],
         scan: LiteralScan | None = None,
+        limited: set[str] | None = None,
+        accept: Callable[[Signature, Signal, Any], bool] | None = None,
     ) -> list[Match]:
+        """Match the regex signals of one type, at most ``max_per_signal`` per signal.
+
+        ``accept``, when given, judges each regex match (signature, signal, match) as it is
+        found; a rejected match is skipped and does not count toward the quota
+        or the look past it.
+
+        ``limited``, when given, collects the id of every signature whose
+        signal had more matches than its quota: the matcher then looks one
+        match past each quota (a single bounded regex step) instead of
+        stopping exactly at it, so a caller can disclose that the returned
+        matches are a lower bound. Without it the quota is applied silently,
+        as it always was for import and code signals.
+        """
         out: list[Match] = []
         # Ignore matches beginning inside comments and literals before applying
         # the per-signal quota. A file with many examples must not hide live code.
@@ -1231,47 +2183,36 @@ class SignatureIndex:
         # the candidates; their remaining groups are checked with a memo. The
         # casefolded text is built only when a case-insensitive pattern needs it.
         plan = self._regex_plan(signal_type, language)
-        candidates = set(plan.unhinted)
-        folded_text: str | None = None
-        folded_present: dict[str, bool] = {}
-        if scan is not None and scan.text is text:
-            # A shared scan holds the union of the plans' literals; a plan's
-            # candidates are the entries its own literals hit. The dicts also
-            # memoise the remaining groups, so an absent literal is a False
-            # entry, not a missing one.
-            present = scan.present
-            for literal in plan.plain_literals:
-                if present.get(literal):
-                    candidates.update(plan.plain_first[literal])
-            if plan.folded_literals:
-                folded_text, folded_present = scan.folded_text, scan.folded_present
-                for literal in plan.folded_literals:
-                    if folded_present.get(literal):
-                        candidates.update(plan.folded_first[literal])
-        else:
-            present = {literal: True for literal in plan.plain_literals if literal in text}
-            for literal in present:
-                candidates.update(plan.plain_first[literal])
-            if plan.folded_literals:
-                folded_text = _fold(text)
-                folded_present = {literal: True for literal in plan.folded_literals if literal in folded_text}
-                for literal in folded_present:
-                    candidates.update(plan.folded_first[literal])
+        candidates, present, folded_text, folded_present = _plan_candidates(plan, text, scan)
+
+        def hinted(rest: Any, fold: bool) -> bool:
+            """Whether the pattern's remaining literal groups occur in the text."""
+            if not rest:
+                return True
+            if fold:
+                return _hints_present(rest, folded_text or "", folded_present)
+            return _hints_present(rest, text, present)
+
+        skip = excluded if starts else None
         current: int | None = None
         hits = 0
         for number in sorted(candidates):
             sig, s, rx, rest, fold = plan.entries[number]
+            select = None if accept is None else partial(accept, sig, s)
             if id(s) != current:
                 current, hits = id(s), 0
             elif hits >= max_per_signal:
+                # The signal's quota is already full. When the caller wants to
+                # know about matches the quota hides, a later pattern of the
+                # same signal is still given one bounded search, so a credential
+                # that only its second pattern recognizes is counted as hidden.
+                if limited is not None and sig.id not in limited and hinted(rest, fold):
+                    if _finditer(rx, text, sig.id, 1, skip, select):
+                        limited.add(sig.id)
                 continue
-            if rest:
-                if fold:
-                    if not _hints_present(rest, folded_text or "", folded_present):
-                        continue
-                elif not _hints_present(rest, text, present):
-                    continue
-            for m in _finditer(rx, text, sig.id, max_per_signal - hits, excluded if starts else None):
+            if not hinted(rest, fold):
+                continue
+            for m in _quota_matches(rx, text, sig.id, max_per_signal - hits, skip, limited, select):
                 if newlines is None:
                     newlines = [newline.start() for newline in re.finditer("\n", text)]
                 line = bisect_left(newlines, m.start()) + 1
@@ -1330,10 +2271,65 @@ class SignatureIndex:
     ) -> list[Match]:
         return self._match_regex_signals("code", text, language, ignore_spans=ignore_spans, scan=scan)
 
-    def match_secrets(self, text: str, scan: LiteralScan | None = None) -> list[Match]:
-        matches = self._match_regex_signals("secret", text, None, max_per_signal=5, scan=scan)
-        keep = keep_secret_matches([(m.signature_id, m.value, m.line) for m in matches])
-        return [match for match, kept in zip(matches, keep, strict=True) if kept]
+    def match_secrets(
+        self,
+        text: str,
+        scan: LiteralScan | None = None,
+        *,
+        code: bool = False,
+        limited: set[str] | None = None,
+        placeholder: Callable[[str], object] | None = None,
+        env_file: bool = False,
+    ) -> list[Match]:
+        """Credential matches in ``text``, at most :data:`MAX_SECRETS_PER_SIGNAL` per signal.
+
+        ``code`` says the text is source code, ``env_file`` that it is an env
+        or credential file, not a template of one (see ``keep_secret_matches``).
+        Matches are judged as they are found (``_CredentialJudge``): a value
+        that only names a credential ('self.api_key = api_key' in a settings
+        module), a short ``sk-`` look-alike, and a credential another pattern
+        of the same signal already matched (``TOKEN=ghp_...`` is the
+        assignment and the bare token), count toward nothing, so no number of
+        them can push a key written further down past the quota. Neither does
+        a documentation sample when the caller passes its ``placeholder``
+        test, which judges the credential a match stands for
+        (``reported_credential``): a few samples per signature are returned
+        besides the quota, for example evidence, and a file of them is never
+        reported as holding more credentials than the quota.
+
+        The quota bounds the evidence one finding can carry. It also hides
+        every further credential of a format once that many have matched, so
+        a caller that reports credentials passes ``limited``: it receives the
+        ids of the signatures with more accepted matches than the quota and
+        can disclose that its count is a lower bound rather than report a
+        complete-looking result.
+        """
+        judge = _CredentialJudge(text, code, placeholder, env_file=env_file)
+        matches = self._match_regex_signals(
+            "secret",
+            text,
+            None,
+            max_per_signal=MAX_SECRETS_PER_SIGNAL,
+            scan=scan,
+            limited=limited,
+            accept=judge,
+        )
+        matches.extend(_sample_matches(text, judge.samples))
+        ends = [m.extra.get("end") for m in matches]
+        followers = [text[end : end + _FOLLOWER_CHARS] if end is not None else "" for end in ends]
+        credentials = _kept_credentials(
+            [(m.signature_id, m.value, m.line) for m in matches],
+            code=code,
+            followers=followers,
+            env_file=env_file,
+        )
+        kept = []
+        for match, credential in zip(matches, credentials, strict=True):
+            if credential is not None:
+                # What a placeholder test judges and a finding counts (``reported_credential``).
+                match.extra["credential"] = credential
+                kept.append(match)
+        return kept
 
     def match_user_agent(self, ua: str) -> list[Match]:
         if not ua:

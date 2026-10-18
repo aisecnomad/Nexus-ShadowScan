@@ -7,10 +7,8 @@ import os
 import click
 from rich.text import Text
 
-# Late-bound through the package: tests patch ``shadowscan.cli.<name>``, and the commands must see the
-# patched object, as they did when this was a single module.
-import shadowscan.cli as _cli_pkg
-from shadowscan.cli import _load_report, err_console, main
+import shadowscan.cli as _cli
+from shadowscan.cli import _load_report, main
 from shadowscan.comparison import MAX_REPORT_BYTES, ReportDigestMismatch
 from shadowscan.dashboard import (
     MAX_HISTORY,
@@ -123,7 +121,7 @@ def dashboard_command(
             history=history,
             as_of=as_of,
         )
-        page = _cli_pkg.render_dashboard(inventory)
+        page = _cli.render_dashboard(inventory)
         document = render_inventory_json(inventory) if inventory_json else None
     except (OverflowError, RecursionError, TypeError, ValueError):
         raise click.ClickException("could not render dashboard; report data is invalid") from None
@@ -134,6 +132,6 @@ def dashboard_command(
             write_private_text(path, text)
         except (OSError, ValueError):
             raise click.ClickException(f"could not write {what}; check output path and permissions") from None
-        err_console.print(Text(terminal_text(f"wrote {what} to {path}"), style="green"))
+        _cli.err_console.print(Text(terminal_text(f"wrote {what} to {path}"), style="green"))
     drift = inventory["drift"]
     raise click.exceptions.Exit(3 if not inventory["complete"] or (drift and not drift["comparable"]) else 0)

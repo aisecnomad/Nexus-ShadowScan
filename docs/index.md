@@ -16,12 +16,14 @@ These pages live in the
 GitHub Pages is enabled at
 <https://aisecnomad.github.io/Nexus-ShadowScan/>; that URL currently serves the
 repository README, not this MkDocs set. The Docs workflow builds the site when
-a `main` change touches its sources (CI's docs job builds every commit) and
-publishes only when a maintainer runs
-`docs.yml` with `publish=true` after Pages is pointed at GitHub Actions.
-Until that publish path is used, treat `docs/` in the revision you are
-reading as the source of truth. To preview locally, install the documentation
-dependencies from a checkout and run `mkdocs serve`.
+a `main` change touches its sources (CI's docs job builds every commit). Once
+Pages is pointed at GitHub Actions it publishes from `main` in two ways, both a
+maintainer's choice: a manual run of `docs.yml` with `publish=true`, and, when
+the repository variable `DOCS_PUBLISH` is `true`, every docs push to `main`. A
+pull request never publishes. Until one of those publish paths is used, treat
+`docs/` in the revision you are reading as the source of truth. To preview
+locally, install the documentation dependencies from a checkout and run
+`mkdocs serve`.
 
 ## What a finding means
 

@@ -8,7 +8,8 @@ import sys
 import click
 from rich.text import Text
 
-from shadowscan.cli import err_console, main
+import shadowscan.cli as _cli
+from shadowscan.cli import main
 from shadowscan.mcp_registry import (
     DEFAULT_MAX_PAGES,
     DEFAULT_REGISTRY_URL,
@@ -74,7 +75,7 @@ def mcp_registry_snapshot(
             url, max_pages=max_pages, ca_bundle=ca_bundle, allow_private_origin=allow_private_origin
         )
     except SnapshotError as exc:
-        err_console.print(Text(terminal_text(f"error: {exc}; no snapshot written"), style="red"))
+        _cli.err_console.print(Text(terminal_text(f"error: {exc}; no snapshot written"), style="red"))
         sys.exit(3)
     try:
         write_private_text(output, text)
@@ -82,5 +83,5 @@ def mcp_registry_snapshot(
         raise click.ClickException("could not write snapshot; check output path and permissions") from None
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     note = f"wrote MCP registry snapshot to {output}; pin it with sha256: {digest}"
-    err_console.print(Text(terminal_text(note), style="green"))
+    _cli.err_console.print(Text(terminal_text(note), style="green"))
     click.echo(digest)

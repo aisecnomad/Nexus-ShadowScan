@@ -495,12 +495,44 @@ def test_internal_directory_symlinks_mark_alias_path_unscanned(run_connector, tm
 
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unavailable")
 def test_external_symlinks_make_coverage_incomplete_by_default(run_connector, tmp_path):
+    """One unread entry of one examined is the whole tree, far over the budget.
+
+    A link to one file is budgeted rather than fatal on sight, but a budget is
+    a ratio: in a tree this small a single skipped link exhausts it, so the
+    scan is still incomplete. The link is named in a warning and the verdict
+    that condemns the scan is the error. A link to a directory is never
+    budgeted: it can stand for any number of files.
+    """
     repo, outside = tmp_path / "repo", tmp_path / "outside"
     write(outside, "secret.txt", "not part of the repository\n")
     repo.mkdir()
+    (repo / "link").symlink_to(outside / "secret.txt")
+    _, stats = scan(run_connector, repo)
+    assert stats.incomplete
+    assert any("symbolic link" in w for w in stats.warnings)
+    assert any("over the" in e and "budget" in e for e in stats.errors)
+    _, stats = scan(run_connector, repo, strict_coverage=True)
+    assert stats.errors and stats.incomplete
+    (repo / "link").unlink()
     (repo / "link").symlink_to(outside)
     _, stats = scan(run_connector, repo)
-    assert stats.warnings and not stats.errors and stats.incomplete
+    assert stats.incomplete
+    assert any("symbolic link link" in e and "any number of files" in e for e in stats.errors)
+
+
+def test_a_lone_external_symlink_in_a_large_tree_is_budgeted(run_connector, tmp_path):
+    """The case the budget exists for: psf/requests exited 3 over one dangling link."""
+    repo, outside = tmp_path / "repo", tmp_path / "outside"
+    write(outside, "secret.txt", "not part of the repository\n")
+    for index in range(200):
+        write(repo, f"src/mod{index}.py", f"VALUE = {index}\n")
+    (repo / "tests").mkdir(parents=True, exist_ok=True)
+    (repo / "tests" / "link").symlink_to(outside / "missing.pem")
+    _, stats = scan(run_connector, repo)
+    assert not stats.incomplete
+    # Tolerated is never hidden: the gap is still named and counted.
+    assert any("symbolic link" in w for w in stats.warnings)
+    assert stats.coverage is not None and stats.coverage["gaps"] == 1
     _, stats = scan(run_connector, repo, strict_coverage=True)
     assert stats.errors and stats.incomplete
 
@@ -510,7 +542,9 @@ def test_oversize_files_make_coverage_incomplete_by_default(run_connector, tmp_p
     # tests/ is disclosed without a gap unless include_tests is set).
     write(tmp_path, "recordings/cassette.yaml", "x: " + "y" * 400 + "\n")
     _, stats = scan(run_connector, tmp_path, max_file_size=100)
-    assert stats.warnings and not stats.errors and stats.incomplete
+    # One unread file of one examined exhausts any ratio budget.
+    assert stats.incomplete
+    assert any("max_file_size" in w for w in stats.warnings)
     _, stats = scan(run_connector, tmp_path, max_file_size=100, strict_coverage=True)
     assert stats.errors and stats.incomplete
 

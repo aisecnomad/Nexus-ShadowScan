@@ -63,7 +63,8 @@ Run `make check` or the commands in CONTRIBUTING.md. Pull requests must keep:
   `docs/concepts/mappings-reference.md` (`make mapping-reference`). See
   `docs/concepts/mappings.md`.
 - Rollout, finding identity, or credential-policy changes also update
-  `CHANGELOG.md` (Unreleased) and `docs/production.md`.
+  `docs/engineering-log.md` (a detailed entry under Unreleased), `CHANGELOG.md`
+  (a line under Unreleased) and `docs/production.md`.
 
 ## Review
 

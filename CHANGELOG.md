@@ -19,7 +19,9 @@ Until October 16 this file was the engineering log, one long entry per change. T
 word in
 [`archive/changelog/CHANGELOG-through-2026-10-16.md`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/archive/changelog/CHANGELOG-through-2026-10-16.md)
 for the reasoning, regression-test notes and rejected alternatives behind each summary below; it is a
-record and is not updated. New entries go here, one short bullet under the heading it belongs to.
+record and is not updated. The log itself continues in
+[`docs/engineering-log.md`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/engineering-log.md),
+one detailed entry per change. New entries go here, one short bullet under the heading it belongs to.
 
 ## Unreleased
 
@@ -28,6 +30,11 @@ Look for the flags above before moving a baseline or a gate onto a newer commit.
 
 ### Security and redaction
 
+- From the October 18 integration of #252-#258: credential review fixes (env-file passwords, typed
+  reads, pasted names, repeated credentials, labels and cut-read evidence); credential precision, the
+  ci profile's credential limits, incomplete-reason handling, the ADR-005 ownership move and plugin
+  worker environments; the credential quota is disclosed, Bedrock owner tags are collected, and
+  repeated tags count once. (Oct 17)
 - Fuzzing the redactor and the source lexer (see Release, CI and supply chain) found a fault in
   CPython 3.12's own tokenizer that reached two places in the scanner, and a third place that reads
   tokens was hardened with them. All are fixed with regression tests; none exposed a credential. On
@@ -240,6 +247,14 @@ Look for the flags above before moving a baseline or a gate onto a newer commit.
 
 ### Collection and coverage
 
+- `go.mod` require blocks are read in linear time, and never as a dependency named `(`. (Oct 18)
+- From the October 18 integration of #252-#258: every coverage gap takes one decision (strict
+  accounting, then a ci declaration, then the test-code discount, then the budget) and verdicts are
+  judged per root and per repository, so exit 3 means something again; `diff` no longer resolves what
+  the ci profile or the budget stopped reading; engine review fixes (surrendered findings, explicit
+  deadlines, the cache key and split jobs); connector deadlines scale to their input and an overrun
+  keeps its findings; connector correctness, CI check names and benchmark framing. **(behaviour
+  change)** (Oct 17)
 - A JavaScript-family string that ends in a backslash (`"\`) no longer makes the lexer return a span
   longer than the text; spans are clamped to it. Found by the same fuzzing. (Oct 17)
 - `FilesystemConnector` (`shadowscan/connectors/code/filesystem.py`, 5,456 lines) is now a
@@ -459,6 +474,8 @@ Look for the flags above before moving a baseline or a gate onto a newer commit.
 
 ### Detection and signatures
 
+- From the October 18 integration of #252-#258: precision, completeness and connector requirements
+  from an outside review; risk scoring gains capability interactions. (Oct 17)
 - IDs of generic SaaS findings whose resource a credential redacts now come from the redacted
   resource plus a keyed pseudonym: they change and are scan-local (`metadata.identity_scope: run`)
   unless `SHADOWSCAN_IDENTITY_KEY` is set **(rebaseline needed)**.
@@ -614,6 +631,9 @@ Look for the flags above before moving a baseline or a gate onto a newer commit.
 
 ### Reports and CLI
 
+- From the October 18 integration of #252-#258: the reporter layer is typed by a `Renderer`
+  protocol (#252); OCSF events always carry the required `time` attribute; OIDC-only sign-in clients
+  named with a common word are no longer findings (#253). **(behaviour change)** (Oct 17)
 - `shadowscan/cli.py` (1,922 lines) is now the package `shadowscan/cli/`: the options shared by
   every command, report output and deadline handling stay in `__init__.py` and each command group
   has a module of its own. The `shadowscan` command, its options, output and exit codes are
@@ -818,6 +838,8 @@ Look for the flags above before moving a baseline or a gate onto a newer commit.
 
 ### Release, CI and supply chain
 
+- From the October 18 integration of #252-#258: lint, tests and tooling review fixes, and a failing
+  CI test step names each failing test in the checks API from the legs' JUnit reports. (Oct 17)
 - The test jobs run the suite on one pytest-xdist worker per CPU (`-n auto --dist worksteal`),
   including the coverage-traced Python 3.11 leg that took about 40 minutes run serially;
   `make test-parallel` uses the same options. pytest-cov combines the workers' data before the
@@ -924,6 +946,8 @@ Look for the flags above before moving a baseline or a gate onto a newer commit.
 
 ### Documentation
 
+- From the October 18 integration of #252-#258: a condensed `README.md` (#252), fact-checked
+  `docs/api/` narratives (#253), and the engineering log moved to `docs/engineering-log.md`. (Oct 17)
 - New `docs/operations/openssf-best-practices.md` answers each of the 67 passing-level OpenSSF Best
   Practices criteria with a status (Met, Confirm, Attest, N/A, Gap) and the evidence in this
   repository, and lists what silver and gold would still need. The page claims no badge, and nothing

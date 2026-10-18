@@ -1,4 +1,4 @@
-"""``python -m shadowscan.cli``, which ``cli.py`` supported before it became a package."""
+"""``python -m shadowscan.cli``, the form the benchmark adapters invoke."""
 
 from shadowscan.cli import main
 
