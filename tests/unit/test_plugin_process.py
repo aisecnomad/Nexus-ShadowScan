@@ -119,10 +119,15 @@ class Connector(BaseConnector):
                 )
             if mode == "initial-env":
                 # The environment the worker was started with, which removing a variable from
-                # os.environ does not change.
-                with open("/proc/self/environ", "rb") as initial:
-                    entries = initial.read().split(b"\\0")
-                names = [entry.partition(b"=")[0].decode() for entry in entries if entry]
+                # os.environ does not change. Darwin has no /proc: the worker's current
+                # environment stands in, which the start-up scrub has already cleaned, so the
+                # strict started-with check is the /proc-gated test only.
+                try:
+                    with open("/proc/self/environ", "rb") as initial:
+                        entries = initial.read().split(b"\\0")
+                    names = [entry.partition(b"=")[0].decode() for entry in entries if entry]
+                except FileNotFoundError:
+                    names = list(os.environ)
                 metadata.update(
                     initial=sorted(
                         name for name in names
