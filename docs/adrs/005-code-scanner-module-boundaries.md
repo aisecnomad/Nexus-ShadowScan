@@ -178,8 +178,7 @@ methods, down from 4,250 and 127.
    builder. Like the file scan it receives `_base`, and like the walker
    `_root_prefix`.
 5. **Shared records** moved out of `file_scan.py` (2,136 lines after step 3)
-   into the new `scan_records.py`, so that no module of the split exceeds 2,000
-   lines: the `_Project`, `_SourceFile` and `_MatchedSource` records,
+   into the new `scan_records.py`: the `_Project`, `_SourceFile` and `_MatchedSource` records,
    `FindingBase`, `_MCP_TRANSPORTS` (read by the file scan and the findings
    collaborator) and the file scan's helpers that need no scanner state,
    `_document_declares_mcp` with `_DEDICATED_MCP_CONFIG_NAMES`,
@@ -187,6 +186,15 @@ methods, down from 4,250 and 127.
    with `_on_disk_project`. The module imports none of the collaborators, so
    `walk.py` imports `_Project` from it rather than from `filesystem.py` under
    `TYPE_CHECKING`.
+
+The split did not get every module under the 2,000-line mark the ratchet
+uses for new modules: redone on the review-fix code of #252–#258, `walk.py`
+holds 2,192 lines and `file_scan.py` 2,259 (`project_findings.py` 1,268,
+`scan_records.py` 272, the façade 1,188). `tools/complexity_baseline.json`
+records those sizes and the complexity gate fails closed when either grows;
+a rise a review accepts is recorded with `--rebaseline` and explained in the
+pull request, as [CONTRIBUTING](../../CONTRIBUTING.md) says. Getting both
+below the mark is a further step, not a precondition of this split.
 
 `FilesystemConnector` is the façade: configuration and its validation, the
 engine hooks, `collect()`/`analyze()`/`load_offline()`, `scan_tree` with the

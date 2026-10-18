@@ -82,101 +82,27 @@ Counts and figures quoted in an entry are those of its date.
   verified: the live clone and API modes of `code.github` and `code.gitlab`,
   and the 2026-10-01 field scan's repositories.
 
-### The untraced CI test legs run on pytest-xdist workers; the traced leg stays serial (#259; October 17-18)
+### A diff-scoped walk reports the connector deadline's remainder against the diff-selected files only (October 18)
 
-- The `test` job runs the suite with `-n auto --dist worksteal`, one worker
-  per CPU, including the coverage-traced 3.11 leg that took about 40 minutes
-  serially; pytest-cov combines the workers' data before the floors are
-  checked, and `make test-parallel` uses the same options. The macOS job
-  still runs `pytest -q` through the console entry point. The 60-minute job
-  limit is unchanged until the parallel timings are known. The suite has to
-  stay safe to run in parallel: no test may depend on another's files, ports,
-  environment or ordering.
-
-**October 18, after three heads of #261.** The coverage-traced 3.11 leg failed on
-every head run with `-n auto`: at bb05d72 six tests (both dashboard time
-budgets, the linear unterminated-regex scan, a `MatchTimeoutError` from the
-matcher's 2-second input execution budget, and two import-binding budget
-counts), at cfed5ba the dashboard history budget alone (18.4 s against 16 s).
-The untraced legs passed every time. Those tests measure documented time
-budgets, and under tracing plus one worker per CPU they measure the runner.
-The traced leg therefore runs serially again, as `make test` does and as the
-budgets were measured (37 to 50 minutes); the untraced legs keep the workers
-(10 to 13 minutes instead of 25). `make test-parallel` is now the untraced
-run, without coverage, and the policy test holds both recipes to their legs.
-
-### OpenSSF Best Practices evidence page, claiming no badge (#259; October 17)
-
-- `docs/operations/openssf-best-practices.md` answers each of the 67
-  passing-level criteria with a status (Met, Confirm, Attest, N/A, Gap) and
-  the evidence in this repository, and lists what silver and gold would still
-  need. No badge is claimed and nothing records an application for one. One
-  gap is left for the maintainer: JWTs verified through a JWKS set no minimum
-  RSA key size (`crypto_keylength`). Policy tests keep every criterion
-  answered once and tie the page's statements about cryptography to the code.
-
-### Release attestation bundles are named `provenance.sigstore.json` and `sbom.sigstore.json` (#259; October 17)
-
-- The release workflow's two attested bundles were `provenance.json` and
-  `sbom.json`; they carry the `.sigstore.json` suffix that release-signature
-  checks such as OpenSSF Scorecard's Signed-Releases look for among a GitHub
-  release's assets. The workflow still creates no release:
-  `docs/operations/publishing.md` has the maintainer attach the wheel, the
-  sdist, `SHA256SUMS` and both bundles to a release created by hand, and shows
-  how to verify a download against them. **(behaviour change)**
-
-### Self-scan of the checkout in `make check` and CI, with every exclusion explained (#259; October 17)
-
-- `make self-scan` (part of `make check`) and a CI step scan this checkout
-  with `examples/shadowscan.self-scan.yaml` and require a complete report:
-  findings do not fail the step, an incomplete scan (exit 3) does. Each
-  exclusion names a path, not a pattern, with its reason above it; a
-  reviewed list in `tests/test_self_scan.py` is the only way to exclude part
-  of the first-party trees, and an exclusion that matches nothing fails.
-- On this branch the review fixes had added four more files the scanner
-  cannot read to completion, each now a named exclusion: the
-  signature-authoring guide and the engineering log quote call shapes without
-  a closing parenthesis (the call-lexing budget), and the engineering log,
-  `tests/unit/test_credential_oracle.py` and
-  `tests/unit/test_generic_credential_references.py` hold more credential
-  inputs than the five-per-format quota #257 discloses as incomplete. With
-  them the self-scan completes: 24 findings, 1,161 objects, exit 0.
-
-### Complexity ratchet holds function and module size and fails closed (#259; October 17)
-
-- `tools/complexity_gate.py` is #259's gate at this branch's target: it holds
-  every function above ruff's `C901` limit of 15 in `shadowscan/`, `tools/`
-  and `benchmarks/`, and every `shadowscan` module above 2,000 lines, to
-  `tools/complexity_baseline.json`. Nothing listed may grow, nothing new may
-  join, and an improvement fails the check until `--update` lowers the
-  baseline, so the room it made cannot be spent again; `--update` refuses to
-  raise anything, and a rise that review accepts is recorded with
-  `--rebaseline` as a diff of the baseline. The gate exits 2 when ruff or the
-  baseline cannot be trusted, ignores `noqa`, and records the ruff version.
-  It replaces the gate #254 added (target 15, `--update --allow-increase`),
-  whose CI step, Makefile targets and `make check` membership it keeps. The
-  tests express every expected complexity relative to the limit.
-
-### Coverage-guided fuzzing of the redaction and source-lexing code (#259; October 17)
-
-- `tools/fuzz` fuzzes `sanitize_text`, `sanitize` and the source lexer with
-  Atheris, hash-locked in `requirements-fuzz.lock` (Linux x86_64 only).
-  `make fuzz` and the weekly `Fuzz` workflow run it, the workflow with a
-  read-only token and no stored corpus; a failing lexing input is kept as an
-  artifact, but an input that beat the redactor is never printed or uploaded.
-  The same checks run as Hypothesis tests in the ordinary suite
-  (`tests/unit/test_fuzz_targets.py`), and `make audit` and the dependency
-  audit cover the new lock. Atheris is not an engine OpenSSF Scorecard's
-  Fuzzing check recognises. See `docs/operations/fuzzing.md`.
-
-### KubernetesConnector.analyze decomposed into per-concern helpers (#259; October 17)
-
-- `KubernetesConnector.analyze` (ruff `C901` complexity 66) is a short driver
-  over helpers that each own one concern: reading records and `List`
-  envelopes, the NetworkPolicy pre-pass, an object's identity and pod spec,
-  its containers, exposure tags and the finding. Findings, ids, tags and
-  diagnostics are unchanged; `tests/unit/test_kubernetes_helpers.py` covers
-  the helpers.
+- **Found by:** the reviewing session's static review of the integrated stack, on
+  `walk.py` as the ADR-005 split left it; both lines pre-date the split and are
+  on main in `filesystem.py`.
+- **Deadline arithmetic:** in diff mode the walk buffered every listed entry and
+  skipped the ones the diff filter excluded inside the loop, so when the
+  connector deadline stopped it, "deadline reached after X of Y files" counted
+  the excluded entries in Y, and the unread-settings carry-over received entries
+  the walk would never have read. The filter now runs before the loop, over the
+  buffered listing (`TreeWalker._run_with_deadline`), so the remainder and the
+  carry-over see only files the walk would read. The regression test selects six
+  of ten files and expects "after 4 of 6 files". The carry-over effect was
+  smaller than first described: `_diff_included` always keeps posture-client
+  settings files and `_note_unread_settings` ignores non-settings entries, so
+  the overstated count was the defect.
+- **Dead branch:** `_reserved_budget`'s trailing model-artifact check was
+  unreachable, as the first branch had already returned for model artifacts;
+  dropping it saves a suffix lookup per entry.
+- **Ratchet:** `walk.py` grew by one line for the up-front filter (2,191 to
+  2,192), recorded with `--rebaseline`.
 
 ### A file's source-binding time budget is counted as `timeout`, as the docs define it (October 18)
 
@@ -313,6 +239,102 @@ after them.
   because `\s` spans the line break, so every go.mod with a block reported a
   dependency named `(` whose version was the block's first module. It now
   reads only the one-line form.
+
+### The untraced CI test legs run on pytest-xdist workers; the traced leg stays serial (#259; October 17-18)
+
+- The `test` job runs the suite with `-n auto --dist worksteal`, one worker
+  per CPU, including the coverage-traced 3.11 leg that took about 40 minutes
+  serially; pytest-cov combines the workers' data before the floors are
+  checked, and `make test-parallel` uses the same options. The macOS job
+  still runs `pytest -q` through the console entry point. The 60-minute job
+  limit is unchanged until the parallel timings are known. The suite has to
+  stay safe to run in parallel: no test may depend on another's files, ports,
+  environment or ordering.
+
+**October 18, after three heads of #261.** The coverage-traced 3.11 leg failed on
+every head run with `-n auto`: at bb05d72 six tests (both dashboard time
+budgets, the linear unterminated-regex scan, a `MatchTimeoutError` from the
+matcher's 2-second input execution budget, and two import-binding budget
+counts), at cfed5ba the dashboard history budget alone (18.4 s against 16 s).
+The untraced legs passed every time. Those tests measure documented time
+budgets, and under tracing plus one worker per CPU they measure the runner.
+The traced leg therefore runs serially again, as `make test` does and as the
+budgets were measured (37 to 50 minutes); the untraced legs keep the workers
+(10 to 13 minutes instead of 25). `make test-parallel` is now the untraced
+run, without coverage, and the policy test holds both recipes to their legs.
+
+### OpenSSF Best Practices evidence page, claiming no badge (#259; October 17)
+
+- `docs/operations/openssf-best-practices.md` answers each of the 67
+  passing-level criteria with a status (Met, Confirm, Attest, N/A, Gap) and
+  the evidence in this repository, and lists what silver and gold would still
+  need. No badge is claimed and nothing records an application for one. One
+  gap is left for the maintainer: JWTs verified through a JWKS set no minimum
+  RSA key size (`crypto_keylength`). Policy tests keep every criterion
+  answered once and tie the page's statements about cryptography to the code.
+
+### Release attestation bundles are named `provenance.sigstore.json` and `sbom.sigstore.json` (#259; October 17)
+
+- The release workflow's two attested bundles were `provenance.json` and
+  `sbom.json`; they carry the `.sigstore.json` suffix that release-signature
+  checks such as OpenSSF Scorecard's Signed-Releases look for among a GitHub
+  release's assets. The workflow still creates no release:
+  `docs/operations/publishing.md` has the maintainer attach the wheel, the
+  sdist, `SHA256SUMS` and both bundles to a release created by hand, and shows
+  how to verify a download against them. **(behaviour change)**
+
+### Self-scan of the checkout in `make check` and CI, with every exclusion explained (#259; October 17)
+
+- `make self-scan` (part of `make check`) and a CI step scan this checkout
+  with `examples/shadowscan.self-scan.yaml` and require a complete report:
+  findings do not fail the step, an incomplete scan (exit 3) does. Each
+  exclusion names a path, not a pattern, with its reason above it; a
+  reviewed list in `tests/test_self_scan.py` is the only way to exclude part
+  of the first-party trees, and an exclusion that matches nothing fails.
+- On this branch the review fixes had added four more files the scanner
+  cannot read to completion, each now a named exclusion: the
+  signature-authoring guide and the engineering log quote call shapes without
+  a closing parenthesis (the call-lexing budget), and the engineering log,
+  `tests/unit/test_credential_oracle.py` and
+  `tests/unit/test_generic_credential_references.py` hold more credential
+  inputs than the five-per-format quota #257 discloses as incomplete. With
+  them the self-scan completes: 24 findings, 1,161 objects, exit 0.
+
+### Complexity ratchet holds function and module size and fails closed (#259; October 17)
+
+- `tools/complexity_gate.py` is #259's gate at this branch's target: it holds
+  every function above ruff's `C901` limit of 15 in `shadowscan/`, `tools/`
+  and `benchmarks/`, and every `shadowscan` module above 2,000 lines, to
+  `tools/complexity_baseline.json`. Nothing listed may grow, nothing new may
+  join, and an improvement fails the check until `--update` lowers the
+  baseline, so the room it made cannot be spent again; `--update` refuses to
+  raise anything, and a rise that review accepts is recorded with
+  `--rebaseline` as a diff of the baseline. The gate exits 2 when ruff or the
+  baseline cannot be trusted, ignores `noqa`, and records the ruff version.
+  It replaces the gate #254 added (target 15, `--update --allow-increase`),
+  whose CI step, Makefile targets and `make check` membership it keeps. The
+  tests express every expected complexity relative to the limit.
+
+### Coverage-guided fuzzing of the redaction and source-lexing code (#259; October 17)
+
+- `tools/fuzz` fuzzes `sanitize_text`, `sanitize` and the source lexer with
+  Atheris, hash-locked in `requirements-fuzz.lock` (Linux x86_64 only).
+  `make fuzz` and the weekly `Fuzz` workflow run it, the workflow with a
+  read-only token and no stored corpus; a failing lexing input is kept as an
+  artifact, but an input that beat the redactor is never printed or uploaded.
+  The same checks run as Hypothesis tests in the ordinary suite
+  (`tests/unit/test_fuzz_targets.py`), and `make audit` and the dependency
+  audit cover the new lock. Atheris is not an engine OpenSSF Scorecard's
+  Fuzzing check recognises. See `docs/operations/fuzzing.md`.
+
+### KubernetesConnector.analyze decomposed into per-concern helpers (#259; October 17)
+
+- `KubernetesConnector.analyze` (ruff `C901` complexity 66) is a short driver
+  over helpers that each own one concern: reading records and `List`
+  envelopes, the NetworkPolicy pre-pass, an object's identity and pod spec,
+  its containers, exposure tags and the finding. Findings, ids, tags and
+  diagnostics are unchanged; `tests/unit/test_kubernetes_helpers.py` covers
+  the helpers.
 
 ### CLI package, reporter protocol, condensed README, identity sign-in clients and API page narratives (#252, #253; October 17)
 
