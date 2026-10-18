@@ -880,6 +880,23 @@ def _union(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return merged
 
 
+def _line_start(text: str, position: int) -> int:
+    """Where the physical line holding ``position`` starts, after the last LF or CR before it.
+
+    Searched backward in a window that doubles, so finding it costs about twice
+    the line's length: a search from the text's start, as 'rfind("\\n", 0, ...)'
+    is, costs the whole text before it each time when no LF ends a line (CR-only
+    text), quadratic over the text.
+    """
+    window = 256
+    while True:
+        low = max(0, position - window)
+        found = max(text.rfind("\n", low, position), text.rfind("\r", low, position))
+        if found >= 0 or low == 0:
+            return found + 1
+        window *= 2
+
+
 class _NetrcLines:
     """The physical lines of a text, each searched once by whichever reader of it asks first.
 
@@ -920,8 +937,7 @@ class _NetrcLines:
         if known is not None and start <= position < known[0]:
             return known
         text = self.text
-        newline = text.rfind("\n", 0, position)
-        start = max(newline, text.rfind("\r", max(newline, 0), position)) + 1
+        start = _line_start(text, position)
         line = self.lines.get(start)
         if line is None:
             line_end = _NETRC_LINE_END.search(text, position)
