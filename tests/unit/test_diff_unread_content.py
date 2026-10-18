@@ -523,3 +523,15 @@ def test_may_be_declared_covers_every_path_the_profile_declares(run_connector, t
     assert ctx.stats.declared_omissions == 1, ctx.stats.warnings
     assert may_be_declared(rel)
     assert not may_be_declared("src/app/settings.py") and not may_be_declared("demo")
+
+
+def test_a_template_at_the_repository_root_is_not_declared(run_connector, tmp_path):
+    # A cookiecutter repository's template sits at its root: the template is not a project,
+    # so it is judged from the root, where no profile path applies, and its gaps stay gaps.
+    rel = "{{cookiecutter.slug}}/src/app.py"
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True)
+    path.symlink_to(tmp_path / "missing")
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, profile="ci")
+    assert ctx.stats.declared_omissions == 0, ctx.stats.warnings
+    assert not may_be_declared(rel)
