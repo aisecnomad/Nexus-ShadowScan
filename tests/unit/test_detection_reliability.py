@@ -520,14 +520,20 @@ def test_external_symlinks_make_coverage_incomplete_by_default(run_connector, tm
     assert any("symbolic link link" in e and "any number of files" in e for e in stats.errors)
 
 
-def test_a_lone_external_symlink_in_a_large_tree_is_budgeted(run_connector, tmp_path):
-    """The case the budget exists for: psf/requests exited 3 over one dangling link."""
+@pytest.mark.parametrize("target", ["secret.txt", "missing.pem"], ids=["outside-file", "dangling"])
+def test_a_lone_external_symlink_in_a_large_tree_is_budgeted(run_connector, tmp_path, target):
+    """The case the budget exists for: psf/requests exited 3 over one dangling link.
+
+    A link to an existing regular file outside the tree stands for one file
+    too, so it is budgeted alike.
+    """
     repo, outside = tmp_path / "repo", tmp_path / "outside"
     write(outside, "secret.txt", "not part of the repository\n")
     for index in range(200):
         write(repo, f"src/mod{index}.py", f"VALUE = {index}\n")
     (repo / "tests").mkdir(parents=True, exist_ok=True)
-    (repo / "tests" / "link").symlink_to(outside / "missing.pem")
+    (repo / "tests" / "link").symlink_to(outside / target)
+    assert (repo / "tests" / "link").exists() == (target == "secret.txt")
     _, stats = scan(run_connector, repo)
     assert not stats.incomplete
     # Tolerated is never hidden: the gap is still named and counted.

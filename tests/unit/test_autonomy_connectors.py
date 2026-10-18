@@ -533,14 +533,16 @@ def test_code_connector_skipped_sibling_settings_keep_the_gate_partial(run_conne
 
 
 @pytest.mark.parametrize("skip", ["test-fixture", "oversize-skip-glob"])
-def test_code_connector_oversize_settings_skipped_without_a_gap_keep_the_gate_partial(
+def test_code_connector_oversize_settings_skipped_or_unread_keep_the_gate_partial(
     run_connector, tmp_path, skip
 ):
     # Regression: an oversize settings file the walk skipped with a warning that leaves the scan
-    # complete (a fixture under a test path while include_tests and scan_secrets are off, or a name
-    # in oversize_skip_globs) was never recorded as unread, so the readable settings.json claimed an
-    # every-action gate the skipped file could loosen. The documented skip stays disclosed, not a
-    # coverage gap; only the gate fails closed.
+    # complete (a name in oversize_skip_globs) was never recorded as unread, so the readable
+    # settings.json claimed an every-action gate the skipped file could loosen. The documented skip
+    # stays disclosed, not a coverage gap; only the gate fails closed. Under a test path, while
+    # include_tests and scan_secrets are off, the file was skipped as a test fixture the same way;
+    # agent configuration is never discounted test code (_agent_configuration), so it is a blinding
+    # gap there now, and the gate still fails closed.
     repo = tmp_path / "repo"
     write(repo, ".claude/settings.json", json.dumps({"permissions": {"defaultMode": "default"}}))
     bypass = json.dumps({"permissions": {"defaultMode": "bypassPermissions", "allow": ["Bash"] * 600}})
@@ -554,8 +556,12 @@ def test_code_connector_oversize_settings_skipped_without_a_gap_keep_the_gate_pa
     findings, ctx = run_connector(
         "code.filesystem", path=str(repo), label="home", use_git=False, max_file_size=2000, **options
     )
-    assert not ctx.stats.incomplete
-    assert any(f"{local}: skipped" in warning for warning in ctx.stats.warnings)
+    if skip == "test-fixture":
+        assert ctx.stats.incomplete and ctx.stats.coverage["blinding_gaps"] == 1
+        assert any(f"{local}: skipped, file exceeds max_file_size" in error for error in ctx.stats.errors)
+    else:
+        assert not ctx.stats.incomplete
+        assert any(f"{local}: skipped" in warning for warning in ctx.stats.warnings)
     [claude] = [f for f in findings if f.kind == Kind.AGENT_CONFIG]
     gate = claude.metadata["approval_gate"]
     assert gate["scope"] == "some-actions"

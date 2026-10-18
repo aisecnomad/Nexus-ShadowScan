@@ -24,8 +24,14 @@ from typing import Any, NamedTuple
 import regex
 
 from shadowscan.signatures.loader import Signal, Signature, load_signatures, normalise_package_name
+from shadowscan.utils.placeholders import possessive_phrase
 from shadowscan.utils.redaction import sanitize_text
-from shadowscan.utils.redaction_rules import environment_read_name, pasted_key_name
+from shadowscan.utils.redaction_rules import (
+    environment_read_name,
+    opaque_key,
+    password_literal,
+    pasted_key_name,
+)
 
 _SCAN_EXECUTION_CAP: ContextVar[float | None] = ContextVar("signature_scan_execution_cap", default=None)
 REGEX_TIMEOUT_SECONDS = 0.1
@@ -449,10 +455,20 @@ _COMMON_LABEL_WORDS = frozenset(
         "your",
     }
 )
+# The account and quality words of that vocabulary are also what a person's
+# password in an env or credential file is made of ('MyStrongPassword',
+# 'InternalUserPassword', 'admin_user_strong_internal'), where a password
+# names no account: there they label nothing ('commit' still makes an
+# instruction, see ``_INSTRUCTION_WORDS``).
+_ENV_PASSWORD_WORDS = frozenset({"admin", "commit", "internal", "strong", "user"})
+_ENV_COMMON_LABEL_WORDS = _COMMON_LABEL_WORDS - _ENV_PASSWORD_WORDS
 # Words that join a sentence, which generated passphrases leave out but labels
-# written as instructions need ('dont-use-this-in-prod', 'for-local-dev-use-only',
-# 'change-me-please', 'must-be-set-at-runtime', 'not-configured-yet'): two of
-# them, or one with a word of the label vocabulary, make a slug an instruction.
+# written as instructions need ('dont-use-this-in-prod', 'change-me-please',
+# 'must-be-set-at-runtime', 'not-configured-yet'). They are also most of a
+# sentence a person picks as a passphrase ('fly-me-to-the-moon',
+# 'my-dog-is-named-rex'), so they make an instruction only with an instruction
+# word (``_INSTRUCTION_WORDS``) or a word of the label vocabulary, and only
+# when every word of the slug is in the closed vocabulary (see ``_label_slug``).
 _FUNCTION_WORDS = frozenset(
     {
         "a",
@@ -497,25 +513,149 @@ _FUNCTION_WORDS = frozenset(
         "yet",
     }
 )
+# The function words that qualify a label rather than build a sentence: a
+# limit, a purpose, a negation or a modal ('local-development-only',
+# 'insecure-default-for-dev', 'must-not-be-empty'). The others (pronouns,
+# articles, prepositions, the copula: 'my', 'the', 'at', 'is') make a
+# sentence, which in an env or credential file is the password in use unless
+# it asks for something ('MyStrongPassword', 'my_secret_password').
+_QUALIFIER_WORDS = frozenset({"before", "do", "does", "dont", "for", "must", "never", "no", "not", "only"})
+_QUALIFIER_WORDS |= frozenset({"please", "should"})
+# What an instruction asks of whoever deploys the value: the verbs, read with a
+# plural, past or '-ing' ending taken off ('deploying', 'configured',
+# 'overridden'), the words for a value not given yet ('must-not-be-empty') and
+# the placeholder words. A sentence label needs one of them or a word of the
+# label vocabulary.
+_INSTRUCTION_WORDS = frozenset(
+    {
+        "blank",
+        "change",
+        "come",
+        "commit",
+        "configure",
+        "define",
+        "deploy",
+        "dummy",
+        "edit",
+        "empty",
+        "example",
+        "fill",
+        "generate",
+        "inject",
+        "insert",
+        "missing",
+        "override",
+        "overridden",
+        "overwrite",
+        "placeholder",
+        "provide",
+        "regenerate",
+        "replace",
+        "required",
+        "reset",
+        "rotate",
+        "set",
+        "supply",
+        "unset",
+        "update",
+        "use",
+    }
+)
+# The other words an instruction is written with ('must-be-set-at-runtime',
+# 'not-set-in-this-repo', 'must-come-from-vault', 'never-commit-real-ones',
+# 'change-me-asap-please', 'change_me_to_a_strong_password'): with the function words, the
+# instruction words, the label vocabulary and the words of the value's name
+# they are the closed vocabulary a sentence label is written in. A slug with
+# any other word is a sentence a person chose ('walk-on-the-wild-side').
+_INSTRUCTION_CONTEXT_WORDS = frozenset(
+    {
+        "asap",
+        "ci",
+        "config",
+        "configuration",
+        "first",
+        "later",
+        "new",
+        "one",
+        "ones",
+        "own",
+        "real",
+        "repo",
+        "repository",
+        "runtime",
+        "startup",
+        "strong",
+        "time",
+        "var",
+        "variable",
+        "vault",
+        "xyz",
+        "yourself",
+    }
+)
 
 
-def _label_strength(word: str) -> int:
+def _word_stems(word: str) -> set[str]:
+    """A lower-case word with a plural, past or '-ing' ending taken off ('changed', 'setting', 'deploys')."""
+    stems = {word, word[:-1] if word.endswith("s") else word}
+    if word.endswith("ed"):
+        stems.update((word[:-1], word[:-2]))  # 'changed' is change, 'tested' is test
+    if word.endswith("ing") and len(word) > 5:
+        stem = word[:-3]
+        stems.update((stem, stem + "e", stem[:-1] if stem[-1] == stem[-2] else stem))
+    return stems
+
+
+def _instruction_word(word: str) -> bool:
+    """Whether a lower-case word is an instruction word of ``_INSTRUCTION_WORDS``, in any of its forms."""
+    return not _word_stems(word).isdisjoint(_INSTRUCTION_WORDS)
+
+
+# Instruction verbs that a sentence a person picks as a password is made of as often as
+# an instruction ('NowIsTheTimeToCome', 'ComeWithMeNowPlease'). In an env or credential
+# file they ask something only beside a negation or modal ('must-come-from-vault',
+# 'never-use-in-prod'), a word of the label vocabulary ('use-your-own') or of the
+# variable's name.
+_WEAK_INSTRUCTION_WORDS = frozenset({"come", "set", "use"})
+_WEAK_INSTRUCTION_QUALIFIERS = _QUALIFIER_WORDS - {"please"}
+
+
+def _env_instruction(words: list[str], name: set[str]) -> bool:
+    """Whether an env or credential file's password ``words`` ask something (``_WEAK_INSTRUCTION_WORDS``)."""
+    weak = False
+    for word in words:
+        stems = _word_stems(word)
+        if not stems.isdisjoint(_INSTRUCTION_WORDS - _WEAK_INSTRUCTION_WORDS):
+            return True
+        weak = weak or not stems.isdisjoint(_WEAK_INSTRUCTION_WORDS)
+    return weak and any(
+        word in _WEAK_INSTRUCTION_QUALIFIERS or word in name or _label_word(word, env=True) for word in words
+    )
+
+
+def _instruction_vocabulary(word: str) -> bool:
+    """Whether a lower-case word is a function, instruction or instruction-context word."""
+    return word in _FUNCTION_WORDS or word in _INSTRUCTION_CONTEXT_WORDS or _instruction_word(word)
+
+
+def _label_strength(word: str, *, env: bool = False) -> int:
     """How a lower-case slug word marks a label, read with a plural or past ending taken off.
 
     2: label vocabulary on its own (``_LABEL_WORDS``); 1: vocabulary that is
-    also a common word (``_COMMON_LABEL_WORDS``); 0: neither.
+    also a common word (``_COMMON_LABEL_WORDS``, without
+    ``_ENV_PASSWORD_WORDS`` in an env or credential file, ``env``); 0: neither.
     """
     stems = {word, word[:-1] if word.endswith("s") else word}
     if word.endswith("ed"):
         stems.update((word[:-1], word[:-2]))  # 'changed' is change, 'tested' is test
     if not stems.isdisjoint(_LABEL_WORDS):
         return 2
-    return int(not stems.isdisjoint(_COMMON_LABEL_WORDS))
+    return int(not stems.isdisjoint(_ENV_COMMON_LABEL_WORDS if env else _COMMON_LABEL_WORDS))
 
 
-def _label_word(word: str) -> bool:
+def _label_word(word: str, *, env: bool = False) -> bool:
     """Whether a lower-case word is label vocabulary of either kind (``_label_strength``)."""
-    return _label_strength(word) > 0
+    return _label_strength(word, env=env) > 0
 
 
 _VALUE_QUOTES = "\"'"
@@ -617,6 +757,11 @@ _FALLBACK_TOKEN = re.compile(r"[A-Za-z0-9_./+=-]{16,256}")
 # A follower without one holds no fallback literal, and the operand reader,
 # Python at several microseconds a token, is not run (``_fallback_literal``).
 _FALLBACK_HINT = re.compile(r"[\"'`][A-Za-z0-9_./+=-]{16}")
+# The last words of a name whose value a person chose, so that any literal the
+# redactor withholds as its password is one (``_password_fallback``), and
+# what such a literal starts with: a quote and six characters.
+_PASSWORD_FALLBACK_NAMES = ("password", "passphrase", "secret")
+_PASSWORD_HINT = re.compile(r"[\"'`][^\"'`\r\n]{6}")
 
 
 class _OperandToken(NamedTuple):
@@ -731,17 +876,25 @@ def _fallback_literal(value: str, follower: str) -> str | None:
     value class (``_FALLBACK_TOKEN``) that looks like a key
     (``_high_entropy_credential``). A literal inside a call
     ('?? getSecret("<path>")', '?: error("X is not set")') is no fallback,
-    nor is an empty, word-like or interpolated one ('|| ""', '|| f"{x}"').
+    nor is an empty, word-like or interpolated one ('|| ""', '|| f"{x}"'),
+    except the default a call that reads a setting is given
+    (``_DEFAULT_READS``: 'GetValue<string>("X", "<key>")',
+    'configService.get("X", "<key>")', '.orElse("<key>")',
+    'requireNonNullElse(x, "<key>")'), which is judged as a fallback is.
+    Type arguments may follow a blank ('get <string>("X") ??').
     Whether the literal is a placeholder is the caller's test, on the literal
     itself (see ``reported_credential``). A follower without the start of
     such a literal anywhere (``_FALLBACK_HINT``) is not read at all.
     """
-    if _FALLBACK_HINT.search(follower) is None:
+    hint = _PASSWORD_HINT if _password_fallback_name(value) else _FALLBACK_HINT
+    if hint.search(follower) is None:
         return None
     tokens = _operand_tokens(follower)
     operand = fallback = False
     # Parentheses opened where an operand belongs and not closed yet.
     grouping = 0
+    # The name a call right after it calls: the reference's last word at first.
+    callee = _assigned_value(value).rsplit(".", 1)[-1]
     for item in tokens:
         kind, token = item.kind, item.token
         if item.gap and not operand:
@@ -756,16 +909,18 @@ def _fallback_literal(value: str, follower: str) -> str | None:
                 kind == "open" and not _closed_group(tokens, token.group())
             ):
                 return None
-            operand = False
+            operand, callee = False, token.group() if kind == "word" else ""
         elif kind == "close" and grouping and token.group() == ")":
             grouping -= 1
-        elif kind == "member" or (not item.spaced and kind in {"open", "postfix"}):
-            # A member, call, subscript or non-null assertion on the operand before.
-            if kind == "open" and not _closed_group(tokens, token.group()):
-                return None
-        elif token.group() == "<" and not item.spaced:
-            # A generic call's type arguments ('get<string>(...)', 'GetValue<string>(...)').
-            if not _type_arguments(tokens):
+        elif (
+            kind == "member"
+            or (not item.spaced and kind in {"open", "postfix"})
+            or (token.group() == "<" and callee)
+        ):
+            goes_on, literal, callee = _operand_suffix(value, item, tokens, callee)
+            if literal is not None:
+                return literal
+            if not goes_on:
                 return None
         else:
             operator = _operator(item)
@@ -775,15 +930,155 @@ def _fallback_literal(value: str, follower: str) -> str | None:
     return None
 
 
-def _fallback_credential(value: str, token: re.Match[str]) -> bool:
-    """Whether a string literal after a fallback operator is a key: one plain token that looks random.
+# Calls that read a setting and take its default as an argument, by their
+# callee's last word: the position of that argument ('GetValue<T>(key,
+# default)', 'configService.get(key, default)', 'os.getenv("X", default)',
+# 'System.getProperty("x", default)', 'dict.get("X", default)',
+# 'requireNonNullElse(x, default)', 'ENV.fetch("X", default)', and
+# Optional's '.orElse(default)').
+_DEFAULT_READS = {
+    "config": 1,
+    "env": 1,
+    "fetch": 1,
+    "get": 1,
+    "getenv": 1,
+    "getordefault": 1,
+    "getproperty": 1,
+    "getstring": 1,
+    "getvalue": 1,
+    "getvalueordefault": 1,
+    "requirenonnullelse": 1,
+    "orelse": 0,
+    "unwrap_or": 0,
+    "unwrapor": 0,
+}
+# Keyword arguments that name a read's default ('fallback="<key>"', C#'s 'defaultValue: "<key>"').
+_DEFAULT_KEYWORDS = frozenset({"default", "default_value", "defaultvalue", "defval", "fallback"})
 
-    A token made of words and numbers is a mode, a label, a path or a name
-    (``_worded_literal``), not a key, wherever it is a fallback.
+
+def _operand_suffix(
+    value: str, item: _OperandToken, tokens: Iterator[_OperandToken], callee: str
+) -> tuple[bool, str | None, str]:
+    """Read a member, call, subscript, type argument list or non-null mark on the operand before.
+
+    Returns whether the value goes on past it, the hard-coded key it gives a
+    setting's read as the default (``_DEFAULT_READS``), which the caller
+    reports as the fallback, and the name a call right after it would call.
+    A generic call's type arguments ('get<string>(...)', 'get <string>(...)')
+    keep the callee.
+    """
+    text = item.token.group()
+    if item.kind == "member":
+        return True, None, text.lstrip("?.")
+    if text == "<":
+        return _type_arguments(tokens), None, callee
+    if item.kind != "open":
+        return True, None, callee  # a non-null assertion
+    position = _DEFAULT_READS.get(callee.lower()) if text == "(" else None
+    if position is None:
+        return _closed_group(tokens, text), None, ""
+    closed, literal = _call_default(tokens, position)
+    if closed and literal is not None and _fallback_credential(value, literal):
+        return True, str(literal["body"]), ""
+    return closed, None, ""
+
+
+def _call_default(tokens: Iterator[_OperandToken], position: int) -> tuple[bool, re.Match[str] | None]:
+    """Read a call's arguments after its '(' up to the ')' that closes it: whether it closes, and its default.
+
+    The default is a string literal that is the whole argument at
+    ``position``, or the whole value of a keyword argument named for a
+    default (``_DEFAULT_KEYWORDS``).
+    """
+    expected = [")"]
+    argument: list[_OperandToken] = []
+    index = 0
+    found: re.Match[str] | None = None
+    for item in tokens:
+        text = item.token.group()
+        if item.kind == "close":
+            if text != expected.pop():
+                return False, None
+            if not expected:
+                return True, found or _default_argument(argument, positional=index == position)
+        elif item.kind == "open":
+            expected.append(_CLOSERS[text])
+        elif text == "," and len(expected) == 1:
+            found = found or _default_argument(argument, positional=index == position)
+            argument, index = [], index + 1
+            continue
+        argument.append(item)
+    return False, None
+
+
+def _default_argument(argument: list[_OperandToken], *, positional: bool) -> re.Match[str] | None:
+    """The string literal an argument gives as a read's default, or None (see ``_call_default``)."""
+    if positional and len(argument) == 1 and argument[0].kind == "string":
+        return argument[0].token
+    if len(argument) == 3 and argument[0].kind == "word" and argument[2].kind == "string":
+        keyword, joiner = argument[0].token.group().lower(), argument[1].token.group()
+        if keyword in _DEFAULT_KEYWORDS and joiner in {"=", ":"}:
+            return argument[2].token
+    return None
+
+
+def _fallback_credential(value: str, token: re.Match[str]) -> bool:
+    """Whether a string literal after a fallback operator is a credential.
+
+    Under a password's, passphrase's or secret's name, after an environment
+    read (``_environment_read``), it is the password whatever its shape
+    (``_password_fallback``). Under any other name or read it is a
+    key: one plain token that looks random. A token made of words and
+    numbers is a mode, a label, a path or a name (``_worded_literal``) there,
+    not a key.
     """
     body = token["body"]
-    plain = not _interpolated_literal(token) and _FALLBACK_TOKEN.fullmatch(body) is not None
+    if _interpolated_literal(token):
+        return False
+    if _password_fallback_name(value) and _environment_read(value):
+        return _password_fallback(value, body)
+    plain = _FALLBACK_TOKEN.fullmatch(body) is not None
     return plain and not _worded_literal(body) and _high_entropy_credential(value, literal=body)
+
+
+# The words of a reference that read the process environment ('process.env.X',
+# 'os.environ.get', 'os.getenv', 'ENV.fetch', "env('X')", 'GetEnvironmentVariable').
+_ENVIRONMENT_WORDS = frozenset({"env", "environ", "getenv", "getenvironmentvariable", "environment"})
+
+
+def _environment_read(value: str) -> bool:
+    """Whether the reference a match assigns reads the process environment (``_ENVIRONMENT_WORDS``).
+
+    A password's fallback or default after such a read is the password of a
+    deployment that sets none, whatever its shape. After any other read, a
+    message catalog's ('catalog.get("forgot_password", "Forgot password?")')
+    or ConfigParser's ('parser.get("db", "password")'), the literal is
+    judged as a key is: such defaults are labels and option names far more
+    often than passwords.
+    """
+    return not _ENVIRONMENT_WORDS.isdisjoint(re.findall(r"[a-z]+", _assigned_value(value).lower()))
+
+
+def _password_fallback_name(value: str) -> bool:
+    """Whether a generic match assigns a password, passphrase or secret (``_PASSWORD_FALLBACK_NAMES``)."""
+    return _assigned_name(value).lower().endswith(_PASSWORD_FALLBACK_NAMES)
+
+
+def _password_fallback(value: str, body: str) -> bool:
+    """Whether a fallback literal under a password's name is the password.
+
+    The redactor withholds any literal of a password's value that may be the
+    password (``password_literal``: not a variable's name, a path, a URL, a
+    placeholder or shorter than six characters), whatever its shape
+    ('Xk9#mQ2$vL!pR7@wZ4%', 'correct horse battery staple',
+    'snout-fiber-thump-bloom-gravel'), and the detector reports the same
+    literal, as it reports the password assigned directly. A phrase of words
+    that labels the value ('change-me-in-production') is no password.
+    """
+    if not password_literal(body):
+        return False
+    slug = "-".join(body.split())
+    return not (_WORD_SLUG.fullmatch(slug) and _label_slug(value, slug))
 
 
 # The separators of a fallback literal's segments, and a segment that reads
@@ -869,11 +1164,15 @@ def _label_slug(value: str, candidate: str, *, names: bool = True) -> bool:
     word lists leave out ('request-scoped-credential',
     'fc-shared-env-must-not-be-used', 'local-development-only',
     'lorem-ipsum-dolor-sit-amet'), two are vocabulary that is also a common
-    word ('unsafe-dev-only-default', 'defaults-were-replaced'), one such word
-    comes with a function word that joins a sentence
-    ('this-should-be-changed', 'change-me-please'), two function words make
-    it an instruction ('do-not-commit-this', 'must-be-set-at-runtime',
-    'not-configured-yet'), see ``_label_strength``, or a word has three
+    word ('unsafe-dev-only-default', 'defaults-were-replaced'), see
+    ``_label_strength``, or it is an instruction: one such word with a
+    function word that joins a sentence ('this-should-be-changed',
+    'change-me-please'), or two function words with an instruction word
+    ('do-not-commit-this', 'must-be-set-at-runtime', 'not-configured-yet'),
+    each of its words in the closed vocabulary of instructions
+    (``_instruction_vocabulary``). Function words alone never make a label,
+    nor does a sentence with any other word ('fly-me-to-the-moon',
+    'use-the-force-luke'). Otherwise a label has a word of three
     letters or more of the name it is assigned to
     ('OPENAI_API_KEY=sua_chave_openai'). A two-letter word of the name ('pg'
     in 'PG_PASSWORD', 'db', 'mq', 'ai') counts as a common word: with another
@@ -881,18 +1180,57 @@ def _label_slug(value: str, candidate: str, *, names: bool = True) -> bool:
     ('db-fiber-thump-bloom-gravel'). One common word alone does not make a
     label either: a passphrase may hold 'passed', 'keyed', 'default' or
     'lorem'. With ``names``, an upper-case slug joined by '_' only is
-    CONSTANT_CASE, an environment variable's name.
+    CONSTANT_CASE, an environment variable's name. A possessive and words
+    ('sua_chave_openai', 'ton-jardin-secret') is a label only when it is a
+    possessive template (``possessive_phrase``, the placeholder test's own),
+    whatever other label words it holds.
     """
     if names and candidate.isupper() and "-" not in candidate and "." not in candidate:
         return True
+    template = possessive_phrase(candidate)
+    if template is not None:
+        # A possessive and words: a template only when each word is template
+        # vocabulary, as the placeholder test reads it ('ton-jardin-secret' is none).
+        return template
     words = [word.lower() for word in _SLUG_SEPARATOR.split(candidate)]
     name = {word.lower() for word in _NAME_WORD.findall(_assigned_name(value)) if word.isalpha()}
+    # Without ``names`` the slug is a password in an env or credential file.
+    strengths = [1 if word in name else _label_strength(word, env=not names) for word in words]
+    function, instruction, closed = _sentence_words(words, strengths)
+    if not names:
+        instruction = instruction and _env_instruction(words, name)
+    sentence = any(word in _FUNCTION_WORDS and word not in _QUALIFIER_WORDS for word in words)
+    if not instruction and ((function and not closed) or (sentence and not names)):
+        # Function words that ask nothing: a passphrase whatever label words
+        # it holds, when a word is outside the vocabulary
+        # ('my-secret-garden-gate'), or a sentence in an env or credential
+        # file, where the value is the password in use ('my_secret_password',
+        # 'the_secret_admin_key').
+        return False
     if any(word in name and len(word) >= 3 for word in words):
         return True
-    strengths = [1 if word in name else _label_strength(word) for word in words]
     common = strengths.count(1)
+    if 2 in strengths or common >= 2:
+        return True
+    if not function or (function < 2 and not (common or instruction)):
+        return False
+    # A sentence: an instruction only with an instruction or label word, and
+    # only when each of its words is in the closed vocabulary.
+    return (instruction or common > 0) and closed
+
+
+def _sentence_words(words: list[str], strengths: list[int]) -> tuple[int, bool, bool]:
+    """How many function words a slug has, whether it has an instruction word, and whether it is closed.
+
+    Closed: each word is label vocabulary (a nonzero strength), a function,
+    instruction or instruction-context word (``_instruction_vocabulary``).
+    """
     function = sum(word in _FUNCTION_WORDS for word in words)
-    return 2 in strengths or common >= 2 or (common == 1 and function > 0) or function >= 2
+    instruction = any(_instruction_word(word) for word in words)
+    closed = all(
+        strength or _instruction_vocabulary(word) for word, strength in zip(words, strengths, strict=True)
+    )
+    return function, instruction, closed
 
 
 def _name_shaped(candidate: str) -> bool:
@@ -908,7 +1246,7 @@ def _name_shaped(candidate: str) -> bool:
 
 
 def _program_name(candidate: str, body: str, *, passphrase: bool) -> bool:
-    """Whether a value is built like another variable's name rather than a token (#258's shape rules).
+    """Whether a value is built like another variable's name rather than a token, by #258's shape rules.
 
     A name-shaped value with no digit (``_name_shaped``) that does not mix
     cases evenly is one, unless it is a passphrase of words; a value with
@@ -1014,20 +1352,36 @@ def _label_phrase(value: str, candidate: str) -> bool:
     A person's password in an env file can be built like a name
     (``TrustNoOneEverAgain``, ``PostgresProd2024Secure``,
     ``snout_passed_thump_bloom``), so the name rules do not drop it there. A
-    value is a label only when every word is label vocabulary of either
-    strength, a function word or a word of the name it is assigned to, and
-    every number is the name's own (``KeycloakAdminPassword`` under
-    ``KEYCLOAK_ADMIN_PASSWORD``, ``svc1_local_dev_password`` under
-    ``SVC1_DB_PASSWORD``, ``change_me_to_a_strong_password``). Any other
-    word or number (a year, a generated word, a letter) makes it a password;
-    a word slug is then read as ``_label_slug`` reads it anywhere.
+    value is a label when every word is label vocabulary of either strength,
+    a word that qualifies a label (``_QUALIFIER_WORDS``) or a word of the
+    name it is assigned to, and every number is the name's own
+    (``KeycloakAdminPassword`` under ``KEYCLOAK_ADMIN_PASSWORD``,
+    ``svc1_local_dev_password`` under ``SVC1_DB_PASSWORD``,
+    ``LocalDevelopmentOnly``), or when it is an instruction: a function
+    word and an instruction word, every other word in that vocabulary or the
+    closed vocabulary of instructions (``change_me_to_a_strong_password``,
+    ``DoNotCommitThis``). The account and quality words
+    ``_ENV_PASSWORD_WORDS`` label nothing here, and a sentence without an
+    instruction word makes no label (``MyStrongPassword``,
+    ``my_secret_password``, ``InternalUserPassword`` are passwords). Any
+    other word or number (a year, a generated word, a letter) makes it a
+    password; a word slug is then read as ``_label_slug`` reads it in an env
+    file.
     """
     if not _name_shaped(candidate):
         return False
     name = {word.lower() for word in _NAME_WORD.findall(_assigned_name(value))}
+    words = [word.lower() for word in _NAME_WORD.findall(candidate)]
+    if all(
+        word in name or (word.isalpha() and (_label_word(word, env=True) or word in _QUALIFIER_WORDS))
+        for word in words
+    ):
+        return True
+    if not any(word in _FUNCTION_WORDS for word in words) or not _env_instruction(words, name):
+        return False
     return all(
-        word in name or (word.isalpha() and (_label_word(word) or word in _FUNCTION_WORDS))
-        for word in (word.lower() for word in _NAME_WORD.findall(candidate))
+        word in name or (word.isalpha() and (_label_word(word, env=True) or _instruction_vocabulary(word)))
+        for word in words
     )
 
 
@@ -1097,7 +1451,10 @@ class _CredentialJudge:
     credential and counts again toward nothing. It is recognized by a digest
     keyed with a secret of this judge alone (``_seen``), so no credential is
     kept past its match, and the digests cannot be compared with another
-    text's.
+    text's. A repeat is still evidence of where the credential is written:
+    up to :data:`MAX_SECRETS_PER_SIGNAL` locations of each credential, its
+    first included, are kept in ``repeats`` for the caller, as main
+    8c72467 listed them, and none counts toward the quota.
     """
 
     def __init__(
@@ -1112,36 +1469,54 @@ class _CredentialJudge:
         self.accepted: dict[str, list[tuple[int, int]]] = {}
         self.samples: list[tuple[Signature, Signal, Any]] = []
         self._kept_samples: Counter[str] = Counter()
+        self.repeats: list[tuple[Signature, Signal, Any]] = []
         self._key = os.urandom(32)
         self._seen: set[bytes] = set()
+        self._locations: Counter[bytes] = Counter()
+        self._uncounted: Counter[str] = Counter()
 
-    def _repeated(self, signature_id: str, credential: str) -> bool:
-        """Whether ``signature_id`` already counted ``credential``; records it when not."""
+    def _repeated(self, signature_id: str, credential: str) -> bool | None:
+        """Whether ``signature_id`` already counted ``credential``; records it when not.
+
+        None when it did and the credential has as many locations kept as it may.
+        """
         keyed = hashlib.blake2b(f"{signature_id}\0{credential}".encode(), key=self._key, digest_size=16)
         digest = keyed.digest()
-        if digest in self._seen:
-            return True
-        self._seen.add(digest)
-        return False
+        self._locations[digest] += 1
+        if digest not in self._seen:
+            self._seen.add(digest)
+            return False
+        return True if self._locations[digest] <= MAX_SECRETS_PER_SIGNAL else None
 
     def _covered(self, signature_id: str, start: int, end: int) -> bool:
         spans = self.accepted.get(signature_id, ())
         return any(start < other_end and other_start < end for other_start, other_end in spans)
 
+    def _credential(self, signature: Signature, match: Any) -> tuple[str | None, bool]:
+        """The credential a match stands for, or None, and whether it may count toward the quota.
+
+        A key pasted as a variable's name counts only when it looks like an
+        opaque key, by ``opaque_key``, the redactor's test: a long name without
+        separators ('SVC1OPENAIAPIKEYPROD') is reported but counts toward
+        nothing, so six of them leave a scan complete.
+        """
+        start, end = match.span()
+        value = match.group(0)
+        if signature.id == GENERIC_CREDENTIAL:
+            follower = self.text[end : end + _FOLLOWER_CHARS]
+            credential = _generic_literal(value, code=self.code, follower=follower, env_file=self.env_file)
+            pasted = credential is not None and credential == _pasted_key_read(value, follower)
+            return credential, not pasted or opaque_key(str(credential))
+        if signature.id == UNATTRIBUTED_KEY and len(value) - len("sk-") < _SHORT_KEY_BODY:
+            if self._covered(GENERIC_CREDENTIAL, start, end) or not _random_key_body(value[len("sk-") :]):
+                return None, True
+        return value, True
+
     def __call__(self, signature: Signature, signal: Signal, match: Any) -> bool:
         start, end = match.span()
         if self._covered(signature.id, start, end):
             return False
-        credential: str | None = match.group(0)
-        if signature.id == GENERIC_CREDENTIAL:
-            follower = self.text[end : end + _FOLLOWER_CHARS]
-            credential = _generic_literal(
-                match.group(0), code=self.code, follower=follower, env_file=self.env_file
-            )
-        elif signature.id == UNATTRIBUTED_KEY and len(match.group(0)) - len("sk-") < _SHORT_KEY_BODY:
-            body = match.group(0)[len("sk-") :]
-            if self._covered(GENERIC_CREDENTIAL, start, end) or not _random_key_body(body):
-                credential = None
+        credential, counted = self._credential(signature, match)
         if credential is None:
             return False
         if self.placeholder is not None and self.placeholder(credential):
@@ -1150,14 +1525,24 @@ class _CredentialJudge:
                 self.accepted.setdefault(signature.id, []).append((start, end))
                 self.samples.append((signature, signal, match))
             return False
-        if self._repeated(signature.id, credential):
+        repeated = self._repeated(signature.id, credential)
+        if repeated is None:
             return False
+        if not (repeated or counted):
+            # Reported, as a location the quota does not count, a bounded number of them.
+            if self._uncounted[signature.id] >= MAX_SECRETS_PER_SIGNAL:
+                return False
+            self._uncounted[signature.id] += 1
+            repeated = True
         self.accepted.setdefault(signature.id, []).append((start, end))
+        if repeated:
+            self.repeats.append((signature, signal, match))  # a location, not a counted credential
+            return False
         return True
 
 
 def _sample_matches(text: str, samples: Sequence[tuple[Signature, Signal, Any]]) -> list[Match]:
-    """The documentation samples a ``_CredentialJudge`` kept, as matches of ``text``."""
+    """The documentation samples or repeated locations a ``_CredentialJudge`` kept, as matches of ``text``."""
     if not samples:
         return []
     newlines = [newline.start() for newline in re.finditer("\n", text)]
@@ -2295,7 +2680,11 @@ class SignatureIndex:
         test, which judges the credential a match stands for
         (``reported_credential``): a few samples per signature are returned
         besides the quota, for example evidence, and a file of them is never
-        reported as holding more credentials than the quota.
+        reported as holding more credentials than the quota. A credential a
+        signature already counted counts again toward nothing either, but up
+        to :data:`MAX_SECRETS_PER_SIGNAL` of its locations are returned, so a
+        finding lists where a repeated credential is written while its count
+        (the distinct credentials) and the quota see it once.
 
         The quota bounds the evidence one finding can carry. It also hides
         every further credential of a format once that many have matched, so
@@ -2314,7 +2703,7 @@ class SignatureIndex:
             limited=limited,
             accept=judge,
         )
-        matches.extend(_sample_matches(text, judge.samples))
+        matches.extend(_sample_matches(text, judge.samples + judge.repeats))
         ends = [m.extra.get("end") for m in matches]
         followers = [text[end : end + _FOLLOWER_CHARS] if end is not None else "" for end in ends]
         credentials = _kept_credentials(

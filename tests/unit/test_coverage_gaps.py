@@ -167,6 +167,50 @@ class TestBudget:
         assert summary["details_truncated"] == 25
         assert summary["gaps"] == MAX_PUBLISHED_GAPS + 25
 
+    def test_a_blinding_gap_leads_its_parts_details_past_the_published_limit(self) -> None:
+        # A blinding gap recorded after 60 tolerated ones was cut from the 50
+        # published details, which then listed only gaps that condemned nothing.
+        ledger = CoverageLedger()
+        ledger.add_examined(10_000)
+        for i in range(60):
+            ledger.record(CoverageGap(detail="link", path=f"tests/certs/c{i}.pem"))
+        ledger.record(CoverageGap(detail="configuration link", path="zz/.mcp.json", kind=BLINDING))
+        incomplete, summary = ledger.evaluate(CoveragePolicy())
+        assert incomplete and validate_coverage_summary(summary) is summary
+        paths = [gap["path"] for gap in summary["details"]]
+        assert paths[:3] == ["zz/.mcp.json", "tests/certs/c0.pem", "tests/certs/c1.pem"]
+        assert len(paths) == MAX_PUBLISHED_GAPS and summary["details_truncated"] == 11
+
+    def test_each_published_gap_names_the_root_or_repository_it_lies_in(self) -> None:
+        # Two repositories with the same dangling link: without the part, the
+        # gap the verdict line names could not be told from the tolerated one.
+        ledger = CoverageLedger()
+        for label, examined in (("github:acme/big", 1_000), ("github:acme/tiny", 6)):
+            ledger.begin_part(label)
+            ledger.add_examined(examined)
+            ledger.record(CoverageGap(detail="link", path="ca.pem"))
+        incomplete, summary = ledger.evaluate(CoveragePolicy())
+        assert incomplete and validate_coverage_summary(summary) is summary
+        assert [(gap["part"], gap["path"]) for gap in summary["details"]] == [
+            ("github:acme/tiny", "ca.pem"),
+            ("github:acme/big", "ca.pem"),
+        ]
+        # An unlabelled part publishes none, and older reports without the key load.
+        unlabelled = CoverageLedger()
+        unlabelled.record(CoverageGap(detail="link", path="ca.pem"))
+        _, single = unlabelled.evaluate(CoveragePolicy())
+        assert "part" not in single["details"][0] and validate_coverage_summary(single) is single
+
+    @pytest.mark.parametrize("part", [7, "", None, ["github:acme/a"]])
+    def test_the_validator_refuses_a_part_that_is_no_name(self, part) -> None:
+        ledger = CoverageLedger()
+        ledger.begin_part("root")
+        ledger.record(CoverageGap(detail="link", path="ca.pem"))
+        _, summary = ledger.evaluate(CoveragePolicy())
+        summary["details"][0]["part"] = part
+        with pytest.raises(ValueError):
+            validate_coverage_summary(summary)
+
     def test_examined_sums_across_roots_and_never_shrinks(self) -> None:
         ledger = CoverageLedger()
         ledger.add_examined(40)
@@ -216,7 +260,7 @@ class TestBudget:
         # A blinded part within its budget left the scan incomplete too.
         blinded = self._part(3_000, 1, "blinded", blinding=True)
         combined = combine_coverage_summaries([big, blinded])
-        assert [gap["path"] for gap in combined["details"]][:2] == ["blinded/l0.py", "blinded/stop"]
+        assert [gap["path"] for gap in combined["details"]][:2] == ["blinded/stop", "blinded/l0.py"]
 
     def test_a_combined_summary_says_how_its_verdict_divides(self) -> None:
         # 58 weighted of 61.36 allowed beside within_budget false reads as a
@@ -435,8 +479,9 @@ class TestEndToEnd:
         """As undecodable bytes there are: test code establishes no agent while include_tests is off.
 
         settings.json is a shared client name, an MCP configuration only by its
-        content, so a fixture of that name is discounted test code. A dedicated
-        MCP name is not: tests/.mcp.json is read at full weight there too.
+        content, so a fixture of that name is discounted test code, and with
+        include_tests incidental content of the product: one entry either way.
+        A dedicated MCP name is not: tests/.mcp.json is read at full weight there too.
         """
         self._tree(tmp_path, 100)
         (tmp_path / "tests" / "fixtures").mkdir(parents=True)
@@ -447,8 +492,9 @@ class TestEndToEnd:
         assert stats.incomplete is False
         assert stats.coverage is not None and stats.coverage["blinding_gaps"] == 0
         stats = self._run(tmp_path, include_tests=True)
-        assert stats.incomplete is True
-        assert stats.coverage is not None and stats.coverage["blinding_gaps"] == 1
+        assert stats.incomplete is False
+        assert stats.coverage is not None and stats.coverage["blinding_gaps"] == 0
+        assert [gap["relevance"] for gap in stats.coverage["details"]] == ["high"]
 
     def test_oversize_mcp_configuration_under_a_test_path_is_never_budgeted(self, tmp_path) -> None:
         self._tree(tmp_path, 100)

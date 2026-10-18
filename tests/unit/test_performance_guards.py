@@ -637,6 +637,13 @@ def _reference_regex_matches(
             if hits >= max_per_signal:
                 break
     if signal_type == "secret":
+        # The judge keeps a repeated credential's further locations, which
+        # match_secrets returns after the counted matches.
+        for sig, s, m in judge.repeats:
+            out.append(
+                (sig.id, sig.signals.index(s), m.group(0), s.weight, bisect_left(newlines, m.start()) + 1)
+            )
+            ends.append(m.end())
         # match_secrets applies the same deterministic cross-signal filter after the regex pass.
         keep = keep_secret_matches(
             [(sig_id, value, line) for sig_id, _, value, _, line in out],

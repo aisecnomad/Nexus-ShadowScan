@@ -304,7 +304,6 @@ def test_a_literal_that_is_no_direct_fallback_operand_is_not_reported(index: Sig
         # header name, a URL path or a model id, not a key.
         'const openaiApiKey = process.env.OPENAI_API_KEY || "anonymous-public-access";',
         'const openaiApiKey = process.env.OPENAI_API_KEY ?? "disabled-in-this-build";',
-        'const azureClientSecret = process.env.AZURE_CLIENT_SECRET || "managed-identity-fallback";',
         'this.serviceApiKey = config.serviceApiKey ?? "x-api-key-header-name";',
         'const authApiKey = process.env.API_BASE + "/oauth2/v2.0/authorize";',
         'self.openai_api_key = self.openai_api_key or "gpt-4o-mini-2024-07-18"',
@@ -312,6 +311,72 @@ def test_a_literal_that_is_no_direct_fallback_operand_is_not_reported(index: Sig
 )
 def test_a_fallback_of_words_and_numbers_is_not_a_credential(index: SignatureIndex, line: str):
     assert _generic(index, line, code=True) == []
+
+
+# Under a password's, passphrase's or secret's name a fallback was reported
+# only when it looked like a token, so a punctuated password, a passphrase or
+# a CamelCase password as the fallback was missed, while the same value
+# assigned directly, and main 8c72467, reported it. The redactor withholds any
+# such literal as the password (password_literal); the detector reports it.
+PASSWORD_FALLBACKS = [
+    "Xk9#mQ2$" + "vL!pR7@wZ4%",
+    "S3cr3t!" + "P@ssw0rd",
+    "Kj8sLm2Q" + "p9Xz&mypass",
+    "snout-fiber-thump-bloom-gravel",
+    "correct horse battery staple",
+    "TrustNoOne" + "EverAgain",
+    "snout_fiber_thump_bloom",
+    "PostgresProd" + "2024Secure",
+]
+
+
+@pytest.mark.parametrize("password", PASSWORD_FALLBACKS)
+@pytest.mark.parametrize(
+    "line",
+    [
+        'const dbPassword = process.env.DB_PASSWORD || "<P>";',
+        "export const dbPassword = process.env.DB_PASSWORD ?? '<P>';",
+        "export const cfg = { dbPassword: process.env.DB_PASSWORD || '<P>' };",
+        'var dbPassword = Environment.GetEnvironmentVariable("DB_PASSWORD") ?? "<P>";',
+        'const azureClientSecret = process.env.AZURE_CLIENT_SECRET || "<P>";',
+    ],
+)
+def test_a_password_fallback_of_any_shape_is_reported(index: SignatureIndex, line: str, password: str):
+    [match] = [
+        m
+        for m in index.match_secrets(line.replace("<P>", password), code=True, placeholder=placeholder_reason)
+        if m.signature_id == GENERIC
+    ]
+    assert match.extra["credential"] == password
+
+
+@pytest.mark.parametrize(
+    "fallback",
+    [
+        # Not the password: a variable's name, a path, a URL, a placeholder, a
+        # short argument and an instruction label.
+        "PGPASSWORD",
+        "/run/secrets/db_password.txt",
+        "https://vault.internal/db",
+        "changeme",
+        "utf8",
+        "change-me-in-production",
+    ],
+)
+def test_other_password_fallbacks_are_not_reported(index: SignatureIndex, fallback: str):
+    assert _generic(index, f'const dbPassword = process.env.DB_PASSWORD || "{fallback}";', code=True) == []
+
+
+def test_a_scan_reports_password_fallbacks_and_withholds_them(tmp_path: Path, run_connector):
+    files = {
+        "src/db.js": f'const dbPassword = process.env.DB_PASSWORD || "{PASSWORD_FALLBACKS[0]}";\n',
+        "src/A.cs": f'var dbPassword = Environment.GetEnvironmentVariable("DB_PASSWORD") ?? "{PASSWORD_FALLBACKS[4]}";\n',
+    }
+    findings = _scan(tmp_path, run_connector, files)
+    secrets = [f for f in findings if f.kind.value == "secret"]
+    assert sorted(f.metadata["path"] for f in secrets) == ["src/A.cs", "src/db.js"]
+    dumped = json.dumps([f.to_dict() for f in findings], default=str)
+    assert PASSWORD_FALLBACKS[0] not in dumped and PASSWORD_FALLBACKS[4] not in dumped
 
 
 # A base64 key with '/' in it and a UUID, derived so no key sits in the source.
@@ -1040,6 +1105,58 @@ def test_a_scan_reports_a_fallback_after_typed_reads(tmp_path: Path, run_connect
     assert TAIL_KEY not in json.dumps([f.to_dict() for f in secrets], default=str)
 
 
+# A hard-coded key given as the default argument of a settings read was read
+# as a literal passed to a call, which is no fallback, so these documented
+# default-value APIs lost the key main 8c72467 reported (main read the
+# reference itself as the credential).
+DEFAULT_ARGUMENT_READS = [
+    'var openaiApiKey = configuration.GetValue<string>("OpenAI:ApiKey", "<K>");',
+    'var openaiApiKey = configuration.GetValue("OpenAI:ApiKey", "<K>");',
+    "const openaiApiKey = this.configService.get('OPENAI_API_KEY', '<K>');",
+    "const openaiApiKey = this.configService.get<string>('OPENAI_API_KEY', '<K>');",
+    'String openaiApiKey = Optional.ofNullable(System.getenv("OPENAI_API_KEY")).orElse("<K>");',
+    'String openaiApiKey = Objects.requireNonNullElse(System.getenv("OPENAI_API_KEY"), "<K>");',
+    'String openaiApiKey = System.getProperty("openai.api.key", "<K>");',
+    'OPENAI_API_KEY = settings_dict.get("OPENAI_API_KEY", "<K>")',
+    'OPENAI_API_KEY = config_values.get("OPENAI_API_KEY", default="<K>")',
+    'var openaiApiKey = configuration.GetValue<string>("OpenAI:ApiKey", defaultValue: "<K>");',
+    # A blank before the type arguments.
+    "const openaiApiKey = this.configService.get <string>('OPENAI_API_KEY') ?? '<K>';",
+]
+
+
+@pytest.mark.parametrize("line", DEFAULT_ARGUMENT_READS)
+def test_a_key_given_as_a_settings_read_default_is_reported(index: SignatureIndex, line: str):
+    assert _generic(index, line.replace("<K>", TAIL_KEY), code=True) != []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # A default that is no key, an argument in another place, and a call
+        # that reads no setting.
+        "const openaiApiKey = this.configService.get('OPENAI_API_KEY', 'not-configured-yet');",
+        "const openaiApiKey = this.configService.get('OPENAI_API_KEY', '');",
+        'var openaiApiKey = configuration.GetValue<string>("OpenAI:ApiKey", fallbackName: "<K>");',
+        'const openaiApiKey = this.secretsClient.resolve("OPENAI_API_KEY", "<K>");',
+    ],
+)
+def test_other_arguments_of_a_read_are_no_default_key(index: SignatureIndex, line: str):
+    assert _generic(index, line.replace("<K>", TAIL_KEY), code=True) == []
+
+
+def test_a_scan_reports_settings_read_defaults_and_withholds_them(tmp_path: Path, run_connector):
+    files = {
+        "src/A.cs": DEFAULT_ARGUMENT_READS[0].replace("<K>", TAIL_KEY) + "\n",
+        "src/a.ts": DEFAULT_ARGUMENT_READS[2].replace("<K>", TAIL_KEY) + "\n",
+        "src/A.java": DEFAULT_ARGUMENT_READS[4].replace("<K>", TAIL_KEY) + "\n",
+    }
+    findings = _scan(tmp_path, run_connector, files)
+    secrets = [f for f in findings if f.kind.value == "secret"]
+    assert sorted(f.metadata["path"] for f in secrets) == ["src/A.cs", "src/A.java", "src/a.ts"]
+    assert TAIL_KEY not in json.dumps([f.to_dict() for f in findings], default=str)
+
+
 # A key pasted in place of an environment variable's name reads no variable:
 # the name is the credential, written into the code. Evidence withheld it,
 # but the detector read the chain as a reference and reported nothing, where
@@ -1147,7 +1264,12 @@ def test_a_two_letter_word_of_the_name_with_an_account_word_is_a_label(
 ):
     assert _generic(index, f"{name}={label}", code=False) == []
     assert _generic(index, f"{name.lower()} = '{label}'", code=True) == []
-    assert _generic(index, f"{name}={label}", code=False, env_file=True) == []
+    if "user" in label or "admin" in label:
+        # In an env or credential file a password names no account: there
+        # 'user' and 'admin' are a person's words, as main 8c72467 read them.
+        assert _generic(index, f"{name}={label}", code=False, env_file=True) != []
+    else:
+        assert _generic(index, f"{name}={label}", code=False, env_file=True) == []
 
 
 @pytest.mark.parametrize(
@@ -1185,6 +1307,57 @@ def test_an_env_example_of_instruction_labels_stays_complete(tmp_path: Path, run
     assert [f.metadata["path"] for f in findings if f.kind.value == "secret"] == []
 
 
+# Two function words made a label, and the function words are most of a
+# sentence a person picks as a passphrase, so these were dropped where main
+# 8c72467 reported them. A sentence is an instruction label only with an
+# instruction or label word and every word in the closed vocabulary.
+SENTENCE_PASSPHRASES = [
+    "may-the-force-be-with-you",
+    "my-dog-is-named-rex",
+    "now-is-the-winter-of-discontent",
+    "bring-me-the-horizon",
+    "meet-me-at-midnight",
+    "dance-with-me-tonight",
+    "winter-is-coming-to-town",
+    "hello-from-the-other-side",
+    "walk-on-the-wild-side",
+    "fly-me-to-the-moon",
+    "stairway-to-heaven-now",
+    "in-the-air-tonight",
+    "gravel-by-the-sea",
+    "snout-at-the-bloom",
+    "these-only-thump-bloom",
+    # An instruction word with words outside the vocabulary is a sentence too.
+    "use-the-force-luke",
+    "set-me-free-at-dawn",
+]
+
+
+@pytest.mark.parametrize("passphrase", SENTENCE_PASSPHRASES)
+def test_a_sentence_passphrase_is_a_credential(index: SignatureIndex, passphrase: str):
+    assert _generic(index, f"DB_PASSWORD={passphrase}", code=False, env_file=True) != []
+    assert _generic(index, f"POSTGRES_PASSWORD: {passphrase}", code=False) != []
+    assert _generic(index, f'DB_PASSWORD = "{passphrase.replace("-", "_")}"', code=True) != []
+
+
+def test_function_words_alone_make_no_label(index: SignatureIndex):
+    # Only negations, modals and pronouns, with no instruction or label word.
+    assert _generic(index, "DB_PASSWORD=dont-do-it-now-or-never", code=False) != []
+
+
+def test_a_scan_reports_sentence_passphrases(tmp_path: Path, run_connector):
+    files = {
+        ".env": "DB_PASSWORD=my-dog-is-named-rex\n",
+        "docker-compose.yml": "services:\n  db:\n    environment:\n      POSTGRES_PASSWORD: fly-me-to-the-moon\n",
+        "app/settings.py": 'REDIS_PASSWORD = "may_the_force_be_with_you"\n',
+    }
+    findings = _scan(tmp_path, run_connector, files)
+    secrets = sorted(f.metadata["path"] for f in findings if f.kind.value == "secret")
+    assert secrets == [".env", "app/settings.py", "docker-compose.yml"]
+    dumped = json.dumps([f.to_dict() for f in findings], default=str)
+    assert "named-rex" not in dumped and "to-the-moon" not in dumped and "be_with_you" not in dumped
+
+
 # In an env or credential file a PASSWORD value was dropped as a label when
 # one of its words was any label word or a word of the name, so ordinary
 # passwords with a year and generated passphrases with one common word went
@@ -1210,6 +1383,70 @@ def test_an_env_example_of_instruction_labels_stays_complete(tmp_path: Path, run
 )
 def test_a_password_with_any_word_of_its_own_is_reported_in_an_env_file(index: SignatureIndex, line: str):
     assert _generic(index, line, code=False, env_file=True) != []
+
+
+# The enlarged label vocabulary (the account and quality words admin, user,
+# strong, internal and commit, and function words such as my, the, at) made
+# pure label phrases of a person's passwords in env files, where main
+# 8c72467 reported them. There those words label nothing, and a sentence is
+# a label only with an instruction word.
+ENV_PASSWORDS_OF_COMMON_WORDS = [
+    "MyStrongPassword",
+    "InternalUserPassword",
+    "TheAdminUserPassword",
+    "StrongInternalAdminUser",
+    "CommitStrongAdminUser",
+    "admin_user_strong_internal",
+    "user_admin_internal",
+    "strong_admin_at_home",
+    "my_user_is_admin",
+    "yet_another_admin_user",
+    "super_strong_user_pass",
+    "the_secret_admin_key",
+    "my_secret_password",
+    "AdminPasswordStrong",
+]
+
+
+@pytest.mark.parametrize("password", ENV_PASSWORDS_OF_COMMON_WORDS)
+def test_a_password_of_account_and_sentence_words_is_reported_in_an_env_file(
+    index: SignatureIndex, password: str
+):
+    assert _generic(index, f"DB_PASSWORD={password}", code=False, env_file=True) != []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # Labels by their own name, the label vocabulary and its qualifiers,
+        # and instructions, stay labels in an env file.
+        "KEYCLOAK_ADMIN_PASSWORD=KeycloakAdminPassword",
+        "SVC1_DB_PASSWORD=svc1_local_dev_password",
+        "DB_PASSWORD=LocalDevelopmentOnly",
+        "DB_PASSWORD=local-development-only",
+        "DB_PASSWORD=insecure-default-for-dev",
+        "POSTGRES_PASSWORD=change_me_to_a_strong_password",
+        "DB_PASSWORD=DoNotCommitThisOne",
+        "DB_PASSWORD=do-not-commit-this",
+    ],
+)
+def test_labels_and_instructions_stay_labels_in_an_env_file(index: SignatureIndex, line: str):
+    assert _generic(index, line, code=False, env_file=True) == []
+
+
+def test_a_sentence_of_label_words_and_other_words_is_a_credential_anywhere(index: SignatureIndex):
+    # A function word that asks nothing, with a word outside the vocabulary.
+    assert _generic(index, 'DB_PASSWORD = "my-secret-garden-gate"', code=True) != []
+    assert _generic(index, "DB_PASSWORD: the-password-garden-gate", code=False) != []
+
+
+def test_a_scan_reports_env_passwords_of_common_words(tmp_path: Path, run_connector):
+    env = "".join(f"SVC{n}_PASSWORD={value}\n" for n, value in enumerate(ENV_PASSWORDS_OF_COMMON_WORDS[:5]))
+    findings = _scan(tmp_path, run_connector, {".env": env})
+    [secret] = [f for f in findings if f.kind.value == "secret"]
+    assert sorted(e.location for e in secret.evidence) == [f".env:{n}" for n in range(1, 6)]
+    dumped = json.dumps(secret.to_dict(), default=str)
+    assert not any(value in dumped for value in ENV_PASSWORDS_OF_COMMON_WORDS[:5])
 
 
 # python-dotenv and Node's dotenv read blanks around '=': the name kept them,
@@ -1307,6 +1544,127 @@ def test_a_password_after_a_cut_read_is_withheld_whole(line: str, password: str)
     ],
 )
 def test_other_literals_beside_a_password_value_keep_their_text(line: str, kept: str):
+    assert kept in sanitize_text(line)
+
+
+# The password rule read only the first credential name on a line, so a
+# password's entry after an 'apiKey:', 'token:' or 'secret:' entry, or after a
+# credential-named callee, kept only the opaque-token rule; and a keyword
+# argument of the read ('fallback=', 'default_value=', '{ fallback: ... }')
+# was taken for the line's next entry, which ended the value before the
+# password. Main 8c72467 showed all of them too.
+@pytest.mark.parametrize("password", TAIL_PASSWORDS)
+@pytest.mark.parametrize(
+    "line",
+    [
+        "const cfg = { apiKey: process.env.API_KEY, password: process.env.DB_PASSWORD?.trim() || '<P>' };",
+        "const cfg = { token: process.env.T, dbPassword: process.env.DB_PASSWORD?.trim() || '<P>' };",
+        "const cfg = { secret: env.SECRET, password: process.env.DB_PASSWORD?.trim() || '<P>' };",
+        "connect({ apiKey: k, password: process.env.DB_PASSWORD?.trim() || '<P>' })",
+        "client.setApiKey(k); const pw = { password: process.env.DB_PASSWORD?.trim() || '<P>' }",
+        "'PASSWORD': cfg.get('db', 'password', fallback='<P>'),",
+        "password: env('DB_PASSWORD', default_value='<P>')",
+        "'PASSWORD': get_secret('db', fallback='<P>')",
+        "{ anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? 'x', "
+        "password: cfg.get('db','password', { fallback: '<P>' }) }",
+        "CONF = {'OPENAI_API_KEY': '<K>', 'PASSWORD': cfg.get('db', 'password', fallback='<P>')}",
+    ],
+)
+def test_every_password_entry_on_a_line_is_withheld_whole(line: str, password: str):
+    text = line.replace("<K>", TAIL_KEY).replace("<P>", password)
+    safe = sanitize_text(text)
+    assert password not in safe and TAIL_KEY not in safe and REDACTED in safe
+    # Read again (as a report excerpt is), the line shows nothing more. The
+    # Python pass reads 'password: "[REDACTED]", default_value=...' as an
+    # annotated assignment the second time, so the text may still change.
+    again = sanitize_text(safe)
+    assert password not in again and TAIL_KEY not in again
+
+
+# A password whose start reads as an opaque token: the token's span and the
+# whole literal's span overlap, and only the shorter one was withheld, so the
+# tail after the token stayed visible ('"[REDACTED]&mypass"').
+OPAQUE_START_PASSWORDS = [
+    TAIL_KEY[:12] + "&mypass",
+    "Tr0ub4dor" + "&3xyz",
+    TAIL_KEY[4:14] + "#!" + "tail-end",
+]
+
+
+@pytest.mark.parametrize("password", OPAQUE_START_PASSWORDS)
+@pytest.mark.parametrize(
+    "line",
+    [
+        'dbPassword: process.env.DB_PASSWORD?.trim() || "<P>",',
+        "db_password: os.environ[ 'DB_PASSWORD' ] if PROD else '<P>'",
+        'db_password: os.getenv("DB_PASS", "<P>")',
+        "password: Joi.string().default('<P>')",
+        "password: z.string().default('<P>'),",
+        'export const c2 = { openaiApiKey: "<K>", dbPassword: process.env.P?.trim() || "<P>" };',
+    ],
+)
+def test_a_password_that_starts_like_a_token_is_withheld_whole(line: str, password: str):
+    text = line.replace("<K>", TAIL_KEY).replace("<P>", password)
+    safe = sanitize_text(text)
+    tail = password[password.index(next(c for c in password if not c.isalnum())) :]
+    assert password not in safe and tail not in safe and REDACTED in safe
+
+
+def test_overlapping_spans_are_withheld_to_their_union():
+    from shadowscan.utils.redaction_rules import _withhold_spans
+
+    assert _withhold_spans("ab-cdef-gh", [(3, 5), (3, 7)]) == "ab-" + REDACTED + "-gh"
+    assert _withhold_spans("ab-cdef-gh", [(0, 4), (3, 7), (8, 10)]) == REDACTED + "-" + REDACTED
+    # Spans that only touch keep a marker each, as before.
+    assert _withhold_spans("abcd", [(0, 2), (2, 4)]) == REDACTED + REDACTED
+
+
+# A secret's fallback is reported whatever its shape, as a password's is, but
+# after a cut read in 'name: value' form only a token that looks opaque was
+# withheld under a secret's name: the reported credential showed in its own
+# finding's excerpt.
+@pytest.mark.parametrize("password", TAIL_PASSWORDS)
+@pytest.mark.parametrize(
+    "line",
+    [
+        "export const cfg = { azureClientSecret: process.env.AZURE_CLIENT_SECRET?.trim() || '<P>' };",
+        "clientSecret: process.env.CLIENT_SECRET?.trim() || '<P>',",
+        "webhook_secret: os.environ[ 'WEBHOOK_SECRET' ] if PROD else '<P>'",
+        "client.setClientSecret(process.env.S?.trim() ?? '<P>');",
+        # A last word that runs words together, whose end the matcher reads too.
+        "dbpassword: process.env.DBPASSWORD?.trim() || '<P>',",
+        "CLIENTSECRET: process.env.CLIENTSECRET?.trim() || '<P>',",
+    ],
+)
+def test_a_secret_after_a_cut_read_is_withheld_whole(line: str, password: str):
+    safe = sanitize_text(line.replace("<P>", password))
+    assert password not in safe and REDACTED in safe
+
+
+@pytest.mark.parametrize("name", ["azureClientSecret", "dbpassword"])
+def test_a_reported_secret_fallback_is_withheld_from_its_excerpt(tmp_path: Path, run_connector, name: str):
+    password = TAIL_PASSWORDS[0]
+    line = f"export const cfg = {{ {name}: process.env.AZURE_CLIENT_SECRET?.trim() || '{password}' }};\n"
+    findings = _scan(tmp_path, run_connector, {"src/a.ts": line})
+    assert [f.metadata["path"] for f in findings if f.kind.value == "secret"] == ["src/a.ts"]
+    assert password not in json.dumps([f.to_dict() for f in findings], default=str)
+
+
+@pytest.mark.parametrize(
+    ("line", "kept"),
+    [
+        # A sibling entry after the read's own arguments still ends the value.
+        (
+            "{ password: cfg.get('db', { fallback: process.env.P }), label: 'Primary database' }",
+            "'Primary database'",
+        ),
+        (
+            "{ apiKey: process.env.K, password: process.env.P, model: 'gpt-4o-mini-2024-07-18' }",
+            "'gpt-4o-mini-2024-07-18'",
+        ),
+    ],
+)
+def test_an_entry_after_the_password_read_keeps_its_text(line: str, kept: str):
     assert kept in sanitize_text(line)
 
 

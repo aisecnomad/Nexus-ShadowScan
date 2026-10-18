@@ -146,7 +146,7 @@ class ProjectFindings:
         yield from self._emit_projects(scan, project_findings)
         for rel, servers in scan.mcp_files:
             with (
-                isolated(self.walker, rel, "MCP analysis"),
+                isolated(self.walker, rel, "MCP analysis", by_content=lambda: True),
                 self.index.scan_budget(seconds=self.scan_timeout),
             ):
                 yield self._mcp_finding(label, root, rel, servers)
@@ -1250,7 +1250,9 @@ class ProjectFindings:
             f.add_tag(NEGATIVE_CONTEXT_TAGS[context.reason])
             f.metadata["negative_contexts"] = [context.reason]
         f.metadata["providers"] = sorted({m.signature_id for m, _ in hits})
-        f.metadata["count"] = len(hits)
+        # The distinct credentials: one written on several lines, or matched by
+        # several patterns, counts once, and its evidence lists each location.
+        f.metadata["count"] = len({reported_credential(m) for m, _ in hits})
         if limited:
             # The matcher stopped at its per-signal quota for these formats:
             # ``count`` is a lower bound, and the scan is already incomplete

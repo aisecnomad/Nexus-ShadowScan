@@ -224,6 +224,181 @@ after them.
   inside a string even when the text ended on the backslash, so the string's
   span ended at `len(text) + 1`. The position is clamped to the end of the
   text, so `"abc\` spans `(0, len(text))` like any other unterminated string.
+### Code after a block comment that closes on its line is read as code for redaction; a process-mode plugin keeps the deadline its supervisor enforces (October 18)
+
+A sibling session's agent review of the integrated branch reported four
+findings. Two were reproduced and are fixed here; the other two are not
+changed.
+
+- **Leak shared with main, fixed.** The line-tail pass of `sanitize_text`
+  took a line's first comment as the rest of the line. After a block comment
+  that closed on the line (`/* note */ dbPassword: process.env.P?.trim() ||
+  "<pw>",`), the code that followed was read as comment, where only
+  key-shaped tokens are withheld. A password fallback, a keyword default or
+  a later literal after a credential's name therefore stayed in evidence;
+  main leaks every such shape. A carried comment that closed mid-line handed
+  the whole line on, so an apostrophe in its text (`don't */`) opened a
+  phantom literal. The pass now reads the code after a closed `/*...*/` or
+  `<!--...-->` as a line of its own, at most 16 comments a line so that a
+  line of many comments stays linear. After a carried comment's closer it
+  reads only what follows the closer.
+- **Regression against main, fixed.** In process mode the supervisor
+  enforces the deadline it starts a worker with. The worker received the
+  unset default, though, so a plugin that proposes a longer deadline for a
+  large input (`estimate_timeout_seconds`, which FilesystemConnector
+  implements and a subclass inherits) raised the worker's own deadline. The
+  worker then paced itself past the deadline it was held to and was stopped
+  with nothing reported, where it would have reported a bounded subset. The
+  worker now receives the deadline as a chosen one, which is never raised;
+  `docs/api/engine.md` says so.
+- **Not changed.** The over-quota probe of the credential matcher does run
+  the judge on one more match, but the placeholder samples and repeated
+  locations it can add are bounded on their own (five each), and repeats
+  only list again a credential already counted, so nothing past the quota is
+  reported. `ScanResult.summary()` merging incomplete-reason counts by hand
+  where `_ConnectorRunner._run_split` uses `Counter` is a refactor and is left for one.
+
+### Credential review fixes, round 6: sentence passwords with a weak verb, camelCase password names and UUID defaults withheld, catalog and ConfigParser defaults, CR-only text in linear time (October 18)
+
+An adversarial review of the round-5 credential rules reproduced these, and an
+independent verifier confirmed each against main 8c72467. Both reviewers were
+coding agents; this is not independent human review.
+
+- **Regression, fixed.** Round 5 let `come`, `use` and `set` make an
+  instruction in an env or credential file, so a sentence a person picked as
+  a password (`NowIsTheTimeToCome`, `ComeWithMeNowPlease`) was read as a
+  label and dropped. Main reported those passwords. These weak verbs now make
+  an instruction only beside a negation or modal (`must-come-from-vault`), a
+  label-vocabulary word (`use-your-own`) or a word of the variable's name.
+- **Regression, fixed.** Round 5 reported a password's default of any shape
+  after any `.get()`, so a message catalog's defaults (`"Forgot password?"`)
+  became credentials, and eight in one i18n module filled the quota: exit 3
+  on an ordinary module, where main completed. A ConfigParser read reported
+  its option name `"password"` as the password. The any-shape rule now holds
+  after an environment read only (`process.env`, `os.environ`, `getenv`,
+  `ENV.fetch`, `env()`, `GetEnvironmentVariable`); after any other read a
+  default is judged as a key is. Main's false positives on both shapes are
+  gone too.
+- **Regression, fixed.** The netrc pass found a line's start with
+  `rfind("\n", 0, position)`, which on CR-only text scans back to the start
+  every time: 400,000 such lines took 55 s against main's 4.7 s. Line starts
+  are now found in a doubling backward window, linear in the text.
+- **Leak shared with main, fixed.** Under a camelCase name such as
+  `dbPassWord`, the detector reported the fallback literal of
+  `process.env.DB_PASSWORD?.trim() || "<pw>"` but the redactor read the
+  name's last word, `Word`, and left the password in the finding's own
+  snippet in every format. The redactor now also reads the name as a whole.
+- **Leak shared with main, fixed (minor).** A UUID-shaped key given as an API
+  key's settings default was reported but shown in its snippet: its hyphens
+  cut it into runs the opaque-key test does not take. A UUID after a
+  credential's name is now withheld.
+- **Not changed.** A key pasted as an environment variable's name that does
+  not look opaque is reported without counting toward the quota, up to a
+  bound, and one past the bound is left out without disclosure, as on main.
+  Disclosing it would make seven readable long names
+  (`SVC1OPENAIAPIKEYPROD`) exit 3 again, which an earlier round fixed. A
+  Python `os.getenv("X_PASSWORD", "<default>")` default is not reported on
+  main or this branch; that is left for a later round.
+
+`tests/unit/test_credential_review_followups.py` and a CR-only case in
+`tests/unit/test_redaction_performance.py` cover the fixes; each regression
+case fails before its change.
+
+### Agent configuration review fixes, round 2: rule files of any suffix, escaped and folded keys, analysis limits, walk bounds and directory aliases (October 18)
+
+An adversarial review of "Agent configuration never vanishes into a coverage
+gap" (below) found six ways a file the scanner reports as agent, MCP or
+coding-agent configuration still vanished into the budget, the test-code
+discount or a `--profile ci` declaration, and four ways an ordinary
+repository newly exited 3 where main 8c72467 exits 0. Each is fixed with a
+regression test in `tests/unit/test_coverage_configuration_spellings.py`
+that fails on the previous commit.
+
+- **Rule files of any suffix.** `_agent_configuration` counted a file that a
+  directory-wide coding-agent or MCP signature selects, or that lies in an
+  agent definition directory, only when its name was one the walker reads by
+  itself (`_analyzed_by_name`) or a signature named it literally. A
+  `.cursor/rules/deploy.rule`, `.clinerules/01-deploy.rules` or
+  `.windsurf/rules/x.rst`, which the signatures select and the scanner reads,
+  was one budgeted entry when oversize, linked outside the tree or replaced
+  by a FIFO, and discounted or declared under `tests/` when NUL-poisoned or
+  unreadable, where main exited 3. Such a file is now configuration whatever
+  its suffix; only a binary asset kept beside the rules
+  (`_BINARY_ASSET_SUFFIXES`: images, fonts, archives, audio and video) is
+  not, so a large `.cursor/rules/diagram.webp` stays an ordinary gap.
+- **Oversize content-detected configuration under `--profile ci`.** An
+  oversize file whose bytes name a server table (`docs/.continue/mcpServers/evil.yaml`,
+  a padded `tests/fixtures/servers.json`) was blinding, but `_budgeted_gap`
+  was not told it was configuration, so with `scan_secrets` off the ci
+  profile declared it. `_oversize_gap` now passes `configuration` and full
+  weight when the content check matched.
+- **Escaped and folded keys in unread bytes.** The byte check
+  (`_MCP_KEY_BYTES`) accepted an escape only for the letters m, c and p, so
+  `mcp\u0053ervers` (valid JSON, the same key to a client) padded past
+  `max_file_size` read as no configuration, while any backslash-newline
+  anywhere counted as a key, so an oversize PyYAML or VCR cassette (whose
+  `yaml.dump` folds long double-quoted strings with trailing backslashes) or
+  a shell-continuation export was blinding. `_unescaped_key_bytes` now writes
+  each `\u`, `\U` or `\x` escape of a key character as that character and
+  joins a folded double-quoted token only when the joined text starts an
+  `mcp` key, before the search; the loose escape and fold alternatives are
+  gone, and the chunk overlap is 4 KiB so an escaped, folded key cut at a
+  chunk boundary is still seen whole.
+- **Analysis limits in configuration found by content.** A failure that
+  `isolated` contains (a `SanitizationLimitError` from a 100-deep array beside
+  `mcpServers` in `tests/fixtures/tools.json`) was recorded without full
+  weight, so the ci profile declared it. `isolated` takes `by_content`: the
+  file-analysis and credential-detection boundaries pass `_mcp_by_content`
+  (what `_detect_mcp` decided, recorded before the server parser runs, or the
+  file's bytes by the escape-aware check before that), and the MCP-analysis
+  boundary always counts.
+- **A key the text check missed, behind a parse failure.** With no parse held
+  (a YAML nesting limit, a JSON duplicate key), `_looks_like_mcp_config`
+  pre-filtered with the plain substring check `_mentions_mcp_keys`, which
+  misses `'mcpServers':` and an escaped JSON key, so the fixture's gap was
+  discounted under `tests/`. The decision moved to `_content_declares_mcp`,
+  which uses the escape-aware byte check there, so the server parser runs and
+  records its defect at full weight.
+- **Tables past the walk's bounds.** When `mcp_server_holders` reported
+  truncation, the file was decided by `_mentions_mcp_keys`, which both missed
+  an escaped key (a 301st list entry with `mcp\u0053ervers` read as no
+  configuration, as on main) and found prose in string values: a 300-issue
+  export quoting a YAML `mcpServers:` snippet, a 300-path OpenAPI document
+  with one in a description, or an 8-deep AST fixture whose comment mentions
+  `mcp_servers:` exited 3 with `MCP server tables past the walk limit`, where
+  main exits 0. `_names_mcp_key` now requires a key-shaped spelling: a JSON
+  key opened by an unescaped quote and followed by a colon, a YAML mapping
+  key read from the YAML scanner's tokens (quoting and escapes undone as the
+  loader undoes them), or a TOML key at a line start or in an inline table,
+  each with any character written as an escape.
+- **Directory aliases under generic dot-directories.** A directory link was
+  agent configuration when any component of its path was a dot-directory a
+  signature names, so `.github/actions/setup -> ../../tools/setup-action` and
+  `web/public/.well-known -> ../../static/well-known`, aliases of scanned
+  directories, were blinding with `named like agent configuration` (main
+  exits 3 too). `_agent_directory_path` now asks whether a trailing run of the
+  link's components lies along the directory part of an agent configuration
+  glob (`_agent_directory_globs`: the coding-agent and MCP file signatures,
+  the posture settings directories, the agent definition directories, the
+  clients' settings files and the `.well-known` agent cards), or reaches a
+  wildcard there (`.cursor/rules/team`). Such a link to an outside or
+  unresolvable target stays blinding and is never declared; an alias of a
+  scanned directory is blinding only when a file it holds would be
+  configuration at the alias path (`_alias_holds_agent_configuration`, which
+  lists at most 1,000 entries and fails closed past them), and otherwise is
+  the one budgeted entry `alias of a scanned directory` any alias is.
+  `test_an_alias_named_like_an_agent_directory_stays_blinding_inside_the_tree`
+  now aliases `.cursor` to a directory holding `mcp.json`, `rules/` or
+  `environment.json`, as its comment said, instead of a `rules.txt` no client
+  reads there.
+
+Compatibility: on the reviewer's noise trees (issue export, OpenAPI document,
+deep AST fixture, folded cassettes, in-tree `.github/actions` and
+`.well-known` aliases) no scan exits 3 where main 8c72467 exits 0; the
+remaining exit 3 where main exits 0 are padded MCP fixtures under `tests/`
+with `--no-secrets`, which main budgeted. `make evaluate` gives the same
+tp/fp/fn/tn on every corpus. `_looks_like_mcp_config` delegates its structured
+branch to `_content_declares_mcp` to stay within the complexity target.
 
 ### go.mod require blocks read in linear time; no dependency named "(" (October 18)
 
@@ -364,6 +539,102 @@ run, without coverage, and the policy test holds both recipes to their legs.
 - The 23 `docs/api/` pages gained a narrative introduction each, checked
   against the code in two passes.
 
+### Credential review fixes, round 5: every password entry, closed label vocabularies, settings defaults, password fallbacks, repeated lines and netrc paths (October 17)
+
+Fixes from round 4's credential and netrc reviews, judged on the same
+oracle (`tests/unit/test_credential_oracle.py`), which now holds 554 inputs
+with the outcome on this branch and on main 8c72467. Evidence redaction
+fails closed: under a password's or secret's name the whole value span is
+withheld, and over-redaction is accepted where a shown credential is not
+(under other credential names a token that looks opaque is). A label,
+possessive or instruction heuristic drops a value only when every word of
+it is in a closed vocabulary. A row worse than main still needs a one-line
+reason (152 of the 554 have one: 148 "not a credential", four quota
+disclosures); of round 4's rows only `DevPasswordLocal` under
+`DB_PASSWORD` is worse than main, every word of it label vocabulary or the
+name's own.
+
+- **Every password entry on a line is withheld.** The line-tail pass read
+  the password rule from the first credential name on a line only, so a
+  `password:` after an `apiKey:` entry or a credential-named callee kept
+  only the opaque-token rule and a punctuated password or a passphrase was
+  shown; a keyword argument of the read (`fallback=`, `default_value=`, `{
+  fallback: ... }`) also ended the value before the literal. Each password
+  name on the line now withholds its value to the next entry of its own
+  mapping, object or argument list (`_credential_joins`,
+  `_password_values`), in one linear pass. Main showed both.
+- **Overlapping spans are withheld to their union.** A password whose
+  start reads as an opaque token was withheld only up to that token
+  (`"[REDACTED]&<tail>"`), because `_withhold_spans` kept the shorter of two
+  overlapping spans. It now withholds their union.
+- **A secret's fallback is withheld whole.** The matcher reports a
+  fallback of any shape under a password's, passphrase's or secret's name,
+  but the line-tail pass withheld every literal only under a password's
+  last word, so `azureClientSecret: process.env.AZURE_CLIENT_SECRET?.trim()
+  || "<punctuated>"` was reported and shown in its own finding's excerpt,
+  and so was a run-together `dbpassword:` (main showed both). `secret`
+  joins the password words, and a last word ending in `password`,
+  `passphrase`, `passwd` or `secret` names one.
+- **A sentence is a label only with an instruction word.** Two function
+  words made an instruction label, so a sentence a person picks as a
+  passphrase (`fly-me-to-the-moon`, `may-the-force-be-with-you`) was
+  dropped, which main reported. A sentence is now a label only with an
+  instruction word or a label word and with every word in the closed
+  vocabulary (function, instruction and instruction-context words, label
+  vocabulary, the name's words).
+- **A possessive phrase is a template only when every word is one.**
+  `ton-jardin-secret`, `su-token-de-casa` and similar passphrases were
+  templates by a credential noun first or last, so `saas.generic` copied
+  them raw from other columns and the matcher dropped them; main withheld
+  and reported them. `shadowscan/utils/placeholders.py` now holds the
+  template vocabulary that the placeholder test and the credential judge
+  share, and a possessive phrase is a template only when every word after
+  the possessive is in it.
+- **Env-file passwords of account and sentence words are passwords.** In
+  an env or credential file `admin`, `user`, `strong`, `internal` and
+  `commit` no longer label a value, and a sentence without an instruction
+  word is a password (`MyStrongPassword`, `my_secret_password`,
+  `InternalUserPassword`), as on main; labels and closed instructions
+  (`KeycloakAdminPassword` under its name,
+  `change_me_to_a_strong_password`) stay labels.
+- **A settings read's default argument is a fallback.**
+  `GetValue<string>("OpenAI:ApiKey", "<key>")`,
+  `configService.get('OPENAI_API_KEY', '<key>')`, `System.getProperty`,
+  `dict.get`, `Optional...orElse` and `requireNonNullElse` lost the key,
+  which main reported; `_DEFAULT_READS` names the reads and the position
+  (or keyword) of their default.
+- **A password fallback of any shape is reported.** Under a name ending in
+  `password`, `passphrase` or `secret`, a fallback or default is the
+  credential unless the redactor's own `password_literal` test keeps it (a
+  variable's name, a path, a URL, a placeholder, fewer than six
+  characters) or it is a label, as main reported.
+- **A repeated credential's lines are listed again.** Counting a repeated
+  credential once also dropped its later lines from the evidence; the
+  judge now returns up to five of its locations without counting them, and
+  every credential finding's `count`, the `.env` provider-key finding's
+  included (which counted each match), is the number of distinct
+  credentials.
+- **A pasted name counts toward the quota only when it looks like a key.**
+  Seven ordinary underscore-free names (`process.env.SVC1OPENAIAPIKEYPROD`)
+  made a file incomplete where main completed; such a name is still
+  reported, at most five per signature, but counts toward the quota only
+  when it passes `opaque_key`.
+- **netrc lines.** `_NetrcLines` keeps line starts in a dict instead of a
+  sorted list it inserted into, so the reverse-order reads of the netrc
+  pass are linear (160,000 lines in 4.7 s instead of 9 s against 1.2 s at
+  40,000). A netrc comment holding a Windows path whose directory is a
+  netrc keyword (`\\nas\user\fred`, `C:\Users\bob\default\new`) runs to the
+  end of its line, so the entry goes on and its password is withheld.
+- **Docs.** docs/connectors/code.md, docs/signatures.md, docs/scanning.md,
+  docs/production.md, SECURITY.md and the migration notes describe the
+  pasted-name scope (member reads and `GetEnvironmentVariable` are
+  reported; `os.getenv("<KEY>")` and subscripts are withheld but not), the
+  count semantics, the label rules and what can remain; the entry below is
+  corrected on the pasted-name forms.
+
+The evaluation corpora give the same per-case results and tp/fp/fn/tn as
+8fd7299; the complexity gate reports no function worse than its baseline.
+
 ### Credential review fixes: env-file passwords, typed reads, pasted names, repeated credentials, labels and cut-read evidence (October 17)
 
 Fixes from two reviews of the credential pipeline (round 3, rebased as
@@ -414,9 +685,14 @@ lines, reported once.
   alternating, or 16 characters or more without `_`), but the detector read
   it as a reference and reported nothing, which main reported. One test,
   `redaction_rules.pasted_key_name`, now decides both: the matcher reports
-  the name as the credential of a read by name (`process.env`,
-  `import.meta.env`, `Bun.env`, the call and subscript forms the redactor
-  reads, and `os.environ.<NAME>`).
+  the name as the credential of a member read by name (`process.env`,
+  `import.meta.env`, `Bun.env` and `os.environ.<NAME>`) and of
+  `Environment.GetEnvironmentVariable("<NAME>")`. (Corrected: this entry
+  first said the call and subscript forms the redactor reads were reported
+  too. The generic rule gives no match for `os.getenv("<NAME>")`,
+  `process.env["<NAME>"]`, `ENV["<NAME>"]` or `System.getenv("<NAME>")`, on
+  this branch or on main, so those are withheld from evidence and not
+  reported.)
 - **One credential repeated counts once.** One password in each of six
   compose services, or one key in each of six manifest documents, counted
   six toward the five-per-format quota, so the scan exited 3 with "more than
@@ -476,6 +752,214 @@ lines, reported once.
 
 The evaluation corpora give the same per-case results and tp/fp/fn/tn as
 5aa142b; the complexity gate passes with no function above its allowance.
+
+### Agent configuration never vanishes into a coverage gap (October 17)
+
+The previous change gave every coverage gap one decision, but which file hides
+agent configuration was still decided three ways: `_named_configuration` for
+the oversize reader, links and special files, `_full_weight_in_tests` for the
+test-code discount, the declaration and the budget's weight, and the MCP
+parser's `full_weight` for content. They disagreed, and each disagreement
+failed open somewhere. One predicate, `_agent_configuration(rel, name,
+file_matches)`, now serves every gap site.
+
+- **One predicate, in any letter case and for every signature.**
+  `_named_configuration` compared names case-sensitively while the detectors
+  do not: a padded `.MCP.JSON`, `Claude_Desktop_Config.json` or
+  `.claude/Settings.json`, each reported as configuration when readable, was
+  one budgeted entry, and a 100-file tree exited 0 where main exited 3. It
+  also dropped the coding-agent and MCP files that only a directory-wide
+  signature selects (`.continue/mcpServers/*.yaml`, `.roo/rules/*.md`,
+  `.clinerules/*.md`, `.amazonq/rules/*`, `.kiro/steering/*`,
+  `.junie/guidelines.md`, `.augment/rules/*`, `.trae/rules/*`), so a link to
+  an outside copy or a padded copy exited 0 while a NUL in the same file was
+  blinding. Its agent-definition clause made a large asset beside the rules
+  (`.cursor/rules/demo.mp4`) blinding. And it named every manifest and shared
+  client name, so ordinary single-source aliases exited 3 with no budget:
+  `requirements.txt` linked to `requirements/prod.txt`, `.env` to
+  `.env.example`, a `Dockerfile` or `providers.tf` to a shared copy,
+  `config/config.json` to `config.development.json`. `_agent_configuration`
+  is true for a dedicated MCP name, a coding-agent settings path, an
+  instruction document, an agent manifest or card (each compared
+  case-insensitively), a file in an agent definition directory or that a
+  coding-agent or MCP file signature selects, directory-wide globs included,
+  when the file is text the scanner reads or a signature names it, and a file
+  whose content a caller found to declare servers. It is true too for a
+  shared client name in the directory of the client that reads servers from
+  it (`.vscode/settings.json`, whose `mcp` table VS Code reads, beside
+  `.gemini/settings.json`, `.continue/config.yaml` and `.codex/config.toml`):
+  a later pass found an outside or dangling `.vscode/settings.json` link
+  costing one entry, where a137fd5 and main exited 3, so the in-tree alias
+  of one is blinding again too, as on both. Generic manifests, build files
+  and shared client names elsewhere are not: linked or replaced by a FIFO
+  they cost one entry. An oversize dotenv file (`.env`, `.env.production`)
+  stays blinding while `scan_secrets` is on, as it was and as main had it:
+  it exists to hold a key, and unread it hides one, while a link of that name
+  hides no byte of the tree. A tool credential file (`.npmrc`, `.netrc`),
+  which main never read, stays one entry when oversize, as it was. The oversize reader, `_skip_link`,
+  `_skip_non_regular`, `_declared_omission`, `_discounted_test_path` (and
+  through it the discount and the gap weight) read the one predicate, so a
+  link and an oversize copy of one file are judged alike.
+- **An oversize MCP configuration found by its content is blinding.** A
+  `deploy/tools.json` holding `mcpServers`, reported as an MCP configuration
+  when readable, cost one budgeted entry once padded past `max_file_size`,
+  where main exited 3. The oversize gap (`_oversize_gap`) now reads the bytes
+  of a file the MCP parser decides by its content (`_guessed_mcp_name`: a
+  JSON, TOML or YAML file, or a shared client name) in 1 MiB chunks, confined
+  as the reader opens it, lower-cased and without NUL bytes, for any
+  spelling of a server table key (`_MCP_KEY_BYTES`: quoted, spaced, explicit,
+  dotted and inline-table keys, an `mcp` key, a letter written as an escape,
+  a quoted key folded across a line break), and finds one behind any
+  padding, past a chunk boundary or in UTF-16. A hit, a file the check cannot
+  read, one over 128 MiB (more than a Git host stores outside LFS) and an MCP
+  registry `server.json`, which declares its server without such a key, are
+  blinding; a data export that names no key still costs one entry. A prefix
+  peek was the alternative the plan offered; it would let leading padding
+  hide the key.
+- **An alias of a scanned directory is one entry; an agent's directory never
+  is.** The walker change that made directory links blinding also caught
+  links whose target the walk scans at its real path (`lib_alias -> lib`,
+  `docs/_static -> ../assets`), with an error saying the target was
+  unscanned: ordinary layouts exited 3 although every file was read. Such an
+  alias (`_alias_of_scanned_directory`: inside the root, every directory on
+  its path walked, within the selected paths, and not test code read as
+  product code) now costs one entry, with a diagnostic saying the paths below
+  it are not assessed. Under `--profile ci` a directory link named like an
+  agent's configuration directory under a test or documentation path
+  (`tests/e2e/.claude`, `tests/e2e/.cursor`, `docs/.vscode` pointing outside
+  the tree) was declared, since `_declared_omission` judged the name as a
+  file's, so the configuration behind it was never inventoried while a link
+  at `tests/e2e/.claude/settings.json` exited 3. `_agent_configuration_link`
+  now decides before the declaration: a link named like agent configuration,
+  or one to a directory (or dangling) whose path names a directory the
+  coding-agent and MCP file signatures read configuration from
+  (`_agent_directory_names`, derived from the loaded signatures), is blinding
+  and never declared, an alias of a scanned directory included; a link to a
+  single file under such a directory is judged by its own name.
+- **An undecodable test fixture that declares servers is blinding.** In a
+  tree of 61 entries, a guessed `tests/fixtures/agent.yaml` holding
+  `mcpServers` with a NUL byte was a tolerated one-entry gap, and under
+  `--profile ci` a declared omission: `_scan_binary_test_fixture` found the
+  MCP structure but `_unreadable_gap` judged the path with
+  `_discounted_test_gap(rel)`, which is true for a fixture found by its
+  content, and `_budgeted_gap` declared it. The earlier tests passed only
+  because each held one file, over any budget. The structure check was also
+  text-only for files with no parse held (`_mentions_mcp_keys`), so a quoted
+  (`'mcpServers':`), spaced or explicit YAML key, a unicode-escaped JSON key,
+  a TOML inline table or literal key were discounted. `_binary_declares_mcp`
+  now parses the NUL-stripped text with the reader's bounded loader
+  (`_structured_context`) and lets the structure decide, as for a readable
+  copy; text that does not parse to a mapping or a list is read for any
+  spelling of a key (`_may_declare_mcp`). Such a fixture is blinding under
+  both profiles (`_unreadable_gap(by_content=True)`, passed to the
+  declaration as `full_weight`), and the servers its text declares are
+  reported. The parametrized full-weight tests now run in a 61-entry tree
+  under both profiles, with these spellings added.
+- **Server tables in a list are read, and the walk's bounds fail closed.**
+  Inside a list the structural check counted a server table only when it
+  was a mapping, so Continue's list of server records (`mcpServers: [{name,
+  command}]`), written by an Ansible copy task or held in a JSON list of
+  clients, completed silently where main exited 3. Past its bounds (12
+  levels, 256 entries per container) the walk returned False, so a playbook
+  with 300 tasks before the copy task, or a table wrapped in 13 lists, was
+  never sent to the parser. And a list-rooted document that did reach the
+  parser, a server catalog under `tests/fixtures/` among them, exited 3 with
+  `MCP configuration must be an object`, which names no defect anyone can
+  fix. The walk moved to `mcp_config.mcp_server_holders`, iterative and
+  bounded as before: inside a list it also counts a list of server records
+  (a mapping carrying `command`, `url`, `args`, `type` or `transport`, which
+  a transcript's `{name, status}` does not), and it says when the bounds cut
+  it, so `_document_declares_mcp` returns None and `_looks_like_mcp_config`
+  decides from the text instead. The parser reads a list-rooted document as
+  the server tables its entries hold (`_listed_server_tables`), merged with
+  numbered duplicate names: a catalog or a play is reported and leaves the
+  scan complete, since nothing is hidden once its tables are parsed, and a
+  table past the bounds is recorded as a limit (`analysis-limit`). A
+  dedicated name holding a list with no table keeps the old diagnostic.
+- **A mapping's nested server tables are read too.** The structural check
+  routed a mapping whose only table sat below its top level
+  (`profiles: [{mcpServers: ...}]`, a client's per-project
+  `projects: {path: {mcpServers: ...}}`) to the parser, which read the top
+  level alone, found nothing and let the file pass as ordinary
+  configuration with no finding and no gap (on main too). The parser now
+  reads such a mapping's nested tables (`_nested_server_entries`) with the
+  same bounded walk, so the servers are reported.
+- **With `scan_secrets` off, oversize agent configuration in tests stays a
+  gap.** `_skipped_oversize` skipped any oversize file under a test path as a
+  discounted fixture once credential detection was off, so a 5 KB
+  `tests/.mcp.json` or `tests/CLAUDE.md` over a 1,000-byte `max_file_size`
+  left the scan complete, contradicting the rule that such files are not
+  discounted there. It now skips only discounted test code
+  (`_discounted_test_path`, which excludes agent configuration) and leaves a
+  JSON, TOML or YAML fixture to the reader, whose content check
+  (`_oversize_gap`) keeps the gap when its bytes name a server table and
+  otherwise skips it with the same counted warning.
+- **Profile ci reads an undecodable declared file for credentials first.**
+  #255 read a binary test fixture for credentials before discounting it,
+  but #258 declared undecodable documentation, example and generated files
+  without any read, so under `--profile ci` a key in a binary
+  `docs/setup.md` or `src/client.generated.json` was never reported while
+  the same bytes at `tests/fixtures/dump.txt` were. `_read_source` now hands
+  any undecodable file whose gap would be discounted or declared
+  (`_credential_only_read`) to the credential-only read
+  (`_scan_undecodable_file`, formerly `_scan_binary_test_fixture`), which
+  records the declared gap after it, naming the read. `_is_generated_path`
+  still matches by file name anywhere, so `src/*.generated.*` and `*_pb2.py`
+  are declared; ci.md already says so, and such a file is now read first.
+- **Profile ci never declares a file it could not read.** The previous
+  change passed `unread_credentials` from the oversize reader and from
+  notebook outputs only, so under `--profile ci` a test fixture the scanner
+  could not open or read (EACCES, `file could not be read`) was still
+  declared, the scan complete with none of its bytes read for credentials.
+  `_unreadable_gap` now passes `unread_credentials`, so `_declared_omission`
+  declares such a file only while `scan_secrets` is off; with it on, the gap
+  is charged as without the profile, one whole entry. With this and the
+  credential-only read of declared undecodable files, the README's claim
+  that the profile never declares a file left unread for credentials holds.
+- **Content left unread for credentials weighs a whole entry.** The
+  previous change stopped declaring an oversize fixture, but charged it at a
+  quarter under a test path, so four 1 MB cassettes each holding a key, in a
+  65-entry tree, cost 1.0 against an allowance of 1.3 and the scan exited 0
+  with no key read, where main exited 3. The plan decided that content left
+  unread for credentials is never discounted or declared and is charged at
+  full weight whatever its path: `_oversize_gap` now passes `full_weight`
+  while `scan_secrets` is on (unreadable files already did). Reading oversize
+  content for credentials alone stays out of scope; SECURITY.md ("What can
+  remain") and scanning.md record the trade-off and its remedies.
+- **A blinding gap leads its root's published details.** The combined
+  summary listed the parts that left the scan incomplete first, but within a
+  part `details` kept the first 50 gaps in walk order, so in a tree of 1,000
+  files with 60 dangling certificate links a `zz/.mcp.json` link (blinding)
+  was cut while 50 tolerated links were listed. `_LedgerPart.evaluate` now
+  lists a part's blinding gaps first, each kind in the order recorded; an
+  over-budget part's partial gaps are the ones that condemned it already.
+- **Each published gap names its root or repository.** In a `code.github`
+  scan of ten clones and a tiny one, every one of the 11 details read
+  `{path: "ca.pem", ...}`, so the gap the verdict line named
+  (`github:tiny`) could not be picked out. A labelled part now adds `part`,
+  its label (the scan root's resource prefix, or `github:<repo>`), to each
+  detail it publishes; `validate_coverage_summary`, and through it `shadowscan
+  merge` and the plugin result check, accepts it as an optional non-empty
+  string, so older reports load, and refuses any other value.
+- **Diff reads a ledger over budget as incomplete, as merge does.** Merge
+  and the plugin result check treat a stats ledger over budget or blinded as
+  an incomplete run whatever its `incomplete` flag says, but
+  `comparison._complete` read only the flag: a report whose `.mcp.json`
+  finding was gone and whose ledger said `within_budget: false` was
+  incomplete to `shadowscan merge` and still resolved the server in
+  `shadowscan diff`. `_complete` now applies the same rule
+  (`_ledger_refutes`); a ledger that is not one the scanner writes stays with
+  the unread-content check, which already holds back every missing finding
+  of that connector.
+- **Strict accounting counts every link, as a budget of 0 does.**
+  `strict_coverage` named one skipped link per root and counted only that
+  one, and counted no special file past the first ten, so 50 dangling links
+  and 15 FIFOs gave `incomplete_reasons` `{unresolved-link: 1,
+  unscanned-input: 11}` under `--strict-coverage` and `{unresolved-link:
+  50, unscanned-input: 15}` under `--max-coverage-gap 0`, although
+  scanning.md calls the two one rule. The representative errors stay, and
+  `ConnectorContext.count_incomplete` counts each further entry under its
+  reason, as the budget's quiet ledger entries already did.
 
 ### Coverage gaps take one decision, judged per root and repository (October 17)
 
@@ -593,7 +1077,9 @@ strict accounting, credentials, declaration, discount, budget.
   discount, and a binary or undecodable fixture at a whole entry after the
   credential-only read. A few fixtures leave the scan complete and are
   listed; a seeded tree exhausts the budget. "A few" is about 8% of a
-  root's entries for malformed fixtures but only about 2% for binary ones,
+  root's entries for malformed fixtures that record one gap each (4% for a
+  structured file with duplicate keys, which records two, and under 3% for
+  such a `package.json`, three) but only about 2% for binary ones,
   which cost a whole entry each as the plan's full-weight clause requires:
   a 200-file service with four binary fixtures and one dangling certificate
   link, complete before, exits 3. The docs first said hundreds were needed;

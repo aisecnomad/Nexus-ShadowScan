@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from shadowscan.utils.redaction import REDACTED, sanitize_text
-from shadowscan.utils.redaction_assignments import _redact_netrc_entries
+from shadowscan.utils.redaction_assignments import _line_start, _redact_netrc_entries
 
 # Slow by nature: times the redaction patterns against hostile inputs.
 # `make test-fast` skips these; CI runs them.
@@ -432,6 +432,8 @@ def _best_cpu(work, repeats: int = 3) -> float:
         lambda n: "NETRC=" + "machine h\\n  login u\\n  # c\\n" * n,
         lambda n: 'machine h login "u"' + '"v"' * n + "password w",
         lambda n: 'x = "machine h login \\"u\\"' + '\\"v\\"' * n + 'password w"',
+        lambda n: 'machine h login "machine y # c"\n' * n,
+        lambda n: "machine h\n  login u\n  # \\\\nas\\user\\fred\n" * n,
     ],
     ids=[
         "names",
@@ -482,6 +484,8 @@ def _best_cpu(work, repeats: int = 3) -> float:
         "indented-escaped-comments",
         "glued-quoted-words",
         "escaped-glued-quoted-words",
+        "comments-in-quoted-names",
+        "keyed-path-comments",
     ],
 )
 def test_netrc_redaction_scales_linearly(shape):
@@ -516,3 +520,51 @@ def test_only_the_quadratic_tokenizer_versions_charge_line_copies():
     from shadowscan.utils.redaction_statements import _TOKEN_COPIES_LINE
 
     assert _TOKEN_COPIES_LINE is ((3, 12) <= sys.version_info[:3] < (3, 12, 4))
+
+
+def test_the_netrc_lines_are_found_alike_in_either_order():
+    # The queued ranges of the netrc pass are read last first, so the lines
+    # are asked about in reverse text order. A sorted list of line starts
+    # took each new line at its front then, which cost quadratic time.
+    from shadowscan.utils.redaction_assignments import _NetrcLines
+
+    count = 150_000
+    text = "machine h # c\n" * count
+    positions = [index * 14 + 10 for index in range(count)]
+
+    def ask(order: list[int]) -> None:
+        lines = _NetrcLines(text)
+        for position in order:
+            lines.in_string(position)
+
+    forward = _best_cpu(lambda: ask(positions), repeats=2)
+    backward = _best_cpu(lambda: ask(positions[::-1]), repeats=2)
+    assert backward < max(forward, 0.05) * 2.5, (forward, backward)
+
+
+@pytest.mark.parametrize(
+    ("text", "position", "start"),
+    [
+        ("", 0, 0),
+        ("abc", 2, 0),
+        ("a\nbc", 3, 2),
+        ("a\rbc", 3, 2),
+        ("a\r\nbc", 4, 3),
+        ("x" * 1000 + "\ry", 1001, 1001),
+    ],
+)
+def test_a_line_start_follows_the_last_lf_or_cr(text, position, start):
+    assert _line_start(text, position) == start
+
+
+def test_line_starts_of_cr_only_text_are_found_in_linear_time():
+    # Regression: the netrc pass found a line's start with rfind("\\n", 0, position),
+    # which scans back to the text's start when no LF ends a line, so sanitize_text
+    # took quadratic time on CR-only text (55 s for 400,000 lines).
+    def starts(count: int) -> float:
+        text = "\r".join(["default # '"] * count)
+        positions = range(0, len(text), 12)
+        return _best_cpu(lambda: [_line_start(text, position) for position in positions])
+
+    small, large = starts(20_000), starts(80_000)
+    assert large < max(small, 0.02) * 10, (small, large)

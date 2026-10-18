@@ -17,6 +17,7 @@ from bisect import bisect_right
 from collections.abc import Callable, Iterable, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
@@ -124,10 +125,13 @@ from shadowscan.connectors.code.source_text import (
 from shadowscan.connectors.code.tool_attribution import ToolRegions
 from shadowscan.connectors.code.walk import (
     _AGENT_DEFINITION_DIRS,
+    _MCP_STRUCTURE_SUFFIXES,
     MCP_CONFIG_NAMES,
     TreeWalker,
     _analyzed_by_name,
+    _guessed_mcp_name,
     _is_coding_agent_doc,
+    _may_declare_mcp,
     _note_unread_settings,
     isolated,
     scan_timeout_for_size,
@@ -354,9 +358,9 @@ class FileScanner:
                 return
         named = by_name or self.walker._named_by_signature(rel, file_matches)
         loaded = self._read_source(rel, path, scan.root_fd, scan.base, named=named)
-        if isinstance(loaded, _BinaryTestFixture):
+        if isinstance(loaded, _UndecodableFile):
             _note_unread_settings(proj, rel)
-            self._scan_binary_test_fixture(scan, proj, proj_root, rel, path, loaded, file_matches)
+            self._scan_undecodable_file(scan, proj, proj_root, rel, path, loaded, file_matches)
             return
         if loaded is None:
             _note_unread_settings(proj, rel)
@@ -455,7 +459,7 @@ class FileScanner:
 
     def _read_source(
         self, rel: str, path: Path, root_fd: int, base: Path | None = None, *, named: bool = True
-    ) -> tuple[str, str | None, _CellSpans, _CellSpans] | _BinaryTestFixture | None:
+    ) -> tuple[str, str | None, _CellSpans, _CellSpans] | _UndecodableFile | None:
         """Read a file for analysis: its text and, for a notebook, the raw document and cell spans.
 
         A notebook's last element lists the cells declared another language (``_notebook_source``).
@@ -466,9 +470,10 @@ class FileScanner:
         in it. None means nothing is analyzed; the recorded diagnostics say why.
         ``named`` is False when only a directory-wide signature glob selects the
         file, so a recognised binary artifact there (an image beside coding-agent
-        rules) is skipped without a coverage gap. A ``_BinaryTestFixture`` means
-        the file is binary or undecodable and in discounted test code: the caller
-        reads it for credentials only (``_scan_binary_test_fixture``).
+        rules) is skipped without a coverage gap. An ``_UndecodableFile`` means
+        the file is binary or undecodable and its gap is discounted test code or a
+        ``ci`` declaration (``_credential_only_read``): the caller reads it for
+        credentials only (``_scan_undecodable_file``), and records the gap after.
         """
         read_errors: list[str] = []
         read_notes: list[str] = []
@@ -483,32 +488,21 @@ class FileScanner:
         )
         for note in read_notes:
             self.walker.note_file(rel, note)
-        binary_fixture = False
+        undecodable = False
         for issue in read_errors:
-            if issue == BINARY_CONTENT_ERROR and self.walker._discounted_test_path(rel):
-                # Read for credentials first, under every accounting; the
-                # fixture's gap is recorded after that read, as an error under
-                # strict accounting (_scan_binary_test_fixture).
-                binary_fixture = True
+            if issue == BINARY_CONTENT_ERROR and self.walker._credential_only_read(rel):
+                # Read for credentials first, under every accounting; the gap is
+                # recorded after that read: discounted, declared, or an error
+                # under strict accounting (_scan_undecodable_file).
+                undecodable = True
             elif self.strict_coverage:
                 self.ctx.error(f"code.filesystem: {rel}: {issue}", reason=_read_issue_reason(issue))
             elif issue == "file exceeds max_file_size":
-                # Other oversize content (generated source, a data export) is
-                # incidental and costs one entry (_unread_configuration).
-                selected = self.walker._unread_configuration(rel, path.name)
-                self.walker._budgeted_gap(
-                    rel,
-                    f"code.filesystem: {rel}: skipped, {issue}; "
-                    + ("coverage incomplete" if selected else "coverage gap"),
-                    declared=f"code.filesystem: {rel}: skipped, {issue}",
-                    blinding=selected,
-                    reason="oversize-file",
-                    unread_credentials=True,
-                )
+                self.walker._oversize_gap(rel, path.name, on_disk, root_fd)
             else:
                 self.walker._unreadable_gap(rel, issue)
         if text is None:
-            return _BinaryTestFixture(on_disk) if binary_fixture else None
+            return _UndecodableFile(on_disk) if undecodable else None
         if len(text) <= LFS_POINTER_MAX_BYTES and text.startswith(_LFS_POINTER_TEXT):
             # A checkout made without git-lfs holds a pointer in place of the
             # file: its content was never read, whatever the name promises.
@@ -792,7 +786,12 @@ class FileScanner:
         over-budget content pass cannot hide a real key. Notebook outputs and
         markdown cells are scanned from the raw document.
         """
-        with isolated(self.walker, file.rel, "credential detection"):
+        with isolated(
+            self.walker,
+            file.rel,
+            "credential detection",
+            by_content=partial(self.walker._mcp_by_content, scan, file.rel, file.path),
+        ):
             seen_secrets: set[tuple[str, str, int | None]] = set()
             self._detect_secrets_in(scan, file, file.text, seen_secrets)
             if file.raw_notebook is not None and file.raw_notebook != file.text:
@@ -870,6 +869,9 @@ class FileScanner:
         file.is_mcp = self._looks_like_mcp_config(file.rel, file.name, file.text, document) or (
             file.name.lower() == "server.json" and '"mcpServers"' in file.text
         )
+        # Decided before the server parser runs, so a limit it reaches is the gap of
+        # an MCP configuration (isolated, in walk.py).
+        self.walker._content_mcp = file.is_mcp
         if file.is_mcp:
             mcp_errors: list[str] = []
             file.mcp_servers = _parse_mcp_servers(file.rel, file.text, mcp_errors, document)
@@ -1960,28 +1962,7 @@ class FileScanner:
         if lower in _DEDICATED_MCP_CONFIG_NAMES:
             return True
         if lower in MCP_CONFIG_NAMES or rel.endswith(_MCP_STRUCTURE_SUFFIXES):
-            # Workflows keep the text search: their servers are JSON strings in step
-            # inputs, which _embedded_workflow_mcp reads.
-            workflow = _WORKFLOW_FILE.search(rel) is not None
-            # Decide from the parsed structure when it is held (JSON, TOML, and the YAML
-            # every structured file is parsed into once): leading padding before the keys
-            # then cannot hide a server table. A JSON object must be decided structurally;
-            # the text fallback below never sees past its truncation, so a string search of
-            # a prefix could miss the keys. An array declares servers only in a mapping it
-            # holds (see _document_declares_mcp), never in a transcript's "mcp_servers"
-            # status list.
-            if document is not None and not workflow:
-                return _document_declares_mcp(document)
-            if not _mentions_mcp_keys(text):
-                return False
-            if rel.endswith(_YAML_SUFFIXES) and not workflow:
-                # No parse is held: the text search also finds the keys inside string
-                # values (a heredoc, a template), so the structure, parsed only now that the
-                # text names a key, decides; a file it cannot read goes to the MCP parser.
-                declared = _yaml_declares_mcp(text)
-                if declared is not None:
-                    return declared
-            return True
+            return _content_declares_mcp(rel, text, document)
         return False
 
     def _note_ua_mentions(self, rel: str, hosts: list[str]) -> None:
@@ -2112,31 +2093,48 @@ class FileScanner:
             reason="analysis-limit",
         )
 
-    def _scan_binary_test_fixture(
+    def _syntax_warning(self, file: _SourceFile, message: str) -> None:
+        """Record source that did not parse: a gap when ``_syntax_gap`` says so, else a plain warning.
+
+        A gap goes through ``_gap``, so the ci profile declares it under a
+        template, example or test path, and is counted as unparsed input.
+        """
+        if self._syntax_gap(file):
+            self.walker._gap(file.rel, message, suffix=False, reason="unparsed-input")
+        else:
+            self.ctx.warn(message, incomplete=False)
+
+    def _scan_undecodable_file(
         self,
         scan: _ScanState,
         proj: _Project,
         proj_root: str,
         rel: str,
         path: Path,
-        fixture: _BinaryTestFixture,
+        fixture: _UndecodableFile,
         file_matches: list[Match],
     ) -> None:
-        """Read a binary or undecodable test fixture for credentials, the one evidence not discounted.
+        """Read a binary or undecodable file for credentials, the one evidence never discounted or declared.
 
-        Its bytes are read as Latin-1 without NUL bytes (``read_credential_text``),
-        so a key written in it is still found; nothing else is analyzed, and no
-        excerpt is cut from it. A fixture that cannot be read at all stays a gap.
+        The file is a test fixture whose gap is discounted, or a documentation,
+        example or generated file the ``ci`` profile declares
+        (``_credential_only_read``). Its bytes are read as Latin-1 without NUL
+        bytes (``read_credential_text``), so a key written in it is still found;
+        nothing else is analyzed, no excerpt is cut from it, and its gap is
+        recorded after: discounted, or declared with the read named. A file that
+        cannot be read at all stays a gap.
         So does one whose text reads as an MCP configuration (``tests/agent.yaml``
-        with ``mcpServers``), which is reported at full weight in test code too:
-        a JSON, TOML or YAML fixture is read for that check even when credentials
-        are not scanned, and is then charged like undecodable product content.
-        Strict accounting reads it too, and only then records its gap, as an
-        error: it never finds fewer credentials than the default accounting.
+        with ``mcpServers``, ``_binary_declares_mcp``), which is reported at full
+        weight in test code too: a JSON, TOML or YAML fixture is read for that
+        check even when credentials are not scanned, is then blinding like
+        undecodable product content, never discounted or declared, and its
+        servers are reported from that text when it parses. Strict accounting
+        reads it too, and only then records its gap, as an error: it never finds
+        fewer credentials than the default accounting.
         """
         message = f"code.filesystem: {rel}: {BINARY_CONTENT_ERROR}"
         analyzed = self.scan_secrets and not self.triage
-        if not analyzed and not rel.endswith(_MCP_STRUCTURE_SUFFIXES):
+        if not analyzed and not _guessed_mcp_name(rel, path.name):
             self.walker._discounted_gap(
                 rel, f"{message}; not analyzed", reason="unparsed-input", charged_in_full=True
             )
@@ -2162,8 +2160,12 @@ class FileScanner:
             # No structured context: none of a binary file's excerpts is emitted.
             file.excerpts = _ExcerptSource(rel, path, text, None)
             self._detect_secrets(scan, file)
-        if self._looks_like_mcp_config(rel, path.name, text):
-            self.walker._unreadable_gap(rel, BINARY_CONTENT_ERROR)
+        declares, document = self._binary_declares_mcp(rel, path.name, text)
+        if declares:
+            servers = _parse_mcp_servers(rel, text, [], document)
+            if servers:
+                scan.mcp_files.append((rel, servers))
+            self.walker._unreadable_gap(rel, BINARY_CONTENT_ERROR, by_content=True)
             return
         self.walker._discounted_gap(
             rel,
@@ -2172,16 +2174,28 @@ class FileScanner:
             charged_in_full=True,
         )
 
-    def _syntax_warning(self, file: _SourceFile, message: str) -> None:
-        """Record source that did not parse: a gap when ``_syntax_gap`` says so, else a plain warning.
+    def _binary_declares_mcp(self, rel: str, name: str, text: str) -> tuple[bool, Any]:
+        """Whether the NUL-stripped text of an undecodable file declares MCP servers, and its parse.
 
-        A gap goes through ``_gap``, so the ci profile declares it under a
-        template, example or test path, and is counted as unparsed input.
+        Decided as for a readable file the MCP parser judges by its content
+        (``_guessed_mcp_name``): parsed with the same bounded loader
+        (``_structured_context``), the structure decides (``_looks_like_mcp_config``),
+        so a quoted (``'mcpServers':``), spaced, explicit (``? mcpServers``) or
+        escaped key and a TOML inline table or literal key are read as the client
+        reads them. Text that does not parse to a mapping or a list is read for
+        any spelling of a server table key (``_may_declare_mcp``) instead of
+        being taken to declare none. The parse is returned when it is a mapping
+        or a list, else None.
         """
-        if self._syntax_gap(file):
-            self.walker._gap(file.rel, message, suffix=False, reason="unparsed-input")
-        else:
-            self.ctx.warn(message, incomplete=False)
+        if not _guessed_mcp_name(rel, name):
+            return False, None
+        try:
+            document = _structured_context(rel, text)
+        except (JSONIntegrityError, YAMLIntegrityError, YAMLResourceLimitError, SanitizationLimitError):
+            document = None
+        if isinstance(document, dict | list):
+            return self._looks_like_mcp_config(rel, name, text, document), document
+        return _may_declare_mcp(text.encode("latin-1", "replace").lower()), None
 
 
 # Words that make an env file's name a template's (.env.example, .env.sample,
@@ -2202,10 +2216,6 @@ def _env_values_file(name: str) -> bool:
     if not (lower.startswith(".env") or lower.endswith(".env")):
         return False
     return _ENV_TEMPLATE_WORDS.isdisjoint(re.split(r"[._-]", lower))
-
-
-# Suffixes of a file whose structure can make it an MCP configuration whatever its name.
-_MCP_STRUCTURE_SUFFIXES = (".json", ".toml", ".yaml", ".yml")
 
 
 _WORKFLOW_FILE = re.compile(r"(?:^|/)\.github/workflows/[^/]+\.ya?ml$")
@@ -2249,9 +2259,129 @@ def _mentions_mcp_keys(text: str) -> bool:
     )
 
 
+def _content_declares_mcp(rel: str, text: str, document: Any) -> bool:
+    """Whether a file the MCP parser decides by its content declares servers; ``document`` is its parse.
+
+    Decided from the parsed structure when it is held (JSON, TOML, and the YAML
+    every structured file is parsed into once): leading padding before the keys
+    then cannot hide a server table. A JSON object must be decided
+    structurally; a string search of a prefix could miss the keys. An array
+    declares servers only in a mapping it holds (``_document_declares_mcp``),
+    never in a transcript's ``mcp_servers`` status list. Past the walk's
+    bounds the text decides, by a key-shaped spelling only (``_names_mcp_key``):
+    an issue export quoting a client's configuration in a string is no MCP
+    configuration.
+
+    With no parse held (it failed, or the syntax was rejected) any spelling of
+    a key the client would read, quoted or escaped, keeps the file a candidate
+    (``_text_may_declare_mcp``), so its defect is recorded at full weight; a
+    YAML file's structure, parsed only now that the text names a key, then
+    decides, and a file it cannot read goes to the MCP parser. Workflows keep
+    the text search: their servers are JSON strings in step inputs, which
+    ``_embedded_workflow_mcp`` reads.
+    """
+    if _WORKFLOW_FILE.search(rel) is not None:
+        return _mentions_mcp_keys(text)
+    if document is not None:
+        declared = _document_declares_mcp(document)
+        return declared if declared is not None else _names_mcp_key(rel, text)
+    if not _text_may_declare_mcp(text):
+        return False
+    if rel.endswith(_YAML_SUFFIXES):
+        declared = _yaml_declares_mcp(text)
+        if declared is not None:
+            return declared
+    return True
+
+
+def _text_may_declare_mcp(text: str) -> bool:
+    """``_may_declare_mcp`` of decoded text: its bytes lower-cased, without NUL characters."""
+    return _may_declare_mcp(text.replace("\x00", "").encode("utf-8", "replace").lower())
+
+
+def _escaped_key(key: str) -> str:
+    """A pattern for ``key`` with any of its characters written as a JSON or TOML ``\\u`` escape."""
+    parts = []
+    for character in key:
+        digits = "".join(f"[{d.lower()}{d.upper()}]" if d.isalpha() else d for d in f"{ord(character):02x}")
+        parts.append(f"(?:{re.escape(character)}|\\\\(?:u00|U000000){digits})")
+    return "".join(parts)
+
+
+_TABLE_KEYS = f"(?:{_escaped_key('mcpServers')}|{_escaped_key('mcp_servers')})"
+
+
+# A key, not text: an unescaped double quote opens it (inside a JSON string every
+# quote is escaped) and a colon follows its closing quote.
+_JSON_TABLE_KEY = re.compile(rf'(?<!\\)"{_TABLE_KEYS}"\s*:')
+
+
+_JSON_MCP_KEY = re.compile(rf'(?<!\\)"{_escaped_key("mcp")}"\s*:')
+
+
+_JSON_SERVERS_KEY = re.compile(rf'(?<!\\)"{_escaped_key("servers")}"\s*:')
+
+
+# A TOML key at the start of a line or after an inline table's brace or comma: a
+# table header (``[mcp_servers.e]``, ``[tool.mcp_servers]``), a dotted key
+# (``mcp_servers.e.command =``) or an inline table (``mcp_servers = {``), bare or quoted.
+_TOML_TABLE_KEY = re.compile(
+    # A dotted prefix starts with a key character, so it cannot also take the
+    # blanks before it: one way to read each line, linear in its length.
+    r"(?:^|[{,])[ \t]*(?:\[\[?[ \t]*)?(?:[^\n=#\[\]{},\s][^\n=#\[\]{},]*\.[ \t]*)?"
+    rf"[\"']?{_TABLE_KEYS}[\"']?[ \t]*[.=\]]",
+    re.MULTILINE,
+)
+
+
+_YAML_SCAN_LOADER: Any = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+def _yaml_names_mcp_key(text: str) -> bool:
+    """Whether a YAML mapping key in ``text`` names a server table, however the key is quoted or escaped.
+
+    Read from the scanner's tokens, which undo quoting and escapes as the
+    loader does, so a key is told from text in a string value (a heredoc, an
+    OpenAPI description quoting a client's configuration). Text the scanner
+    cannot read is taken to name one.
+    """
+    keys: set[str] = set()
+    key = False
+    try:
+        for token in yaml.scan(text, Loader=_YAML_SCAN_LOADER):
+            if key and isinstance(token, yaml.ScalarToken):
+                if token.value in ("mcpServers", "mcp_servers"):
+                    return True
+                keys.add(token.value)
+            key = isinstance(token, yaml.KeyToken)
+    except yaml.YAMLError:
+        return True
+    return {"mcp", "servers"} <= keys
+
+
+def _names_mcp_key(rel: str, text: str) -> bool:
+    """Whether ``text`` spells a server table key as a key, not as text in a string value.
+
+    The check of a document whose parse the walk's bounds cut
+    (``mcp_server_holders``): a JSON key opened by an unescaped quote and
+    followed by a colon, a YAML mapping key (``_yaml_names_mcp_key``), a TOML
+    key, any of them with its characters written as escapes. A key past the
+    bounds keeps the file MCP configuration, so its unread table is recorded;
+    an issue export or an OpenAPI document that quotes a client's
+    configuration in a string is not.
+    """
+    if rel.endswith(_YAML_SUFFIXES):
+        return _yaml_names_mcp_key(text)
+    if rel.endswith(".toml"):
+        return _TOML_TABLE_KEY.search(text) is not None
+    return _JSON_TABLE_KEY.search(text) is not None or (
+        _JSON_MCP_KEY.search(text) is not None and _JSON_SERVERS_KEY.search(text) is not None
+    )
+
+
 @dataclass(frozen=True)
-class _BinaryTestFixture:
-    """A binary or undecodable file in discounted test code, read for credentials only.
+class _UndecodableFile:
+    """A binary or undecodable file whose gap is discounted or declared, read for credentials only.
 
     ``on_disk`` is its name below the open scan root, as ``_read_source`` read it.
     """

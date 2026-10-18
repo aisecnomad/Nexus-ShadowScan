@@ -58,15 +58,31 @@ container files, `.env`/CI secret references, provider credentials (redacted).
 A JSON, YAML or TOML file with another name is read as an MCP configuration
 when its structure declares servers (an `mcpServers` or `mcp_servers` key, or
 `mcp` with `servers`, within twelve levels of mappings and lists, the first 256
-entries of each). Inside a list only such a key holding a mapping of servers
-counts, so an array of records is not one because a record lists server
-statuses (a session transcript's `mcp_servers`). A document that declares no
-servers, a scalar included, is not one either, even when those keys appear in
-its values (a workflow example whose step writes an MCP configuration with a
-heredoc), and the other passes read it as ordinary configuration. A list that
-does declare them (an Ansible task writing `~/.cursor/mcp.json` from structured
-`content`) is passed to the MCP parser, which rejects its shape (`MCP
-configuration must be an object`), so the scan is incomplete. A
+entries of each). Inside a list only such a key holding a mapping of servers,
+or a list of server records (Continue's `mcpServers: [{name, command}]`, a
+record carrying `command`, `url`, `args`, `type` or `transport`), counts, so
+an array of records is not one because a record lists server statuses (a
+session transcript's `mcp_servers`). A document that declares no servers, a
+scalar included, is not one either, even when those keys appear in its values
+(a workflow example whose step writes an MCP configuration with a heredoc),
+and the other passes read it as ordinary configuration. A list that does
+declare them (an Ansible task writing `~/.cursor/mcp.json` or
+`~/.continue/config.yaml` from structured `content`, a list of client
+profiles, a registry catalog of `install` blocks) is read as the server
+tables its entries hold, merged into one MCP configuration finding (a name
+repeated across entries keeps a numbered suffix), and so is a mapping that
+holds its tables only below its top level (`profiles: [{mcpServers: ...}]`,
+a client's per-project `projects: {path: {mcpServers: ...}}`); a list that
+holds none under a dedicated MCP name is an input defect (`MCP configuration
+must be an object`). When a document is larger or deeper than the walk's
+bounds, the structure cannot rule a table out, so the file is decided from
+its text, by a key-shaped spelling only: a JSON key opened by an unescaped
+quote and followed by a colon, a YAML mapping key as the YAML scanner reads it
+(quoted and escaped forms included), or a TOML key, any of its characters
+written as an escape. A table past the bounds is then recorded as a limit
+(`MCP server tables past the walk limit`), which makes the scan incomplete;
+an issue export, an OpenAPI description or an AST fixture that merely quotes
+a client's `mcpServers:` in a string value is ordinary data. A
 dedicated MCP configuration name (`.mcp.json`, `mcp.json`, `smithery.yaml`, …)
 is always parsed, so its defects still make the scan incomplete, as does a
 document that declares servers in malformed form or cannot be read at all.
@@ -503,13 +519,38 @@ or `.env.sample`) the name test applies to token names only (`API_KEY`,
 `ACCESS_TOKEN`, `CLIENT_SECRET`): a PASSWORD or CREDENTIAL value there
 (`POSTGRES_PASSWORD=TrustNoOneEverAgain`, `POSTGRES_PASSWORD =
 PostgresProd2024Secure`) cannot name a variable and is reported unless it is
-a placeholder or a label: every word of it is label vocabulary, a function
-word or a word of the name, and every number is the name's
-(`KeycloakAdminPassword`, `svc1_local_dev_password` under
-`SVC1_DB_PASSWORD`); a year or any other word (`LocalAdmin2024Strong`,
-`snout_dev_thump_bloom`) makes it a password. A key pasted in place of an
-environment variable's name (`process.env.<KEY>`) is reported as a
-credential, by the same test that withholds it from evidence. In other
+a placeholder or a label: every word of it is label vocabulary, a qualifier
+(`only`, `for`, `not`, `must`, `please`, ...) or a word of the name, and
+every number is the name's (`KeycloakAdminPassword`,
+`svc1_local_dev_password` under `SVC1_DB_PASSWORD`), or it is an
+instruction: it holds an instruction word and every word of it is in the
+closed vocabulary of instructions (`change_me_to_a_strong_password`,
+`DoNotCommitThisOne`). There the account and quality words `admin`, `user`,
+`strong`, `internal` and `commit` label nothing, and a pronoun, article,
+preposition or the copula (`my`, `the`, `at`, `is`) without an instruction
+word makes a sentence, which is a password (`MyStrongPassword`,
+`my_secret_password`, `InternalUserPassword`); a year or any other word
+(`LocalAdmin2024Strong`, `snout_dev_thump_bloom`) makes it a password. In
+any file a sentence is a label only with an instruction word or a word of
+the label vocabulary and with every word in that closed vocabulary
+(`fly-me-to-the-moon` and `my-secret-garden-gate` are reported), and a
+possessive followed by words (`ton-jardin-secret`) is a label only when the
+placeholder test reads it as a template. A hard-coded fallback after an
+environment read, and the default a settings read is given
+(`GetValue<string>("OpenAI:ApiKey", "<key>")`,
+`configService.get("OPENAI_API_KEY", "<key>")`,
+`.orElse("<key>")`), is reported when it looks like a key; under a
+password's, passphrase's or secret's name after an environment read it is
+reported whatever its shape (after any other read, a message catalog's or
+ConfigParser's, it must look like a key) unless the redactor would keep it (a variable's name, a path, a URL, a
+placeholder, fewer than six characters) or it is a label. A key pasted in
+place of an environment variable's name is reported where the generic rule
+reads the read itself: a member read (`process.env.<KEY>`,
+`import.meta.env.<KEY>`, `Bun.env.<KEY>`, `os.environ.<KEY>`) or
+`Environment.GetEnvironmentVariable("<KEY>")`. A shorter call or subscript
+read (`os.getenv("<KEY>")`, `process.env["<KEY>"]`, `ENV["<KEY>"]`,
+`System.getenv("<KEY>")`) is withheld from evidence by the same test but
+gives no match, so it is not reported. In other
 configuration, documentation and templates a password's value may name a
 setting or a secret (`adminPassword: useExistingSecretKey`) and is read as
 in source code; see
@@ -606,11 +647,30 @@ content are coverage gaps of one entry each, charged to the
 [budget](../scanning.md#coverage-budget-and-strict-accounting). Binary content
 (NUL bytes that are not stray ones in text, see
 [scan semantics](../scanning.md)) in an analyzable file outside discounted test
-code, a link to a directory, and configuration its name selects (an MCP
-configuration, a coding-agent instruction, rule or settings file, a manifest,
-an agent card) that is over `max_file_size`, a link to a file the walk does not
-scan, or a FIFO, socket or device, make the scan incomplete at once, whatever
-the budget allows; `strict_coverage` promotes their diagnostics to errors. Declared
+code, a link to a directory other than an alias of one the walk scans whole
+inside the root (which costs one entry, as does an in-tree alias under a
+generic dot-directory such as `.github/actions/setup` or
+`web/public/.well-known` whose files are no configuration at the alias path),
+a link to or named like a directory an agent reads its configuration from
+(`.claude`, `.cursor`, `.vscode`, `.github/instructions`), which
+`profile: ci` never declares, and agent configuration (an MCP configuration
+by a dedicated name in any letter case, a coding-agent instruction, rule or
+settings file, a client's own settings file under a shared name
+(`.vscode/settings.json`), a file a coding-agent or MCP file signature selects with a
+directory-wide glob such as `.roo/**` or that lies in an agent definition
+directory, whatever its suffix (`.cursor/rules/deploy.rule`), an agent manifest or card) that is over
+`max_file_size`, a link to a file the walk does not scan, or a FIFO, socket or
+device, make the scan incomplete at once, under a test path too, whatever the
+budget allows, and so does a JSON, TOML or YAML file over `max_file_size`
+whose bytes name an MCP server table key (read for that check only, behind any
+padding, up to 128 MiB, with escaped key characters decoded and a folded quoted
+key joined), which `profile: ci` never declares, credential detection on or
+off; `strict_coverage` promotes their diagnostics to errors. A
+manifest or build file (`Dockerfile`, `package.json`, `requirements.txt`,
+`.env`) or a shared client name outside its client's directory
+(`config.json`, `settings.json`) linked or replaced by a FIFO costs one entry, as an asset beside agent rules
+(`.cursor/rules/demo.mp4`) over `max_file_size` does; an oversize dotenv
+file is blinding while `scan_secrets` is on. Declared
 oversize skip globs remain visible omissions, and directories skipped by the
 default excludes (`build`, `vendor`, `external`, …) are listed in one warning per
 root that does not affect completeness. Incomplete coverage is reserved for
@@ -649,7 +709,12 @@ Wherever their syntax appears in report text (a Dockerfile that writes a
 passwords, accounts and macros of netrc entries, with keywords in any case
 as curl reads them, including an entry in a comment (a comment in a string
 with `\n` escapes ends at the next one; a netrc file's own comment runs to
-the end of its line, a Windows path in it included), and Yarn 1's
+the end of its line, a Windows path in it included, also one whose
+directory is a netrc keyword such as `\\nas\user\fred` or
+`C:\Users\bob\default\new`; only a keyword right after a line-break escape
+and before another escape, as in `C:\data\nuser\fred`, reads the line as
+escaped text, so that comment ends at the `\n` and what follows is read as
+the entry's tokens), and Yarn 1's
 `name value` registry credentials are withheld (see
 [what is redacted](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-is-redacted),
 and [what can remain](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-can-remain)
@@ -658,18 +723,27 @@ entry among them).
 A file whose name selects no analysis (`*.jsonl`, `*.bak`,
 `*.j2`, binary and media suffixes) is never opened, so it is neither scanned
 for credentials nor counted as a coverage gap; name such files in a file-name
-signature pack to read them. A file's credential finding carries at most
-five credentials per credential format (`metadata.count` counts them, one per
-credential however many patterns or lines match it: a credential repeated on
-another line, such as one password in each service of a compose file or one
-key in each document of a manifest, is reported once, at its first line, and
-counts once). A reference to a credential
+signature pack to read them. A file's credential finding counts at most
+five distinct credentials per credential format toward its quota, and
+`metadata.count` counts the distinct credentials of the finding's evidence,
+in every credential finding: a credential matched by several patterns, or repeated
+on several lines (one password in each service of a compose file, one key
+in each document of a manifest, one provider key on six lines of a `.env`),
+counts once. Its evidence lists up to five of the lines a repeated
+credential is written on in the file's text, and in a `.env*` file every
+line whose value holds a provider-format key, since each value there is
+also matched on its own. A reference to a credential
 (`api_key = settings.API_KEY`), a documentation placeholder
-(`OPENAI_API_KEY=sk-your-key-here-1a2b`, which becomes example evidence) and
-a short `sk-` value that does not look random take no place in that quota,
-so a `.env.example` of sample keys is complete. A file
-holding more credentials of one format is reported with that quota's worth of
-evidence, `metadata.secrets_limited` naming the formats, and the diagnostic
+(`OPENAI_API_KEY=sk-your-key-here-1a2b`, which becomes example evidence),
+a short `sk-` value that does not look random, a further line of a
+credential already counted, and a key pasted as a variable's name that does
+not look like an opaque key (letters and digits alternating in a long run;
+`process.env.SVC1OPENAIAPIKEYPROD` is reported, at most five of them per
+format) take no place in that quota, so a `.env.example` of sample keys is
+complete. A file
+holding more distinct credentials of one format than the quota counts is
+reported with that quota's worth of them, `metadata.secrets_limited` naming
+the formats, and the diagnostic
 `credential quota limit reached: more than 5 credentials matched <format>;
 credential evidence incomplete`, which makes the scan incomplete
 (`incomplete_reasons.analysis-limit`): the count is a lower bound, never a
@@ -689,7 +763,9 @@ file under a test or fixture path (a recorded cassette under
 cannot establish a deployment (warning `skipped oversize test fixture`; the
 connector counts them in `skipped_oversize_test_fixtures` and reports the
 count in one summary warning per root). Instruction documents, agent
-definitions, source and configuration keep the gap in every mode. Every
+definitions and other agent configuration keep the gap in every mode, under a
+test path too, and so does a JSON, TOML or YAML fixture whose bytes name an MCP
+server table: the reader checks its content before it skips it. Every
 skipped file is still named. A coding-agent settings file skipped by either
 rule, or by an operator's `oversize_skip_globs`, is still recorded as unread
 for the approval gate of its project (see
@@ -1198,7 +1274,8 @@ repositories each within its budget stays complete. The published
 over their own budget, `tolerated_gap_entries` the entries the others
 tolerated, and its `details` list the gaps of the repositories that left the
 scan incomplete first. Blinding gaps (an LFS pointer, a gitlink,
-a directory link) fail closed without a budget, `profile: ci` declarations
+a directory link other than an alias of a scanned directory) fail closed
+without a budget, `profile: ci` declarations
 are counted apart, and with `--max-coverage-gap 0`
 ([strict accounting](../scanning.md#coverage-budget-and-strict-accounting))
 any gap makes the scan incomplete.

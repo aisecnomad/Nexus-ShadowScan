@@ -369,7 +369,7 @@ _MOVED_FROM_FILESYSTEM = {
     "shadowscan.connectors.code.file_scan": (
         "AbstractSet",
         "assess_posture",
-        "_BinaryTestFixture",
+        "_UndecodableFile",
         "CI_IMAGE_WEIGHT_SCALE",
         "_clip",
         "_COLOCATED_SIGNATURES",
@@ -390,7 +390,6 @@ _MOVED_FROM_FILESYSTEM = {
         "_MAX_MCP_TOOLS",
         "_MCP_REGISTRATION_RE",
         "_MCP_SERVER_IMPORT_RE",
-        "_MCP_STRUCTURE_SUFFIXES",
         "_mentions_mcp_keys",
         "posture_parseable",
         "_WORKFLOW_EXTENSIONS",
@@ -610,6 +609,7 @@ _MOVED_FROM_FILESYSTEM = {
         "_WalkBudget",
         "_WalkCounters",
         "_WalkLimitError",
+        "_MCP_STRUCTURE_SUFFIXES",
     ),
     "shadowscan.connectors.common": (
         "apply_matches",

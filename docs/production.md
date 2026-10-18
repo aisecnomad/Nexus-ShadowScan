@@ -561,9 +561,13 @@ leaving the root, oversized files the scanner would
 inspect and files it analyzes by name but cannot read as text (binary content
 with dense NUL bytes, mostly invalid UTF-8, or UTF-16 or UTF-32 without a byte-order mark; a few stray NUL
 bytes or invalid bytes in otherwise valid text do not count) are coverage gaps,
-each named in a diagnostic. A directory link, undecodable content outside
-discounted test code and an oversize configuration file make the scan
-incomplete (exit 3) at once; the others are charged to each scan root's
+each named in a diagnostic. A directory link (other than an alias of a
+directory the walk scans whole inside the root), undecodable content outside
+discounted test code and unread agent configuration (by its name in any
+letter case, by a coding-agent or MCP file signature, or by the server table an
+oversize file's bytes name) make the scan incomplete (exit 3) at once; a file
+left unread for credentials (oversize, or unreadable) costs a whole entry under
+a test path too and is never declared by `profile: ci`; the others are charged to each scan root's
 coverage budget (2% of its entries, `max_coverage_gap`), within which the
 scan stays complete and counts them in `summary.tolerated_gaps` (see
 [coverage budget and strict accounting](scanning.md#coverage-budget-and-strict-accounting)).
@@ -602,12 +606,19 @@ Recognisable placeholder credentials (repeated characters, marker words such as
 `EXAMPLE` or its translation, very low character diversity) are no longer
 reported, and neither is an assigned value shaped like the name of another
 variable (`api_key = resolved_api_key`) or an instruction label
-(`change-me-please`, `must-be-set-at-runtime`). A password in an env or
+(`change-me-please`, `must-be-set-at-runtime`); a sentence is such a label
+only with an instruction word and every word in that closed vocabulary
+(`fly-me-to-the-moon` is reported). A password in an env or
 credential file is reported unless every word of it labels it, a key pasted
-as an environment variable's name is reported, and one credential repeated
-on several lines (one password per compose service) counts once toward the
-five-per-format quota, so it no longer makes the scan incomplete; see the
-[migration notes](production-migrations.md). A real-format credential in a test,
+as an environment variable's name in a member read (`process.env.<KEY>`) is
+reported, and so are a key given as a settings read's default argument and a
+fallback of any shape under a password's or secret's name after an environment
+read. One credential
+repeated on several lines (one password per compose service) counts once
+toward the five-per-format quota and in the finding's `count`, while its
+lines (up to five) are still listed, and a pasted name that does not look
+like an opaque key takes no place in the quota (at most five are reported),
+so neither makes the scan incomplete; see the [migration notes](production-migrations.md). A real-format credential in a test,
 fixture or `cassettes/` path is still a `secret` finding, at half weight and
 tagged `test-code-only` unless `include_tests: true` is set; one under a
 documentation, example or generated path carries that context's tag and

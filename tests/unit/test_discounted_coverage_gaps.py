@@ -144,24 +144,92 @@ def test_a_yaml_mcp_configuration_is_decided_from_the_parse_already_held(
         pytest.param(
             "agents/mcp.yaml", "mcpServers:\n  files:\n    command: npx\n  1: nope\n", id="declared"
         ),
-        # So does a list that holds a mapping of servers: no client reads it, and the MCP
-        # parser rejects its shape, but it carries a server configuration all the same.
-        pytest.param("deploy/agent.yaml", ANSIBLE_MCP_TASK, id="ansible-task"),
+        # A table past the bounds of the structural walk is not read: a limit, never
+        # a file taken to declare none.
         pytest.param(
-            "deploy/agent.yaml",
-            "- name: client\n  mcpServers:\n    evil:\n      command: npx\n",
-            id="yaml-list",
+            "deploy/site.json",
+            "[" + ",".join(["{}"] * 300) + ',{"content": {"mcpServers": {"e": {"command": "npx"}}}}]',
+            id="past-the-breadth-bound",
         ),
         pytest.param(
             "deploy/clients.json",
-            '[{"name": "client", "mcpServers": {"evil": {"command": "npx"}}}]',
-            id="json-list",
+            "[" * 14 + '{"mcpServers": {"e": {"command": "npx"}}}' + "]" * 14,
+            id="past-the-depth-bound",
         ),
     ],
 )
 def test_a_real_mcp_configuration_that_does_not_parse_stays_a_gap(tmp_path, run_connector, name, text):
     _, ctx = _scan(tmp_path, run_connector, {name: text})
     assert ctx.stats.incomplete
+
+
+CONTINUE_PLAY = """\
+- hosts: all
+  tasks:
+    - copy:
+        dest: ~/.continue/config.yaml
+        content:
+          mcpServers:
+            - name: evil
+              command: npx
+"""
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "servers"),
+    [
+        # A list that holds a mapping of servers, or Continue's list of server
+        # records: no client reads the file itself, but it carries a server
+        # configuration all the same, so its tables are read and reported.
+        pytest.param("deploy/agent.yaml", ANSIBLE_MCP_TASK, ["evil"], id="ansible-task"),
+        pytest.param("deploy/agent.yaml", CONTINUE_PLAY, ["evil"], id="ansible-continue-list"),
+        pytest.param(
+            "deploy/agent.yaml",
+            "- name: client\n  mcpServers:\n    evil:\n      command: npx\n",
+            ["evil"],
+            id="yaml-list",
+        ),
+        pytest.param(
+            "deploy/clients.json",
+            '[{"name": "client", "mcpServers": {"evil": {"command": "npx"}}}]',
+            ["evil"],
+            id="json-list",
+        ),
+        pytest.param(
+            "deploy/clients.json",
+            '[{"name": "c", "mcpServers": [{"name": "e", "command": "npx"}]}]',
+            ["e"],
+            id="json-list-of-records",
+        ),
+        # A mapping that holds its tables below its top level: profiles in a list,
+        # a client's per-project section.
+        pytest.param(
+            "deploy/agent.yaml",
+            "profiles:\n  - mcpServers:\n      evil:\n        command: npx\n",
+            ["evil"],
+            id="profiles-in-a-mapping",
+        ),
+        pytest.param(
+            "deploy/claude.json",
+            '{"projects": {"/repo": {"mcpServers": {"evil": {"command": "npx"}}}}}',
+            ["evil"],
+            id="per-project-section",
+        ),
+        # A registry catalog: one table per entry, a repeated name numbered.
+        pytest.param(
+            "tests/fixtures/registry.json",
+            '[{"id": "github", "install": {"mcpServers": {"github": {"command": "npx"}}}},'
+            ' {"id": "fork", "install": {"mcpServers": {"github": {"command": "uvx"}}}}]',
+            ["github", "github#2"],
+            id="registry-catalog",
+        ),
+    ],
+)
+def test_a_list_that_holds_server_tables_is_read_and_reported(tmp_path, run_connector, name, text, servers):
+    findings, ctx = _scan(tmp_path, run_connector, {**FILLER, name: text})
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    [finding] = [f for f in findings if f.kind.value == "mcp-server"]
+    assert sorted(server["name"] for server in finding.metadata["servers"]) == servers
 
 
 @pytest.mark.parametrize(
@@ -191,11 +259,16 @@ def test_the_structural_mcp_walk_descends_into_lists_within_its_bounds():
     ]
     assert _document_declares_mcp(play)
     assert not _document_declares_mcp([{"mcp_servers": [{"name": "github", "status": "connected"}]}])
-    # Bounded: a document nested far past the depth bound ends the walk instead of the stack.
+    # A list of server records declares them inside a list too.
+    assert _document_declares_mcp([{"mcpServers": [{"name": "e", "command": "npx"}]}])
+    # Bounded: a document nested far past the depth bound ends the walk instead of the
+    # stack, and says it was cut (None) so the caller reads the text instead.
     deep: list[object] = [servers]
     for _ in range(5_000):
         deep = [deep]
-    assert not _document_declares_mcp(deep)
+    assert _document_declares_mcp(deep) is None
+    assert _document_declares_mcp([{}] * 300 + [servers]) is None
+    assert _document_declares_mcp([{}] * 300) is False
 
 
 # ------------------------------------------------------ discounted test code
@@ -318,16 +391,67 @@ GUESSED_MCP = "mcpServers:\n  evil:\n    command: npx\n"
             '{"mcp": {"servers": {"evil": {"command": "npx"}}}',
             id="client-name-syntax",
         ),
+        # A guessed configuration's key in any spelling the client reads, with a NUL.
+        pytest.param(
+            "tests/fixtures/agent.yaml", "'mcpServers':\n  e:\n    command: npx\n\x00", id="yaml-quoted-nul"
+        ),
+        pytest.param(
+            "tests/fixtures/agent.yaml", "mcpServers :\n  e:\n    command: npx\n\x00", id="yaml-spaced-nul"
+        ),
+        pytest.param(
+            "tests/fixtures/agent.yaml", "? mcpServers\n: e: {command: npx}\n\x00", id="yaml-explicit-nul"
+        ),
+        pytest.param(
+            "tests/.vscode/settings.json",
+            '{"\\u006dcp": {"servers": {"e": {"command": "npx"}}}}\x00',
+            id="json-escaped-nul",
+        ),
+        pytest.param(
+            "tests/fixtures/x.toml", "mcp_servers = { e = { command = 'npx' } }\n\x00", id="toml-inline-nul"
+        ),
+        pytest.param(
+            "tests/fixtures/x.toml", "['mcp_servers'.e]\ncommand = 'npx'\n\x00", id="toml-literal-nul"
+        ),
+        # Binary bytes around the key: no parse, so any spelling of the key keeps the gap.
+        pytest.param(
+            "tests/fixtures/agent.json", _binary('{"mcpServers": {"e": {"command": "npx"}}}'), id="binary"
+        ),
     ],
 )
+@pytest.mark.parametrize("profile", ["default", "ci"])
 @pytest.mark.parametrize("scan_secrets", [True, False], ids=["secrets", "no-secrets"])
 def test_a_full_weight_file_under_a_test_path_that_cannot_be_read_stays_a_gap(
-    tmp_path, run_connector, name, content, scan_secrets
+    tmp_path, run_connector, name, content, scan_secrets, profile
 ):
-    _, ctx = _scan(tmp_path, run_connector, {name: content}, scan_secrets=scan_secrets)
-    assert ctx.stats.incomplete
+    # 61 entries allow 1.22 weighted entries: a budgeted gap would leave the scan
+    # complete, so only a blinding one, never declared, passes.
+    _, ctx = _scan(
+        tmp_path, run_connector, {**FILLER, name: content}, scan_secrets=scan_secrets, profile=profile
+    )
+    assert ctx.stats.incomplete, f"{name} was budgeted, discounted or declared"
+    # Excerpts withheld for a parse failure are not the configuration's own gap:
+    # that parse runs before the structure says the file is an MCP configuration.
+    assert not [w for w in ctx.stats.warnings if "declared omission" in w and "excerpts withheld" not in w]
     hidden = [w for w in ctx.stats.warnings if "discounted evidence" in w and "structured parsing" not in w]
     assert not hidden
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        pytest.param("tests/fixtures/agent.yaml", GUESSED_MCP + "\x00", id="guessed-yaml"),
+        pytest.param(
+            "tests/fixtures/agent.yaml", "'mcpServers':\n  evil:\n    command: npx\n\x00", id="quoted-key"
+        ),
+        pytest.param("tests/fixtures/x.toml", "[mcp_servers.evil]\ncommand = 'npx'\n\x00", id="toml"),
+    ],
+)
+def test_an_undecodable_fixture_that_declares_servers_reports_them(tmp_path, run_connector, name, content):
+    # The NUL-stripped text is parsed as the client parses the file, so the
+    # servers it declares are reported beside the blinding gap.
+    findings, ctx = _scan(tmp_path, run_connector, {**FILLER, name: content})
+    assert ctx.stats.incomplete and ctx.stats.coverage["blinding_gaps"] == 1
+    assert [f.title for f in findings if f.kind.value == "mcp-server"] == [f"MCP configuration: {name}"]
 
 
 @pytest.mark.parametrize(

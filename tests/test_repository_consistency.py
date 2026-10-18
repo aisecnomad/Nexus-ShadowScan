@@ -2654,6 +2654,12 @@ _STALE_COVERAGE_CLAIMS = (
     "seeded with hundreds",
     # A file left unread for credentials is never declared.
     "unread for credentials; declared omission",
+    # A malformed fixture records one to three quarter-weight gaps, not one.
+    "a malformed fixture costs a quarter of an entry",
+    "up to about 8% of its entries (2% at a quarter each)",
+    "a root tolerates malformed fixtures up to about 8% of its entries and",
+    # Manifests and shared client names are not agent configuration.
+    "expect exit 3 for a monorepo that links",
 )
 
 

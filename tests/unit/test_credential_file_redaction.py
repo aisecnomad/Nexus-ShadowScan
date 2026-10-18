@@ -157,6 +157,23 @@ PATH_COMMENT_FORMS = [
     f"machine h\nforce yes\npassword {SECRET}\n",
     f"machine h\n  force\n  yes\n  login u\n  password {SECRET}\n",
 ]
+# A netrc file's own comment whose Windows path holds a keyword-named
+# directory next to a backslash ('\\nas\user\fred', 'C:\Users\bob\default\new')
+# read its line as an escaped string, so the comment ended at the path's
+# first '\n' or '\r' and the rest ended the entry; a blank line or a block
+# of comment lines before the password then showed it. Withheld once more.
+KEYED_PATH_COMMENT_FORMS = [
+    f"machine fs\n  login bob\n  # home share \\\\nas\\user\\fred\n\n  password {SECRET}\n",
+    f"machine fs\n  login bob\n  # no quote C:\\user\\new\n\n  password {SECRET}\n",
+    f"machine fs\n  login bob\n  # Bob's home is C:\\Users\\bob\\default\\new\n\n  password {SECRET}\n",
+    "machine fs\n  login bob\n  # home share \\\\nas\\user\\fred\n"
+    + "  # x\n" * 8
+    + f"  password {SECRET}\n",
+    f"machine fs\n  login bob\n  # \\\\srv\\account\\new\n\n  password {SECRET}\n",
+    f"machine fs\n  login bob\n  # C:\\x\\machine\\new\n\n  password {SECRET}\n",
+    f"machine fs\n  login bob\n  # \\\\nas\\login\\tom\n\n  password {SECRET}\n",
+    f"machine fs\n  login bob\n  # C:\\x\\nlogin\\y\n\n  password {SECRET}\n",
+]
 # An entry spread over adjacent string literals: Python's implicit
 # concatenation, a JavaScript or C '+' chain, literals parted by a line
 # continuation or by a comment. The closing quote and the next line's
@@ -235,6 +252,7 @@ OWN_SYNTAX_FORMS = [
     + SPLIT_FORMS
     + COMMENT_FORMS
     + PATH_COMMENT_FORMS
+    + KEYED_PATH_COMMENT_FORMS
     + ADJACENT_FORMS
     + DEFAULT_FORMS
     + GLUED_FORMS
@@ -270,6 +288,7 @@ def _only_adds_markers(before: str, after: str) -> bool:
     + SPLIT_FORMS
     + COMMENT_FORMS
     + PATH_COMMENT_FORMS
+    + KEYED_PATH_COMMENT_FORMS
     + ADJACENT_FORMS
     + DEFAULT_FORMS
     + GLUED_FORMS

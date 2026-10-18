@@ -130,7 +130,6 @@ from shadowscan.connectors.code.file_scan import (
 from shadowscan.connectors.code.file_scan import _MAX_MCP_TOOLS as _MAX_MCP_TOOLS
 from shadowscan.connectors.code.file_scan import _MCP_REGISTRATION_RE as _MCP_REGISTRATION_RE
 from shadowscan.connectors.code.file_scan import _MCP_SERVER_IMPORT_RE as _MCP_SERVER_IMPORT_RE
-from shadowscan.connectors.code.file_scan import _MCP_STRUCTURE_SUFFIXES as _MCP_STRUCTURE_SUFFIXES
 from shadowscan.connectors.code.file_scan import _WORKFLOW_EXTENSIONS as _WORKFLOW_EXTENSIONS
 from shadowscan.connectors.code.file_scan import _WORKFLOW_FILE as _WORKFLOW_FILE
 from shadowscan.connectors.code.file_scan import _XML_EXTENSIONS as _XML_EXTENSIONS
@@ -138,11 +137,11 @@ from shadowscan.connectors.code.file_scan import CI_IMAGE_WEIGHT_SCALE as CI_IMA
 from shadowscan.connectors.code.file_scan import MAX_INSTRUCTION_TEXT_BYTES as MAX_INSTRUCTION_TEXT_BYTES
 from shadowscan.connectors.code.file_scan import AbstractSet as AbstractSet
 from shadowscan.connectors.code.file_scan import FileScanner
-from shadowscan.connectors.code.file_scan import _BinaryTestFixture as _BinaryTestFixture
 from shadowscan.connectors.code.file_scan import _clip as _clip
 from shadowscan.connectors.code.file_scan import _env_values_file as _env_values_file
 from shadowscan.connectors.code.file_scan import _load_json_lenient as _load_json_lenient
 from shadowscan.connectors.code.file_scan import _mentions_mcp_keys as _mentions_mcp_keys
+from shadowscan.connectors.code.file_scan import _UndecodableFile as _UndecodableFile
 from shadowscan.connectors.code.file_scan import _yaml_declares_mcp as _yaml_declares_mcp
 from shadowscan.connectors.code.file_scan import assess_posture as assess_posture
 from shadowscan.connectors.code.file_scan import posture_parseable as posture_parseable
@@ -321,6 +320,7 @@ from shadowscan.connectors.code.walk import _DOCUMENTATION_EXTENSIONS as _DOCUME
 from shadowscan.connectors.code.walk import _IGNORED_STAT_ERRNOS as _IGNORED_STAT_ERRNOS
 from shadowscan.connectors.code.walk import _LOCKFILE_MANIFESTS as _LOCKFILE_MANIFESTS
 from shadowscan.connectors.code.walk import _MAX_NON_REGULAR_NOTES as _MAX_NON_REGULAR_NOTES
+from shadowscan.connectors.code.walk import _MCP_STRUCTURE_SUFFIXES as _MCP_STRUCTURE_SUFFIXES
 from shadowscan.connectors.code.walk import _NEVER_READ_SUFFIXES as _NEVER_READ_SUFFIXES
 from shadowscan.connectors.code.walk import _ROOT_OPEN_REASONS as _ROOT_OPEN_REASONS
 from shadowscan.connectors.code.walk import DEADLINE_MARGIN_FRACTION as DEADLINE_MARGIN_FRACTION

@@ -169,6 +169,10 @@ _PART_COUNTS = ("parts", "parts_over_budget", "tolerated_gap_entries")
 _OPTIONAL_KEYS = frozenset({"details_truncated", *_PART_COUNTS})
 _SUMMARY_KEYS = frozenset((*_SUMMARY_COUNTS, *_SUMMARY_AMOUNTS, "within_budget", "details", *_OPTIONAL_KEYS))
 _GAP_KEYS = frozenset({"detail", "path", "kind", "entries", "full_weight", "reason", "relevance"})
+#: Published with a gap whose part has a label: the scan root or repository it was
+#: recorded in, so the gap a verdict line names can be told apart in a combined
+#: summary whose roots share paths. Optional, so a report written without it loads.
+_GAP_PART = "part"
 
 
 def _is_count(value: object) -> bool:
@@ -184,7 +188,8 @@ def _is_amount(value: object) -> bool:
 def _valid_gap(gap: object) -> bool:
     return (
         isinstance(gap, dict)
-        and set(gap) == _GAP_KEYS
+        and set(gap) - {_GAP_PART} == _GAP_KEYS
+        and (_GAP_PART not in gap or (isinstance(gap[_GAP_PART], str) and bool(gap[_GAP_PART])))
         and isinstance(gap["detail"], str)
         and isinstance(gap["path"], str)
         and gap["kind"] in (BLINDING, PARTIAL)
@@ -421,8 +426,16 @@ class _LedgerPart:
         allowance = policy.allowance(self.examined)
         over_budget = bool(self.gaps) and weighted > allowance
         # A hostile tree can plant thousands of gaps. Every one is counted
-        # against the budget; only the published list is bounded.
-        details = [gap.to_dict() for gap in self.gaps[:MAX_PUBLISHED_GAPS]]
+        # against the budget; only the published list is bounded, and the
+        # blinding gaps lead it, so the gap that condemned the part is never
+        # cut by tolerated ones recorded before it. The sort is stable: each
+        # kind keeps the order it was recorded in.
+        ordered = sorted(self.gaps, key=lambda gap: not gap.blinding)
+        details = [gap.to_dict() for gap in ordered[:MAX_PUBLISHED_GAPS]]
+        if self.label:
+            # Which root or repository each gap lies in, as the verdict line names it.
+            for detail in details:
+                detail[_GAP_PART] = self.label
         summary: dict[str, Any] = {
             "examined": self.examined,
             "gaps": len(self.gaps),

@@ -380,12 +380,12 @@ def test_mcp_parser_does_not_see_the_bom_after_read_text(tmp_path):
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs FIFOs")
 @pytest.mark.parametrize(
-    ("name", "configuration"), [(".mcp.json", True), ("requirements.txt", True), ("agent.py", False)]
+    ("name", "configuration"), [(".mcp.json", True), ("requirements.txt", False), ("agent.py", False)]
 )
 def test_fifo_named_like_an_analyzable_file_is_a_coverage_gap(tmp_path, run_connector, name, configuration):
-    # A FIFO in place of configuration its name selects is blinding, an error at
-    # once, as an oversize copy of it is; one named like other content is one
-    # entry of the budget, which this one-entry tree cannot absorb.
+    # A FIFO in place of agent configuration is blinding, an error at once, as
+    # an oversize copy of it is; one named like other content, a manifest
+    # included, is one entry of the budget, which this one-entry tree cannot absorb.
     os.mkfifo(tmp_path / name)
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete

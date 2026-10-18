@@ -304,7 +304,10 @@ coverage, even when a response includes an empty collection field.
   line-break escape before the `#`, or the same quote both before and after
   it, so the password of `"machine h\n  # bot\npassword v"` is withheld,
   while a netrc file's own `# Bob's share is C:\new\data` runs to the end
-  of its line), and the lines of a netrc `macdef` macro up to the empty
+  of its line; a keyword that is a directory of a Windows path, right after
+  a backslash or right before one that starts no escape, is no escape next
+  to a keyword, so `# home \\nas\user\fred` and `# C:\Users\bob\default\new`
+  run to the end of theirs too), and the lines of a netrc `macdef` macro up to the empty
   line that ends it (a word after `default password` in prose is withheld
   as well, and so is a word after `password` or `account` that follows
   `machine`, `default` or `login` on its line or in its region, as in
@@ -371,14 +374,27 @@ coverage, even when a response includes an empty collection field.
   ends the value (`apiKey: process.env.KEY, // old: ...`, `api_key =
   os.environ["KEY"]; # ...`). A later line goes on with that value when it
   starts with a fallback operator (Black's `    or "...",`) or the line before
-  ends with one, with comment lines between. Under a
-  password's name (`password`, `passwd`, `pwd`, `passphrase` or `pass` as the
-  last word) every string literal of the value up to the line's next entry is
-  withheld whole, whatever its shape (`dbPassword:
-  process.env.DB_PASSWORD?.trim() || "..."`, `db_password: os.getenv("K",
-  "...")`, a passphrase with spaces too), as the assignment form withholds
-  it; an upper-case variable name, a path, a URL, a placeholder and a literal
-  of fewer than six characters stay. A template that assembles its text from
+  ends with one, with comment lines between. Under each
+  password's or secret's name on the line (`password`, `passwd`, `pwd`,
+  `passphrase`, `pass` or `secret` as the last word, or a last word that runs
+  words together and ends in one of them but `pass` and `pwd`, such as
+  `dbpassword` or `CLIENTSECRET`), not only under its first credential name (`{
+  apiKey: ..., password: ... }`, `client.setApiKey(k); ... { password: ...
+  }`), every string literal of the value up to the next entry of its own
+  mapping, object or argument list is withheld whole, whatever its shape
+  (`dbPassword: process.env.DB_PASSWORD?.trim() || "..."`, `db_password:
+  os.getenv("K", "...")`, `clientSecret: process.env.S?.trim() || "..."`, a
+  passphrase with spaces too), as the assignment form withholds it: after an
+  environment read the matcher reports such a fallback whatever its shape. A keyword argument of the read is part of the value
+  (`cfg.get("db", "password", fallback="...")`, `env("P",
+  default_value="...")`, `{ fallback: "..." }`), and a closer that closes
+  no opener on the line (an earlier pass withheld it with the start of the
+  value, or a line before opened it) counts as one opened in the value, so
+  the value goes on past the entries before it. Spans
+  withheld for one value merge, so a literal whose start looks like a token
+  is withheld to its end, not only that token. An upper-case variable name,
+  a path, a URL, a placeholder and a literal of fewer than six characters
+  stay. A template that assembles its text from
   expressions (`${prefix}...`) stays, as in assignments. A read is withheld
   as well when its variable name looks like a key pasted in place of the
   name: letters and digits
@@ -452,6 +468,18 @@ coverage, even when a response includes an empty collection field.
 
 ### What can remain
 
+- **Credentials in a file over `max_file_size` are not read.** The credential
+  pass reads every analyzable file up to `max_file_size` (1,000,000 bytes by
+  default), and no further: a key in an oversize cassette, fixture or data
+  export is not reported. The scan records the file as a coverage gap of a
+  whole entry wherever it lies (it is never declared by `profile: ci` or
+  weighed down as test code), so a few such files are tolerated within the
+  coverage budget, listed in `stats[].coverage.details` and counted in
+  `summary.tolerated_gaps`, and more of them exit 3. An oversize dotenv file
+  (`.env`, `.env.production`) always exits 3 while credentials are scanned; an
+  oversize tool credential file (`.npmrc`, `.netrc`) is one such entry. Raise
+  `max_file_size`, or set `--max-coverage-gap 0`, where such a key must not be
+  missed.
 - **Limitations:** Redaction cannot withhold a credential that nothing names or shapes as one,
   so treat reports as confidential. In evidence snippets only, a last-resort
   pass also withholds a quoted literal that looks generated: at least 20
@@ -465,9 +493,9 @@ coverage, even when a response includes an empty collection field.
   look like an opaque key (one that does is withheld, as after any credential
   name on its line); a value assembled by a computed expression; after a read
   the value lexer cuts, in `name: value` form or a callee's arguments, a
-  literal under a name that is no password's that does not look like an
-  opaque key (`apiKey: cfg("a", "b") || "correct-horse-battery-staple"`), and
-  under a password's name a literal of fewer than six characters or one that
+  literal under a name that is no password's or secret's that does not look
+  like an opaque key, punctuated or not (`apiKey: cfg("a", "b") ||
+  "correct-horse-battery-staple"`), and under a password's or secret's name a literal of fewer than six characters or one that
   reads as an upper-case variable name (`|| "HUNTERPASS"`); a literal on a later
   line that the value lexer does not reach when that line does not start with
   a fallback operator and the line before does not end with one; a key in a
@@ -516,7 +544,11 @@ coverage, even when a response includes an empty collection field.
   name does not end in a credential word as above (`OpenAIKey`, `key1`, a
   bare `auth` or `pass`) and holds a value that looks like no credential; a
   record outside the bounded sibling/flow rules above; a
-  value split across concatenated strings; a netrc value after a token the
+  value split across concatenated strings; a netrc entry spread over
+  prefixed string literals or JavaScript template literals (Python's
+  `b"machine h\n"`, `f"..."` or `r"..."` on the next lines, `` `machine h\n`
+  + `` and so on), whose prefix or backtick the join of adjacent literals
+  does not read, so the entry ends after `machine`; a netrc value after a token the
   format does not define on a later line than the entry's last token, which
   ends the entry there as prose after `machine learning` does, when a blank
   line, the next entry's `machine`, `default` or `macdef`, or the end of the

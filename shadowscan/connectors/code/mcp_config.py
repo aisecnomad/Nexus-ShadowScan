@@ -154,6 +154,122 @@ def _embedded_workflow_mcp(workflow: Any, errors: list[str]) -> dict[str, Any]:
     return {"mcpServers": servers} if servers else {}
 
 
+#: Bounds of the walk that looks for MCP server tables in a parsed document:
+#: container levels below the root, and entries read per container.
+MCP_WALK_DEPTH = 12
+MCP_WALK_BREADTH = 256
+# Fields a server record in a server list carries (Continue's ``mcpServers:
+# [{name, command}]``) and a session transcript's status record does not.
+_SERVER_RECORD_KEYS = frozenset({"command", "url", "args", "type", "transport"})
+HELD_TABLES_LIMIT = "MCP server tables past the walk limit; not all read"
+
+
+def _server_table(value: Any, listed: bool) -> bool:
+    """Whether ``value``, under a server table key, configures servers.
+
+    Outside a list the key's presence is the signal, whatever its value: a
+    malformed value (``mcpServers: "x"``) must still route to the server
+    parser, which records the input defect. A list holds records, and a
+    record's ``mcp_servers`` can be a status list (a session transcript), so
+    there only a mapping of servers, or a list of server records, declares them.
+    """
+    if not listed or isinstance(value, dict):
+        return True
+    return isinstance(value, list) and any(
+        isinstance(entry, dict) and not _SERVER_RECORD_KEYS.isdisjoint(entry)
+        for entry in value[:MCP_WALK_BREADTH]
+    )
+
+
+def _holds_server_table(node: dict[Any, Any], listed: bool) -> bool:
+    """Whether mapping ``node`` holds a server table: ``mcpServers``, ``mcp_servers`` or ``mcp.servers``."""
+    if any(key in node and _server_table(node[key], listed) for key in ("mcpServers", "mcp_servers")):
+        return True
+    mcp = node.get("mcp")
+    return isinstance(mcp, dict) and "servers" in mcp and _server_table(mcp["servers"], listed)
+
+
+def mcp_server_holders(document: Any, *, first: bool = False) -> tuple[list[dict[Any, Any]], bool]:
+    """The mappings of a parsed document that hold an MCP server table, and whether the bounds cut the walk.
+
+    The table may sit at the top level, nested within a client's section, or
+    in a mapping inside a list (an Ansible task that writes
+    ``~/.cursor/mcp.json`` from structured ``content``, a list of client
+    profiles, a registry catalog). The walk reads ``MCP_WALK_DEPTH`` container
+    levels and ``MCP_WALK_BREADTH`` entries of each, so a hostile document
+    cannot make it expensive; the flag says a container it did not read in
+    full holds containers, where a table may sit. ``first`` stops at the first
+    holder. A holder's own table is not searched further.
+    """
+    holders: list[dict[Any, Any]] = []
+    truncated = False
+    stack: list[tuple[Any, int, bool]] = [(document, 0, False)]
+    while stack and not (first and holders):
+        node, depth, listed = stack.pop()
+        if isinstance(node, dict):
+            if _holds_server_table(node, listed):
+                holders.append(node)
+                continue
+            children = list(node.values())
+        elif isinstance(node, list):
+            children, listed = node, True
+        else:
+            continue
+        # Only a container that holds something can hold a table.
+        containers = [
+            child for child in children[:MCP_WALK_BREADTH] if isinstance(child, dict | list) and child
+        ]
+        dropped = any(isinstance(child, dict | list) and child for child in children[MCP_WALK_BREADTH:])
+        if dropped or (containers and depth >= MCP_WALK_DEPTH):
+            truncated = True
+        if depth < MCP_WALK_DEPTH:
+            stack.extend((child, depth + 1, listed) for child in reversed(containers))
+    return holders, truncated
+
+
+def _merged_server_tables(holders: list[dict[Any, Any]], errors: list[str]) -> dict[str, Any]:
+    """The servers of each holder's table as one table; a repeated name keeps a numbered suffix."""
+    servers: dict[str, Any] = {}
+    for holder in holders:
+        for name, cfg in (_mcp_server_entries(holder, errors) or {}).items():
+            key, suffix = str(name), 2
+            while key in servers:
+                key, suffix = f"{name}#{suffix}", suffix + 1
+            servers[key] = cfg
+    return servers
+
+
+def _listed_server_tables(data: list[Any], errors: list[str]) -> dict[str, Any] | None:
+    """One ``mcpServers`` table of the servers a list-rooted document's entries declare.
+
+    A registry catalog (``[{id, install: {mcpServers: ...}}]``), a list of
+    client profiles or an Ansible play holds its tables in entries; each is
+    read as a client configuration. A walk the bounds cut is recorded as a
+    limit, since a table past them is not read. None when no table was found
+    at all.
+    """
+    holders, truncated = mcp_server_holders(data)
+    if truncated:
+        errors.append(HELD_TABLES_LIMIT)
+    if not holders and not truncated:
+        errors.append("MCP configuration must be an object")
+        return None
+    return {"mcpServers": _merged_server_tables(holders, errors)}
+
+
+def _nested_server_entries(data: dict[str, Any], errors: list[str]) -> dict[str, Any]:
+    """The servers a mapping's tables below its top level declare, for one that holds none at the top.
+
+    A client's per-project section (``projects: {path: {mcpServers: ...}}``) or a
+    list of profiles holds them there; the structural check routes such a file
+    here, so its servers are read rather than the file taken to declare none.
+    """
+    holders, truncated = mcp_server_holders(data)
+    if truncated:
+        errors.append(HELD_TABLES_LIMIT)
+    return _merged_server_tables([holder for holder in holders if holder is not data], errors)
+
+
 def _parse_mcp_servers(
     rel: str, text: str, errors: list[str] | None = None, document: Any = None
 ) -> list[dict[str, Any]]:
@@ -169,6 +285,8 @@ def _parse_mcp_servers(
     servers = _mcp_server_entries(data, errors)
     if servers is None:
         return []
+    if not servers:
+        servers = _nested_server_entries(data, errors)
     # A registry manifest (server.json) is the document itself, not an entry of a server table.
     manifest = len(servers) == 1 and next(iter(servers.values())) is data
     out: list[dict[str, Any]] = []
@@ -240,6 +358,8 @@ def _load_mcp_document(rel: str, text: str, errors: list[str], document: Any = N
     except (ValueError, RecursionError, yaml.YAMLError):
         errors.append("invalid MCP configuration syntax")
         return None
+    if isinstance(data, list):
+        return _listed_server_tables(data, errors)
     if not isinstance(data, dict):
         errors.append("MCP configuration must be an object")
         return None

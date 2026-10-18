@@ -1,13 +1,14 @@
 """One oracle for the credential pipeline: every concrete input of its reviews, judged against main.
 
 The reviews of the credential detection and redaction rounds (the leak and
-precision reviews of rounds 1 and 3, review-cred255, review-x-credentials
-and the possessive-placeholder findings of review-misc) each showed their
-problems with concrete inputs: sanitizer lines, matcher lines with their
-mode, small file trees, ``saas.generic`` records and placeholder values.
-Fixing one finding kept breaking another's evidence, because each fix was
-judged on its newest example alone. This table holds all 368 of them, so
-every heuristic change is judged on the same fixed set.
+precision reviews of rounds 1 and 3, round 4's credential and netrc
+reviews, review-cred255, review-x-credentials and the possessive-placeholder
+findings of review-misc) each showed their problems with concrete inputs:
+sanitizer lines, matcher lines with their mode, small file trees,
+``saas.generic`` records and placeholder values. Fixing one finding kept
+breaking another's evidence, because each fix was judged on its newest
+example alone. This table holds all 554 of them, with the fixes' own cases,
+so every heuristic change is judged on the same fixed set.
 
 Each row gives the outcome on this branch (``head``), which the test
 asserts, and the outcome on main 8c72467 (``main``), which is data: it was
@@ -18,9 +19,10 @@ place of this branch's ``code``/``env_file`` modes and
 A row may be worse than main (shows a credential main withheld, misses a
 line main reported, or leaves a scan incomplete that main completed) only
 with an ``accepted`` reason, and only one of these: the value is no
-credential (a reference, a label, a placeholder, a name), the scan
-discloses more than five distinct credentials of one format (#257's quota),
-or the missed lines repeat a credential the finding already reports.
+credential (a reference, a label, a placeholder, a name), or the scan
+discloses more than five distinct credentials of one format (#257's quota).
+A credential repeated on several lines counts once but is listed at up to
+five of them, as main listed it, so missed repeats are no reason.
 
 Outcomes: ``sanitize`` and ``saas`` rows are ``withheld`` or ``shown`` (no
 secret of the row in the output); ``match`` rows are ``reported`` or
@@ -96,6 +98,8 @@ VALUES: dict[str, str] = {
     "<GHP>": "ghp_" + _key("oracle-ghp", 36),
     # A mixed-case letters-only run, as in a token after a possessive.
     "<MIX>": "QzWp" + "LmNx" + "VbRt" + "YcDf" + "Gh",
+    # A password's opaque-looking start, before its tail.
+    "<KS>": _key("oracle-ks", 12),
     **{f"<OAI{n}>": _openai_key(n) for n in range(1, 9)},
     **{f"<HEX{n}>": hashlib.sha256(f"oracle-hex-{n}".encode()).hexdigest()[:32] for n in range(1, 8)},
 }
@@ -129,7 +133,123 @@ class Row(NamedTuple):
     accepted: str = ""
 
 
-ACCEPTED_KINDS = ("not a credential: ", "disclosed: ", "repeated: ")
+ACCEPTED_KINDS = ("not a credential: ", "disclosed: ")
+
+# Round 4's sentence passphrases, each judged in an env file, a compose file
+# and a settings module (joined by '_' there), as the review scanned them.
+R4_SENTENCES = (
+    "may-the-force-be-with-you",
+    "my-dog-is-named-rex",
+    "now-is-the-winter-of-discontent",
+    "bring-me-the-horizon",
+    "meet-me-at-midnight",
+    "dance-with-me-tonight",
+    "winter-is-coming-to-town",
+    "hello-from-the-other-side",
+    "walk-on-the-wild-side",
+    "fly-me-to-the-moon",
+    "stairway-to-heaven-now",
+    "in-the-air-tonight",
+    "gravel-by-the-sea",
+    "snout-at-the-bloom",
+    "these-only-thump-bloom",
+)
+# Round 4's possessive passphrases: the placeholder test, saas.generic's copies
+# of the value in other columns, and the matcher in an env file and in code.
+R4_POSSESSIVES = (
+    "ton-jardin-secret",
+    "votre-jardin-secret",
+    "ton-secret-jardin",
+    "votre-secret-favori",
+    "su-token-de-casa",
+    "tu-token-azul-grande",
+    "vos-secrets-bien-gardes",
+    "sua-senha-forte-azul",
+    "tu-clave-secreta-roja",
+    "ta-key-lime-pie",
+    "ton-pass-navigo",
+    "ta-cle-de-sol",
+    "su-clave-de-sol",
+    "jouw-geheime-tuin",
+    "dein-geheimer-garten",
+)
+# Round 4's env-file passwords of the enlarged label vocabulary, read as
+# '.env' 'DB_PASSWORD=<value>' lines.
+R4_ENV_PASSWORDS = (
+    "MyStrongPassword",
+    "InternalUserPassword",
+    "TheAdminUserPassword",
+    "StrongInternalAdminUser",
+    "CommitStrongAdminUser",
+    "admin_user_strong_internal",
+    "user_admin_internal",
+    "strong_admin_at_home",
+    "my_user_is_admin",
+    "yet_another_admin_user",
+    "super_strong_user_pass",
+    "the_secret_admin_key",
+    "my_secret_password",
+    "AdminPasswordStrong",
+    "StrongAdminPassword2024",
+    "LocalAdmin2024Strong",
+    "WelcomeToTheJungle",
+)
+# Round 4's settings reads whose default argument is a hard-coded key.
+R4_DEFAULT_READS = (
+    (
+        "cs-typed-get-value",
+        "src/A.cs",
+        'var openaiApiKey = configuration.GetValue<string>("OpenAI:ApiKey", "<K>");\n',
+    ),
+    ("cs-get-value", "src/A.cs", 'var openaiApiKey = configuration.GetValue("OpenAI:ApiKey", "<K>");\n'),
+    ("ts-config-get", "src/a.ts", "const openaiApiKey = this.configService.get('OPENAI_API_KEY', '<K>');\n"),
+    (
+        "ts-typed-config-get",
+        "src/a.ts",
+        "const openaiApiKey = this.configService.get<string>('OPENAI_API_KEY', '<K>');\n",
+    ),
+    (
+        "java-or-else",
+        "src/A.java",
+        'String openaiApiKey = Optional.ofNullable(System.getenv("OPENAI_API_KEY")).orElse("<K>");\n',
+    ),
+    (
+        "java-require-non-null-else",
+        "src/A.java",
+        'String openaiApiKey = Objects.requireNonNullElse(System.getenv("OPENAI_API_KEY"), "<K>");\n',
+    ),
+    (
+        "ts-spaced-type-arguments",
+        "src/a.ts",
+        "const openaiApiKey = this.configService.get <string>('OPENAI_API_KEY') ?? '<K>';\n",
+    ),
+)
+# Round 4's password fallbacks after an environment read, in four forms.
+R4_PASSWORD_FALLBACK_FORMS = (
+    ("js-or", "src/db.js", 'const dbPassword = process.env.DB_PASSWORD || "{v}";\n'),
+    ("ts-nullish", "src/db.ts", "export const dbPassword = process.env.DB_PASSWORD ?? '{v}';\n"),
+    ("ts-entry", "src/db.ts", "export const cfg = { dbPassword: process.env.DB_PASSWORD || '{v}' };\n"),
+    (
+        "cs-nullish",
+        "src/A.cs",
+        'var dbPassword = Environment.GetEnvironmentVariable("DB_PASSWORD") ?? "{v}";\n',
+    ),
+)
+R4_PASSWORD_FALLBACKS = (
+    ("punctuated", "<P>"),
+    ("leet", "<PW2>"),
+    ("token-start", "<KS>&<=mypass>"),
+    ("passphrase", "<=snout-fiber-thump-bloom-gravel>"),
+    ("spaced", "<=correct horse battery staple>"),
+    ("camel", "<=TrustNoOneEverAgain>"),
+    ("snake", "<=snout_fiber_thump_bloom>"),
+    ("camel-year", "<=PostgresProd2024Secure>"),
+)
+R4_SENTENCE_PLACES = (
+    ("env", "DB_PASSWORD={v}", "env"),
+    ("compose", "POSTGRES_PASSWORD: {v}", "text"),
+    ("settings", 'DB_PASSWORD = "{u}"', "code"),
+)
 
 ROWS = [
     # --- creds-rereview-leak.json (round 3)
@@ -709,7 +829,17 @@ ROWS = [
             "docker-compose.yml": "services:\n  svc1:\n    image: postgres\n    environment:\n      POSTGRES_PASSWORD: <K>\n  svc2:\n    image: postgres\n    environment:\n      POSTGRES_PASSWORD: <K>\n  svc3:\n    image: postgres\n    environment:\n      POSTGRES_PASSWORD: <K>\n  svc4:\n    image: postgres\n    environment:\n      POSTGRES_PASSWORD: <K>\n  svc5:\n    image: postgres\n    environment:\n      POSTGRES_PASSWORD: <K>\n  svc6:\n    image: postgres\n    environment:\n      POSTGRES_PASSWORD: <K>\n"
         },
         mode="",
-        head=(("docker-compose.yml:5",), "complete", "withheld"),
+        head=(
+            (
+                "docker-compose.yml:13",
+                "docker-compose.yml:17",
+                "docker-compose.yml:21",
+                "docker-compose.yml:5",
+                "docker-compose.yml:9",
+            ),
+            "complete",
+            "withheld",
+        ),
         main=(
             (
                 "docker-compose.yml:13",
@@ -721,7 +851,6 @@ ROWS = [
             "complete",
             "withheld",
         ),
-        accepted="repeated: one credential on several lines, reported once at its first line",
     ),
     Row(
         "r3l.6-k8s-six-secrets",
@@ -730,7 +859,17 @@ ROWS = [
             "k8s/deploy.yaml": "apiVersion: v1\nkind: Secret\nmetadata:\n  name: s1\nstringData:\n  OPENAI_API_KEY: <K>\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: s2\nstringData:\n  OPENAI_API_KEY: <K>\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: s3\nstringData:\n  OPENAI_API_KEY: <K>\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: s4\nstringData:\n  OPENAI_API_KEY: <K>\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: s5\nstringData:\n  OPENAI_API_KEY: <K>\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: s6\nstringData:\n  OPENAI_API_KEY: <K>\n"
         },
         mode="",
-        head=(("k8s/deploy.yaml:6",), "complete", "withheld"),
+        head=(
+            (
+                "k8s/deploy.yaml:13",
+                "k8s/deploy.yaml:20",
+                "k8s/deploy.yaml:27",
+                "k8s/deploy.yaml:34",
+                "k8s/deploy.yaml:6",
+            ),
+            "complete",
+            "withheld",
+        ),
         main=(
             (
                 "k8s/deploy.yaml:13",
@@ -742,7 +881,6 @@ ROWS = [
             "complete",
             "withheld",
         ),
-        accepted="repeated: one credential on several lines, reported once at its first line",
     ),
     Row(
         "r3l.6-py-six-lines",
@@ -751,7 +889,7 @@ ROWS = [
             "src/a.py": 'SVC1_OPENAI_API_KEY = "<K>"\nSVC2_OPENAI_API_KEY = "<K>"\nSVC3_OPENAI_API_KEY = "<K>"\nSVC4_OPENAI_API_KEY = "<K>"\nSVC5_OPENAI_API_KEY = "<K>"\nSVC6_OPENAI_API_KEY = "<K>"\n'
         },
         mode="",
-        head=(("src/a.py:1",), "complete", "withheld"),
+        head=(("src/a.py:1", "src/a.py:2", "src/a.py:3", "src/a.py:4", "src/a.py:5"), "complete", "withheld"),
         main=(
             (
                 "src/a.py:1",
@@ -763,7 +901,6 @@ ROWS = [
             "complete",
             "withheld",
         ),
-        accepted="repeated: one credential on several lines, reported once at its first line",
     ),
     Row(
         "r3l.6-py-five-lines",
@@ -772,7 +909,7 @@ ROWS = [
             "src/a.py": 'SVC1_OPENAI_API_KEY = "<K>"\nSVC2_OPENAI_API_KEY = "<K>"\nSVC3_OPENAI_API_KEY = "<K>"\nSVC4_OPENAI_API_KEY = "<K>"\nSVC5_OPENAI_API_KEY = "<K>"\n'
         },
         mode="",
-        head=(("src/a.py:1",), "complete", "withheld"),
+        head=(("src/a.py:1", "src/a.py:2", "src/a.py:3", "src/a.py:4", "src/a.py:5"), "complete", "withheld"),
         main=(
             (
                 "src/a.py:1",
@@ -784,7 +921,6 @@ ROWS = [
             "complete",
             "withheld",
         ),
-        accepted="repeated: one credential on several lines, reported once at its first line",
     ),
     Row(
         "r3l.7-must-be-overridden",
@@ -1341,9 +1477,8 @@ ROWS = [
         "match",
         "PG_PASSWORD=pg-replica-sync-user",
         mode="env",
-        head="unreported",
+        head="reported",
         main="reported",
-        accepted="not a credential: an instruction or development label",
     ),
     Row(
         "r3p.1-db-readonly-reporting-user-text",
@@ -1368,9 +1503,8 @@ ROWS = [
         "match",
         "DB_PASSWORD=db-readonly-reporting-user",
         mode="env",
-        head="unreported",
+        head="reported",
         main="reported",
-        accepted="not a credential: an instruction or development label",
     ),
     Row(
         "r3p.1-ai-gateway-internal-route-text",
@@ -1422,9 +1556,8 @@ ROWS = [
         "match",
         "MQ_PASSWORD=mq-broker-admin-user",
         mode="env",
-        head="unreported",
+        head="reported",
         main="reported",
-        accepted="not a credential: an instruction or development label",
     ),
     Row(
         "r3p.1a-env-example-six-labels",
@@ -2645,9 +2778,8 @@ ROWS = [
         "match",
         'const azureClientSecret = process.env.AZURE_CLIENT_SECRET || "managed-identity-fallback";',
         mode="code",
-        head="unreported",
+        head="reported",
         main="reported",
-        accepted="not a credential: a mode, header name, URL path or model id as a fallback",
     ),
     Row(
         "r1p.5-header-name",
@@ -3632,9 +3764,14 @@ ROWS = [
         head=(
             (
                 "src/a.py:1",
+                "src/a.py:10",
+                "src/a.py:2",
                 "src/a.py:3",
+                "src/a.py:4",
                 "src/a.py:5",
+                "src/a.py:6",
                 "src/a.py:7",
+                "src/a.py:8",
                 "src/a.py:9",
             ),
             "complete",
@@ -3651,7 +3788,332 @@ ROWS = [
             "complete",
             "withheld",
         ),
-        accepted="repeated: each key's second line repeats a counted credential",
+    ),
+    # --- r4-review-creds4.json (round 4): a password entry after another credential's name
+    Row(
+        "r4.1-password-after-api-key-entry",
+        "sanitize",
+        "const cfg = { apiKey: process.env.API_KEY, password: process.env.DB_PASSWORD?.trim() || '<P>' };",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-db-password-after-token-entry",
+        "sanitize",
+        "const cfg = { token: process.env.T, dbPassword: process.env.DB_PASSWORD?.trim() || '<P>' };",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-password-after-secret-entry",
+        "sanitize",
+        "const cfg = { secret: env.SECRET, password: process.env.DB_PASSWORD?.trim() || '<P>' };",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-password-after-api-key-argument",
+        "sanitize",
+        "connect({ apiKey: k, password: process.env.DB_PASSWORD?.trim() || '<P>' })",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-password-after-credential-callee",
+        "sanitize",
+        "client.setApiKey(k); const pw = { password: process.env.DB_PASSWORD?.trim() || '<P>' }",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-passphrase-after-api-key-entry",
+        "sanitize",
+        "const cfg = { apiKey: process.env.API_KEY, "
+        "password: process.env.DB_PASSWORD?.trim() || '<=correct horse battery staple>' };",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-password-keyword-fallback",
+        "sanitize",
+        "'PASSWORD': cfg.get('db', 'password', fallback='<PW2>'),",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-password-default-value-argument",
+        "sanitize",
+        "password: env('DB_PASSWORD', default_value='<P>')",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-passphrase-keyword-fallback",
+        "sanitize",
+        "'PASSWORD': get_secret('db', fallback='<=correct horse battery staple>')",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-passphrase-fallback-object",
+        "sanitize",
+        "{ anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '<K>', "
+        "password: cfg.get('db','password', { fallback: '<=correct horse battery staple>' }) }",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-report-excerpts",
+        "scan",
+        {
+            "src/a.ts": "export const cfg = { apiKey: \"<OAI1>\", password: process.env.DB_PASSWORD?.trim() || '<P>' };\n"
+            "export const c3 = { anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '<K>', "
+            "password: cfg.get('db','password', { fallback: '<=correct horse battery staple>' }) };\n",
+            "app/s.py": "CONF = {'OPENAI_API_KEY': '<OAI2>', 'PASSWORD': cfg.get('db', 'password', fallback='<PW2>-Prod')}\n",
+        },
+        mode="",
+        head=(("app/s.py:1", "src/a.ts:1", "src/a.ts:2"), "complete", "withheld"),
+        main=(("app/s.py:1", "src/a.ts:1", "src/a.ts:2"), "complete", "shown"),
+    ),
+    # --- r4-review-creds4.json: a password that starts like a token (its tail is a secret too)
+    Row(
+        "r4.2-token-start-optional-chain",
+        "sanitize",
+        'dbPassword: process.env.DB_PASSWORD?.trim() || "<KS>&<=mypass>",',
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.2-token-start-ternary",
+        "sanitize",
+        "db_password: os.environ[ 'DB_PASSWORD' ] if PROD else '<KS>&<=mypass>'",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.2-token-start-default-argument",
+        "sanitize",
+        'db_password: os.getenv("<K>", "<KS>&<=mypass>")',
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.2-token-start-joi-default",
+        "sanitize",
+        "password: Joi.string().default('<KS>&<=3xyz>')",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.2-token-start-zod-default",
+        "sanitize",
+        "password: z.string().default('<KS>&<=mypass>'),",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.2-report-excerpt",
+        "scan",
+        {
+            "src/a.ts": 'export const c1 = { openaiApiKey: "<OAI3>" };\n'
+            'export const c2 = { openaiApiKey: "<OAI4>", dbPassword: process.env.P?.trim() || "<KS>&<=mypass>" };\n'
+        },
+        mode="",
+        head=(("src/a.ts:1", "src/a.ts:2"), "complete", "withheld"),
+        main=(("src/a.ts:1", "src/a.ts:2"), "complete", "shown"),
+    ),
+    # --- r4-review-creds4.json: sentence passphrases that two function words made labels
+    *[
+        Row(
+            f"r4.3-{place}-{sentence}",
+            "match",
+            template.format(v=sentence, u=sentence.replace("-", "_")),
+            mode=mode,
+            head="reported",
+            main="reported",
+        )
+        for sentence in R4_SENTENCES
+        for place, template, mode in R4_SENTENCE_PLACES
+    ],
+    Row(
+        "r4.3-scan-three-places",
+        "scan",
+        {
+            ".env": "DB_PASSWORD=<=my-dog-is-named-rex>\n",
+            "docker-compose.yml": "services:\n  db:\n    environment:\n      POSTGRES_PASSWORD: <=fly-me-to-the-moon>\n",
+            "app/settings.py": 'REDIS_PASSWORD = "<=may_the_force_be_with_you>"\n',
+        },
+        mode="",
+        head=((".env:1", "app/settings.py:1", "docker-compose.yml:4"), "complete", "withheld"),
+        main=((".env:1", "app/settings.py:1", "docker-compose.yml:4"), "complete", "withheld"),
+    ),
+    # --- r4-review-creds4.json: possessive passphrases read as templates
+    *[
+        Row(f"r4.4-placeholder-{value}", "placeholder", value, mode="", head="credential", main="credential")
+        for value in R4_POSSESSIVES
+    ],
+    *[
+        Row(f"r4.4-saas-{value}", "saas", value, mode="", head="withheld", main="withheld")
+        for value in R4_POSSESSIVES
+    ],
+    *[
+        Row(
+            f"r4.4-{mode}-{value}",
+            "match",
+            template.format(v=value),
+            mode=mode,
+            head="reported",
+            main="reported",
+        )
+        for value in R4_POSSESSIVES
+        if len(value) >= 16
+        for mode, template in (("env", "DB_PASSWORD={v}"), ("code", 'DB_PASSWORD = "{v}"'))
+    ],
+    # --- r4-review-creds4.json: env-file passwords of the enlarged label vocabulary
+    *[
+        Row(
+            f"r4.5-env-{value}", "match", f"DB_PASSWORD={value}", mode="env", head="reported", main="reported"
+        )
+        for value in R4_ENV_PASSWORDS
+    ],
+    Row(
+        "r4.5-env-DevPasswordLocal",
+        "match",
+        "DB_PASSWORD=DevPasswordLocal",
+        mode="env",
+        head="unreported",
+        main="reported",
+        accepted="not a credential: every word is label vocabulary or the name's own (dev, password, local)",
+    ),
+    # --- r4-review-creds4.json: a hard-coded key as a settings read's default argument
+    *[
+        Row(
+            f"r4.6-{label}",
+            "scan",
+            {rel: line},
+            mode="",
+            head=((f"{rel}:1",), "complete", "withheld"),
+            main=((f"{rel}:1",), "complete", "withheld"),
+        )
+        for label, rel, line in R4_DEFAULT_READS
+    ],
+    # --- r4-review-creds4.json: a worded or punctuated password fallback after a read
+    *[
+        Row(
+            f"r4.7-{form}-{label}",
+            "scan",
+            {rel: template.replace("{v}", value)},
+            mode="",
+            head=((f"{rel}:1",), "complete", "withheld"),
+            main=((f"{rel}:1",), "complete", "withheld"),
+        )
+        for form, rel, template in R4_PASSWORD_FALLBACK_FORMS
+        for label, value in R4_PASSWORD_FALLBACKS
+    ],
+    # --- r4-review-creds4.json: a repeated credential's locations
+    Row(
+        "r4.8-py-six-names-one-provider-key",
+        "scan",
+        _numbered("app/k.py", 'SVC{n}_OPENAI_API_KEY = "<OAI5>"\n', 6),
+        mode="",
+        head=(("app/k.py:1", "app/k.py:2", "app/k.py:3", "app/k.py:4", "app/k.py:5"), "complete", "withheld"),
+        main=(("app/k.py:1", "app/k.py:2", "app/k.py:3", "app/k.py:4", "app/k.py:5"), "complete", "withheld"),
+    ),
+    Row(
+        "r4.8-env-six-names-one-provider-key",
+        "scan",
+        _numbered(".env", "SVC{n}_OPENAI_API_KEY=<OAI6>\n", 6),
+        mode="",
+        head=((".env:1", ".env:2", ".env:3", ".env:4", ".env:5", ".env:6"), "complete", "withheld"),
+        main=((".env:1", ".env:2", ".env:3", ".env:4", ".env:5", ".env:6"), "complete", "withheld"),
+    ),
+    Row(
+        "r4.8-env-six-names-one-password",
+        "scan",
+        _numbered(".env", "SVC{n}_DB_PASSWORD=<K2>\n", 6),
+        mode="",
+        head=((".env:1", ".env:2", ".env:3", ".env:4", ".env:5"), "complete", "withheld"),
+        main=((".env:1", ".env:2", ".env:3", ".env:4", ".env:5"), "complete", "withheld"),
+    ),
+    # --- r4-review-creds4.json: long names without separators read as pasted keys
+    Row(
+        "r4.9-seven-long-names",
+        "scan",
+        _numbered("src/config.ts", "export const svc{n}ApiKey = process.env.SVC{n}OPENAIAPIKEYPROD;\n", 7),
+        mode="",
+        head=(
+            ("src/config.ts:1", "src/config.ts:2", "src/config.ts:3", "src/config.ts:4", "src/config.ts:5"),
+            "complete",
+            "withheld",
+        ),
+        main=(
+            ("src/config.ts:1", "src/config.ts:2", "src/config.ts:3", "src/config.ts:4", "src/config.ts:5"),
+            "complete",
+            "withheld",
+        ),
+    ),
+    # --- r4-review-netrc4.json: a keyword-named directory in a netrc comment's Windows path
+    *[
+        Row(f"r4n.1-{label}", "sanitize", text, mode="", head="withheld", main="shown")
+        for label, text in (
+            ("nas-user", "machine fs\n  login bob\n  # home share \\\\nas\\user\\fred\n\n  password <K>\n"),
+            ("no-quote", "machine fs\n  login bob\n  # no quote C:\\user\\new\n\n  password <K>\n"),
+            (
+                "users-default",
+                "machine fs\n  login bob\n  # Bob's home is C:\\Users\\bob\\default\\new\n\n  password <K>\n",
+            ),
+            (
+                "comment-block",
+                "machine fs\n  login bob\n  # home share \\\\nas\\user\\fred\n"
+                + "  # x\n" * 8
+                + "  password <K>\n",
+            ),
+            ("srv-account", "machine fs\n  login bob\n  # \\\\srv\\account\\new\n\n  password <K>\n"),
+            ("x-machine", "machine fs\n  login bob\n  # C:\\x\\machine\\new\n\n  password <K>\n"),
+            ("nas-login", "machine fs\n  login bob\n  # \\\\nas\\login\\tom\n\n  password <K>\n"),
+        )
+    ],
+    # --- r4-review-creds4.json: a punctuated secret after a cut read, which round 5 reports
+    Row(
+        "r4.10-client-secret-entry",
+        "sanitize",
+        "clientSecret: process.env.CLIENT_SECRET?.trim() || '<P>',",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.10-report-excerpt",
+        "scan",
+        {
+            "src/a.ts": "export const cfg = { azureClientSecret: process.env.AZURE_CLIENT_SECRET?.trim() || '<P>' };\n"
+        },
+        mode="",
+        head=(("src/a.ts:1",), "complete", "withheld"),
+        main=(("src/a.ts:1",), "complete", "shown"),
+    ),
+    Row(
+        "r4.10-run-together-name",
+        "scan",
+        {"src/a.ts": "export const cfg = { dbpassword: process.env.DBPASSWORD?.trim() || '<P>' };\n"},
+        mode="",
+        head=(("src/a.ts:1",), "complete", "withheld"),
+        main=(("src/a.ts:1",), "complete", "shown"),
     ),
 ]
 
