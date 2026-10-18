@@ -37,7 +37,7 @@ from urllib.parse import quote
 from shadowscan import __version__
 from shadowscan.mappings import finding_references
 from shadowscan.models import Finding, RiskLevel, ScanResult, Surface
-from shadowscan.reporters._publication import publication_stats
+from shadowscan.reporters._publication import publication_stats, without_connector_prefix
 
 # A discovery hit is evidence for an analyst to confirm, not a vulnerability:
 # even a heuristic critical finding is a warning. ``error`` is reserved for
@@ -314,7 +314,10 @@ def _invocation(result: ScanResult) -> dict[str, Any]:
     notifications = [
         {
             "level": "error" if st["errors"] or st["skipped"] else "warning",
-            "message": {"text": f"{_message_text(st['connector'])}: {_message_text(msg)}"},
+            "message": {
+                "text": f"{_message_text(st['connector'])}: "
+                f"{_message_text(without_connector_prefix(st['connector'], msg))}"
+            },
         }
         for st in publication_stats(result)
         for msg in dict.fromkeys(

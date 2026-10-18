@@ -13,6 +13,21 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### SARIF notifications name their connector once; the docs show how one scan gives both the JSON ledger and SARIF (October 18)
+
+- A SARIF run's `toolExecutionNotifications` prefixed each diagnostic with its
+  connector, and connectors name themselves in their own diagnostics, so the
+  text read `code.filesystem: code.filesystem: ...`. The table and Markdown
+  reports already drop the repeat with `without_connector_prefix`; SARIF now
+  uses it too.
+- `docs/scanning.md` told a reader who needs the coverage ledger beside a
+  SARIF log to write a JSON report "of the same scan as well", which one
+  run cannot do: a run writes one format. It now shows the way that needs one
+  scan, writing the JSON report and rendering SARIF from it with
+  `shadowscan merge report.json --format sarif`. That log has the scan's
+  results and notifications, plus one saying the source report is incomplete
+  when it was, and `merge` exits 3 as the scan did.
+
 ### A file's source-binding time budget is counted as `timeout`, as the docs define it (October 18)
 
 - `code.filesystem` counted every budget the import-bound source binder

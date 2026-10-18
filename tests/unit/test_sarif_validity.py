@@ -458,6 +458,15 @@ def test_tool_failures_keep_the_error_level():
     assert [n["level"] for n in invocation["toolExecutionNotifications"]] == ["error", "warning"]
 
 
+def test_a_diagnostic_naming_its_connector_is_not_prefixed_twice():
+    # Connectors name themselves in their own diagnostics; the notification adds the
+    # connector as the table and Markdown reports do, once.
+    stats = [_stats(errors=["code.filesystem: skipped symbolic link CLAUDE.md"], warnings=["no prefix"])]
+    (invocation,) = _render(_finding(), stats=stats)["runs"][0]["invocations"]
+    texts = [note["message"]["text"] for note in invocation["toolExecutionNotifications"]]
+    assert texts == ["code.filesystem: skipped symbolic link CLAUDE.md", "code.filesystem: no prefix"]
+
+
 # ------------------------------------------------------- embedded links (SARIF 3.11.6)
 
 
