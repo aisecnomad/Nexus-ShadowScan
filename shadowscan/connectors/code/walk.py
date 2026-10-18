@@ -1594,7 +1594,7 @@ class TreeWalker:
         if size > self.size_limit(path.name):
             return 0.0
         will_read = _analyzed_by_name(path.name) or bool(self.index.match_file(rel))
-        return budget if will_read or self.model_artifact_name(path.name) else 0.0
+        return budget if will_read else 0.0
 
     def _stop_at_deadline(self, root: Path, examined: int, remaining: int) -> None:
         """Record one error naming exactly how much of the tree the deadline left unread.
@@ -1684,11 +1684,12 @@ class TreeWalker:
             # so partial findings survive, and the limit is recorded.
             self.ctx.error(f"code.filesystem: {scan.label}: {exc}; results incomplete")
             self.root_listing_incomplete = True
+        if (diff_files := scan.diff_files) is not None:
+            # Filtered up front so the deadline remainder counts only files the walk would read.
+            entries = [entry for entry in entries if self._diff_included(entry[0], diff_files)]
         entries.sort(key=lambda entry: (_scan_priority(entry[0], entry[1].name), entry[3]))
         examined = 0
         for index, (rel, path, proj_root, size) in enumerate(entries):
-            if scan.diff_files is not None and not self._diff_included(rel, scan.diff_files):
-                continue
             analysis_size = (
                 min(size, self.model_metadata_bytes) if self.model_artifact_name(path.name) else size
             )

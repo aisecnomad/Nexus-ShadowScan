@@ -95,6 +95,31 @@ def test_cooperative_deadline_returns_partial_findings_with_one_error(tmp_path, 
     assert any("framework.langchain" in finding.frameworks for finding in findings)
 
 
+def test_deadline_remainder_in_diff_mode_counts_only_files_the_diff_selects(tmp_path, index, monkeypatch):
+    """A diff-scoped walk reports the deadline's remainder against the diff-selected files only.
+
+    The buffered listing still holds the files the diff filter skips; they were
+    never going to be read, so neither the ``after X of Y`` arithmetic nor the
+    unread-settings carry-over may count them.
+    """
+    _tree(tmp_path)
+    clock = _fake_clock(monkeypatch, step=1.0)
+    selected = frozenset(f"agent_{number}.py" for number in range(6))
+    monkeypatch.setattr(FilesystemConnector, "_resolve_diff", lambda self, root: selected)
+    ctx = ConnectorContext(
+        config={"path": str(tmp_path), "use_git": False, "diff_base": "main~1"},
+        index=index,
+        deadline=clock[0] + 5.5,
+    )
+    FilesystemConnector(ctx).run()
+    assert ctx.stats.objects_examined == 4
+    assert len(ctx.stats.errors) == 1
+    assert re.search(
+        r"connector deadline reached after 4 of 6 files under .*; results incomplete", ctx.stats.errors[0]
+    )
+    assert ctx.stats.incomplete
+
+
 def test_engine_keeps_results_returned_before_the_deadline(tmp_path, index, monkeypatch):
     _tree(tmp_path)
     _fake_clock(monkeypatch, step=1.0)
