@@ -15,6 +15,35 @@ See the [shared connector entry guide](../connectors.md#connector-entry-guide)
 for the common modes, permissions, options, fail-closed and evidence-limit
 references.
 
+## Cross-file tool dispatch
+
+The code scanner resolves a bounded subset of local tool dispatch from files
+already read inside the same manifest project. Python provider feedback loops
+must connect an import-bound client response to a verified dispatcher, then
+return its result and tool-call identifier to the same message history. A typed
+client parameter alone is insufficient: a visible call must supply the matching
+constructed SDK client. Supported local dispatcher helpers use literal handler
+tables for file readers or literal-name branches with import-bound HTTP clients.
+Other dynamic or unproven dispatch remains supporting evidence.
+
+For JavaScript/TypeScript AI SDK calls, a stable local named import must resolve
+to an explicitly exported `const` initialized by import-bound `ai.tool` with an
+executable callback. Relative imports, explicit one-target tsconfig/jsconfig
+path mappings and bounded named re-export chains are supported. The scanner
+does not guess `@/` aliases, execute code, or read omitted files to complete a
+proof.
+Ambiguous paths, changed bindings and schema-only tools cannot establish an agent.
+An AI SDK import must also remain external: a configuration that can remap the
+`ai` module or shadow it through its base directory, or an unreadable or
+inherited relevant tsconfig/jsconfig, leaves that SDK proof unresolved.
+Cross-file analysis shares the scan's deadlines and bounded source budgets;
+limits that prevent a requested proof leave the scan incomplete.
+
+An n8n container image supplies n8n infrastructure evidence through its
+dedicated product signature. Its image establishes a Kubernetes workload only
+inside a parsed built-in workload declaration, so Compose and Dockerfile images
+do not duplicate the generic Kubernetes/container signature.
+
 ## `code.filesystem`
 
 Optional `diff_base` (`shadowscan code PATH --diff-base REF`) accepts a local
@@ -108,7 +137,10 @@ dependency. The supported proof connects a constructed SDK client, its model
 response, a model-selected dispatch, and that dispatch's result and matching call
 identifier in the same message history. An imported dispatcher can qualify when
 both the selected name and arguments reach it and its result is fed back; its
-implementation and external effects remain unobserved. Dispatcher provenance is
+implementation and external effects remain unobserved. A dispatcher imported
+from a local module whose source the scan has read must additionally prove the
+dispatch in that source; a local source that proves nothing withholds it.
+Dispatcher provenance is otherwise
 limited to unshadowed, unconditional module imports preceding the dispatch; an
 import in another function or conditional branch cannot establish it. A local helper's annotated
 SDK parameter is usable only when its observed direct call sites pass agreeing,

@@ -244,6 +244,7 @@ from shadowscan.connectors.code.project_findings import (
     MAX_EXAMPLE_CREDENTIAL_EVIDENCE as MAX_EXAMPLE_CREDENTIAL_EVIDENCE,
 )
 from shadowscan.connectors.code.project_findings import ProjectFindings
+from shadowscan.connectors.code.python_dispatch import PythonDispatches
 from shadowscan.connectors.code.python_reexports import MAX_PENDING_BYTES as MAX_PENDING_BYTES
 from shadowscan.connectors.code.python_reexports import MAX_PENDING_FILES as MAX_PENDING_FILES
 from shadowscan.connectors.code.python_reexports import ImportResolver as ImportResolver
@@ -488,7 +489,8 @@ class _ScanState:
     diff_files: frozenset[str] | None = None  # when set, only these changed files + context files are scanned
     diff_base_ref: str | None = None  # the ref that was diffed against
     reexports: PythonReexports = field(default_factory=PythonReexports)
-    javascript_tools: JavascriptToolImports = field(default_factory=JavascriptToolImports)
+    javascript_imports: JavascriptToolImports = field(default_factory=JavascriptToolImports)
+    python_dispatches: PythonDispatches = field(default_factory=PythonDispatches)
     reexport_files: list[_MatchedSource] = field(default_factory=list)
     reexport_bytes: int = 0
     # The walk's safety margin before the connector deadline, kept by the

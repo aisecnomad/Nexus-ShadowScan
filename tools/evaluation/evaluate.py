@@ -48,6 +48,14 @@ class CorpusError(ValueError):
     """A corpus is malformed or exceeds the reviewable resource limits."""
 
 
+class IncompleteScanError(RuntimeError):
+    """A timed scan produced no valid observation for evaluation."""
+
+    def __init__(self, message: str, elapsed: float) -> None:
+        super().__init__(message)
+        self.elapsed = elapsed
+
+
 @dataclass(frozen=True)
 class Case:
     id: str
@@ -426,9 +434,10 @@ def _scan_case(case: Case, root: Path, index: Any) -> tuple[float, list[dict[str
     # test data); every other warning still invalidates the evaluation.
     warnings = [w for w in (ctx.stats.warnings if ctx.stats else []) if _INFORMATIONAL_NOTE not in w]
     if ctx.stats is None or ctx.stats.incomplete or ctx.stats.skipped or ctx.stats.errors or warnings:
-        raise RuntimeError(
+        raise IncompleteScanError(
             f"{case.id}: scan incomplete: "
-            + "; ".join((ctx.stats.errors + warnings) if ctx.stats else ["no status"])
+            + "; ".join((ctx.stats.errors + warnings) if ctx.stats else ["no status"]),
+            elapsed,
         )
     return elapsed, [
         {
@@ -582,7 +591,7 @@ def _percentile(values: list[float], pct: float) -> float:
 
 
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Binary detection scores per labeled case; no assertion of field validity."""
+    """Binary scores on complete cases only; missing coverage is not a negative."""
     groups: dict[str, list[dict[str, Any]]] = {"all": rows}
     for row in rows:
         # Defend direct callers as well as the corpus parser. Appending an
@@ -592,12 +601,15 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         groups.setdefault(row["family"], []).append(row)
     summary: dict[str, Any] = {}
     for family, group in sorted(groups.items()):
-        tp = sum(row["present"] and row["predicted"] for row in group)
-        fp = sum(not row["present"] and row["predicted"] for row in group)
-        fn = sum(row["present"] and not row["predicted"] for row in group)
-        tn = sum(not row["present"] and not row["predicted"] for row in group)
+        complete = [row for row in group if row.get("scan_complete", True)]
+        tp = sum(row["present"] and row["predicted"] for row in complete)
+        fp = sum(not row["present"] and row["predicted"] for row in complete)
+        fn = sum(row["present"] and not row["predicted"] for row in complete)
+        tn = sum(not row["present"] and not row["predicted"] for row in complete)
         summary[family] = {
             "cases": len(group),
+            "scored_cases": len(complete),
+            "incomplete_cases": len(group) - len(complete),
             "positive_cases": tp + fn,
             "negative_cases": tn + fp,
             "tp": tp,
@@ -672,6 +684,7 @@ def known_gaps(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def calibration(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Descriptive reliability bins; a scanner score is not a probability."""
+    rows = [row for row in rows if row.get("scan_complete", True)]
     bounds = [(0.0, 0.5), (0.5, 0.7), (0.7, 0.85), (0.85, 1.0)]
     bins = []
     total = len(rows)
@@ -698,8 +711,10 @@ def calibration(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "note": (
             "Descriptive selected-case score reliability only; confidence is not a calibrated probability."
         ),
-        "brier_proxy": statistics.mean((row["score"] - int(row["present"])) ** 2 for row in rows),
-        "ece_proxy": ece,
+        "brier_proxy": statistics.mean((row["score"] - int(row["present"])) ** 2 for row in rows)
+        if rows
+        else None,
+        "ece_proxy": ece if rows else None,
         "bins": bins,
     }
 
@@ -715,6 +730,122 @@ def _source_fingerprint() -> str:
         digest.update(name)
         digest.update(hashlib.sha256(content).digest())
     return digest.hexdigest()
+
+
+def _scan_repeated(
+    case: Case, root: Path, index: Any, repeats: int
+) -> tuple[list[float], list[dict[str, Any]], list[str]]:
+    durations = []
+    observations = []
+    errors = []
+    for _ in range(repeats):
+        try:
+            elapsed, findings = _scan_case(case, root, index)
+        except IncompleteScanError as exc:
+            durations.append(exc.elapsed)
+            errors.append(str(exc))
+        else:
+            durations.append(elapsed)
+            observations.append(findings)
+    if any(findings != observations[0] for findings in observations[1:]):
+        raise RuntimeError(f"{case.id}: nondeterministic observations across repeated scans")
+    # A successful repeat cannot erase missing coverage on another repeat.
+    # Keep observations unavailable rather than treating missing evidence as []
+    # in any scoring path. The empty list below is only a diagnostic placeholder.
+    return durations, observations[0] if observations and not errors else [], errors
+
+
+def _case_result(
+    case: Case, findings: list[dict[str, Any]], errors: list[str], durations: list[float]
+) -> dict[str, Any]:
+    complete = not errors
+    matching = [
+        finding
+        for finding in findings
+        if finding["kind"] == case.kind.value
+        and (case.signature is None or case.signature in finding["signatures"])
+    ]
+    checks = _finding_checks(case, findings) if complete else []
+    exact_set = _exact_finding_set(case, findings) if complete else None
+    failures = _assertions(case, findings, checks, exact_set) if complete else errors
+    classification_correct = case.present == bool(matching) if complete else None
+    return {
+        "id": case.id,
+        "family": case.family,
+        "description": case.description,
+        "source": case.source,
+        "target": {"kind": case.kind.value, "signature": case.signature},
+        "present": case.present,
+        "predicted": bool(matching) if complete else None,
+        "score": max((finding["confidence"] for finding in matching), default=0.0) if complete else None,
+        "classification_correct": classification_correct,
+        "assertions_correct": not failures if complete and case.assertions else None,
+        "correct": bool(classification_correct) and not failures,
+        "known_gap": case.known_gap,
+        "scan_complete": complete,
+        "incomplete_scans": len(errors),
+        "scan_errors": errors,
+        "assertion_failures": failures,
+        "finding_checks": checks,
+        "exact_finding_set": exact_set,
+        "findings": findings,
+        "median_ms": round(statistics.median(durations) * 1000, 3),
+    }
+
+
+def quality_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Expose case outcomes without allowing a waiver to change correctness."""
+    groups = {}
+    for name, field in (
+        ("target_classification", "classification_correct"),
+        ("labeled_assertions", "assertions_correct"),
+        ("joint_correctness", "correct"),
+    ):
+        scored = [
+            row
+            for row in rows
+            if row["scan_complete"]
+            and row[field] is not None
+            and (name != "joint_correctness" or row["assertions_correct"] is not None)
+        ]
+        passed = sum(bool(row[field]) for row in scored)
+        groups[name] = {
+            "scored_cases": len(scored),
+            "passed": passed,
+            "failed": len(scored) - passed,
+            "unscored_cases": len(rows) - len(scored),
+            "pass_rate": passed / len(scored) if scored else None,
+        }
+    return {
+        "note": (
+            "Target classification checks only the declared kind/signature target. "
+            "Labeled assertions check selected attribution, capabilities and structure; "
+            "unlabeled cases are not assertion successes. Joint correctness requires a "
+            "correct target and a passing labeled assertion set. "
+            "Incomplete cases are unscored; known-gap waivers never change these outcomes. "
+            "These selected-case rates are not field accuracy or exhaustive multiclass scores."
+        ),
+        **groups,
+    }
+
+
+def scan_completeness(rows: list[dict[str, Any]], repeats: int) -> dict[str, Any]:
+    complete = sum(row["scan_complete"] for row in rows)
+    incomplete_scans = sum(row["incomplete_scans"] for row in rows)
+    scans = len(rows) * repeats
+    return {
+        "cases": len(rows),
+        "complete_cases": complete,
+        "incomplete_cases": len(rows) - complete,
+        "completion_rate": complete / len(rows) if rows else None,
+        "scans": scans,
+        "complete_scans": scans - incomplete_scans,
+        "incomplete_scans": incomplete_scans,
+        "note": (
+            "Every repeat must complete before a case is scored. Incomplete cases are "
+            "excluded from detection and correctness metrics and always fail the gate."
+        ),
+    }
 
 
 def evaluate(path: Path, *, repeats: int = 1, annotations: Path | None = None) -> dict[str, Any]:
@@ -750,41 +881,11 @@ def evaluate(path: Path, *, repeats: int = 1, annotations: Path | None = None) -
                 with dest.open("x", encoding="utf-8") as handle:
                     handle.write(contents)
                 file_bytes += len(contents.encode("utf-8"))
-            iterations = [_scan_case(case, root, index) for _ in range(repeats)]
-            durations.extend(duration for duration, _ in iterations)
-            if any(observations != iterations[0][1] for _, observations in iterations[1:]):
-                raise RuntimeError(f"{case.id}: nondeterministic observations across repeated scans")
-            # Match IDs by kind and signature; no finding means a score of 0.
-            matching = [
-                f
-                for f in iterations[0][1]
-                if f["kind"] == case.kind.value
-                and (case.signature is None or case.signature in f["signatures"])
-            ]
-            score = max((f["confidence"] for f in matching), default=0.0)
-            finding_checks = _finding_checks(case, iterations[0][1])
-            exact_set = _exact_finding_set(case, iterations[0][1])
-            assertion_failures = _assertions(case, iterations[0][1], finding_checks, exact_set)
-            rows.append(
-                {
-                    "id": case.id,
-                    "family": case.family,
-                    "description": case.description,
-                    "source": case.source,
-                    "target": {"kind": case.kind.value, "signature": case.signature},
-                    "present": case.present,
-                    "predicted": bool(matching),
-                    "score": score,
-                    "correct": case.present == bool(matching) and not assertion_failures,
-                    "known_gap": case.known_gap,
-                    "assertion_failures": assertion_failures,
-                    "finding_checks": finding_checks,
-                    "exact_finding_set": exact_set,
-                    "findings": iterations[0][1],
-                    "median_ms": round(statistics.median(duration for duration, _ in iterations) * 1000, 3),
-                }
-            )
+            timings, findings, errors = _scan_repeated(case, root, index, repeats)
+            durations.extend(timings)
+            rows.append(_case_result(case, findings, errors, timings))
     gap_report = known_gaps(rows)
+    completeness = scan_completeness(rows, repeats)
     return {
         "schema": 1,
         "corpus": {**metadata, "sha256": corpus_digest},
@@ -799,6 +900,8 @@ def evaluate(path: Path, *, repeats: int = 1, annotations: Path | None = None) -
         "cases": rows,
         "metrics": summarize(rows),
         "finding_assertions": finding_assertion_metrics(rows),
+        "quality": quality_metrics(rows),
+        "scan_completeness": completeness,
         "known_gaps": gap_report,
         "calibration": calibration(rows),
         "performance": {
@@ -813,8 +916,27 @@ def evaluate(path: Path, *, repeats: int = 1, annotations: Path | None = None) -
         # Open gaps are temporarily waived only inside the bounded, unexpired
         # corpus policy validated above. A passing flagged case fails the gate
         # until its obsolete waiver is removed, preventing permanent bypasses.
-        "passed": all(row["correct"] or row["known_gap"] for row in rows) and not gap_report["passing"],
+        "all_cases_correct": all(row["correct"] for row in rows),
+        "passed": (
+            not completeness["incomplete_cases"]
+            and all(row["correct"] or row["known_gap"] for row in rows)
+            and not gap_report["passing"]
+        ),
     }
+
+
+def _print_summary(report: dict[str, Any], output: Path) -> None:
+    print(f"Detection (complete cases only): {report['metrics']['all']} | report: {output}")
+    quality = {name: counts for name, counts in report["quality"].items() if name != "note"}
+    assertions = {name: counts for name, counts in report["finding_assertions"].items() if name != "note"}
+    completeness = {name: counts for name, counts in report["scan_completeness"].items() if name != "note"}
+    print(f"Correctness: {quality}")
+    print(f"Finding assertions: {assertions}")
+    print(f"Scan completeness: {completeness}")
+    print(
+        f"Evaluation gate: {'passed' if report['passed'] else 'failed'}; "
+        f"all cases correct: {report['all_cases_correct']}"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -840,13 +962,13 @@ def main(argv: list[str] | None = None) -> int:
             fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 handle.write(output)
-            print(f"Evaluation: {report['metrics']['all']} | report: {args.output}")
+            _print_summary(report, args.output)
         else:
             sys.stdout.write(output)
         gaps = report["known_gaps"]
         if gaps["count"]:
             print(
-                f"Known gaps: {gaps['count']} flagged; still failing: {gaps['failing']}; "
+                f"Known-gap waivers: {gaps['count']} flagged; still failing: {gaps['failing']}; "
                 f"now passing (remove known_gap): {gaps['passing']}",
                 file=sys.stderr,
             )

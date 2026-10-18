@@ -61,6 +61,8 @@ from shadowscan.connectors.code.provider_tools import (
     python_provider_tool_literals,
 )
 from shadowscan.connectors.code.python_reexports import ImportResolver
+from shadowscan.connectors.code.source_bindings import SourceBinding as _Binding
+from shadowscan.connectors.code.source_bindings import SourceCall as _Call
 from shadowscan.connectors.code.source_capabilities import (
     CONFIGURED_FRAMEWORKS,
     CallCapabilities,
@@ -142,32 +144,6 @@ class SourceNotParsed(Exception):
     the file's lexical evidence, framework patterns included, and report that
     the import binder did not run.
     """
-
-
-@dataclass(frozen=True)
-class _Binding:
-    module: str
-    symbol: str
-    constructed: bool = False
-
-
-@dataclass(frozen=True)
-class _Call:
-    binding: _Binding
-    arguments: str
-    line: int
-    structural_arguments: str = ""
-    node: ast.Call | None = None
-    tool_factories: tuple[str, ...] = ()
-    imported_tools: tuple[str, ...] = ()
-    start: int = 0
-    end: int = 0
-    decorator: bool = False
-    receiver: str = ""
-    genkit_tools: tuple[str, ...] = ()
-    # The argument text stops at MAX_CALL_TEXT (or the end of the source) before the
-    # call closes: options past that point are unread, so they establish nothing.
-    partial: bool = False
 
 
 @dataclass
@@ -1449,8 +1425,8 @@ def _python_bindings(
             raise SourceBudgetExceeded("source binding AST limit exceeded")
     visitor = _PythonBindings(text, relevant, resolve_import, equivalent, cells)
     visitor.visit(tree)
-    if parameters := visitor.provider_helpers.inferred_parameters():
-        visitor = _PythonBindings(text, relevant, resolve_import, equivalent, cells, parameters)
+    if helper_parameters := visitor.provider_helpers.inferred_parameters():
+        visitor = _PythonBindings(text, relevant, resolve_import, equivalent, cells, helper_parameters)
         visitor.visit(tree)
     return visitor.calls, visitor.imports, tree
 
@@ -2391,6 +2367,7 @@ def bound_source_matches(
     truncated: list[int] | None = None,
     resolve_import: ImportResolver | None = None,
     resolve_javascript_tool: JavascriptToolResolver | None = None,
+    resolve_dispatch: Callable[[str, str], bool | None] | None = None,
     cells: Sequence[tuple[int, int]] = (),
 ) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
@@ -2532,7 +2509,7 @@ def bound_source_matches(
         ):
             registrations.append((call.node, call.line, call.decorator))
     dispatch_calls: set[int] = set()
-    found.extend(protocol_evidence(index, tree, text, ignored, requests, dispatch_calls))
+    found.extend(protocol_evidence(index, tree, text, ignored, requests, dispatch_calls, resolve_dispatch))
     if found:
         if tree is not None:
             regions = python_tool_regions(

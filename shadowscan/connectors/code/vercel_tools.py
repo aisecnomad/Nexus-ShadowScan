@@ -16,6 +16,7 @@ imported definitions, so only their presence and explicit disabling are read.
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 
 from shadowscan.signatures.matcher import pattern_timeout
 
@@ -141,6 +142,9 @@ def has_executable_vercel_tools(
     masked: str,
     tool_factories: tuple[str, ...],
     imported_tools: tuple[str, ...] = (),
+    *,
+    executable_names: Collection[str] = (),
+    named_only: bool = False,
 ) -> bool:
     """Whether a resolved generateText/streamText call can dispatch a tool."""
     inner = _unwrap(arguments, masked, "(")
@@ -170,7 +174,9 @@ def has_executable_vercel_tools(
     for name, (raw, code) in tools.items():
         if active_names is not None and name not in active_names:
             continue
-        if code.strip() in imported_tools or executable_vercel_tool(raw, code, tool_factories):
+        if code.strip() in imported_tools or code.strip() in executable_names:
+            return True
+        if not named_only and executable_vercel_tool(raw, code, tool_factories):
             return True
     return False
 

@@ -242,6 +242,7 @@ def protocol_evidence(
     ignored: list[tuple[int, int]],
     requests: _LoopRequests,
     dispatch_calls: set[int],
+    resolve_dispatch: Callable[[str, str], bool | None] | None = None,
 ) -> list[Match]:
     """Return tool-calling protocol evidence from the loops and dispatch around bound requests."""
     protocol = index.get("protocol.openai-function-calling")
@@ -251,7 +252,9 @@ def protocol_evidence(
     if tree is not None:
         # Autonomy: approval-bypass evidence. The loop runs each tool the model selects and feeds
         # the result back without a person approving the call.
-        for line in provider_tool_loop_lines(tree, requests.provider, dispatch_calls=dispatch_calls):
+        for line in provider_tool_loop_lines(
+            tree, requests.provider, dispatch_calls=dispatch_calls, resolve_dispatch=resolve_dispatch
+        ):
             found.append(
                 Match(
                     protocol,

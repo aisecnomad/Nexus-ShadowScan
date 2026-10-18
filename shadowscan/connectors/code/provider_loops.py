@@ -8,7 +8,9 @@ by the returned tool name, or a process/code execution sink fed with the
 model's arguments, and append the dispatch result and matching call ID to the
 same message history (an OpenAI ``role: tool`` message or an Anthropic
 ``tool_result`` block, directly or through a collected results list). Merely
-declaring schemas or transforming arguments does not qualify. The request may be
+declaring schemas or transforming arguments does not qualify. A separately
+proved project-local dispatcher may receive the returned name and arguments;
+the dispatcher name alone establishes nothing. The request may be
 a plain call, a raw-response call whose ``.parse()`` result is used, a
 streaming call whose ``get_final_message()`` / ``get_final_completion()``
 result is used, or a call to a module function that returns such a request
@@ -27,12 +29,31 @@ implementation, side effects or observed runtime execution.
 from __future__ import annotations
 
 import ast
-from collections.abc import Iterator
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator
 
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
 
 MAX_FLOW_STEPS = 100_000
+
+
+class _Imports(dict[str, str]):
+    """Unshadowed imports, with dispatcher provenance for selected-call dispatch.
+
+    ``dispatchers`` holds names whose project source snapshots prove dispatch.
+    ``vetoed`` holds names whose local source was read but proves nothing: their
+    interface shape alone cannot establish dispatch. ``dispatcher_lines`` maps
+    names bound by unconditional module-level imports to the import's line, for
+    the interface-shape path over modules outside the read project sources.
+    Textual order is deliberately conservative for calls in function bodies:
+    a later import may execute first, but this pass does not simulate that.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.dispatchers: set[str] = set()
+        self.vetoed: set[str] = set()
+        self.dispatcher_lines: dict[str, int] = {}
+
 
 # Calls that execute whatever the model selected: its tool input reaches a
 # shell, a process or an interpreter. Names resolve through the module's imports.
@@ -83,14 +104,6 @@ class _Budget:
             ):
                 continue
             pending.extend(ast.iter_child_nodes(item))
-
-
-@dataclass(frozen=True)
-class _Imports:
-    symbols: dict[str, str]
-    # Textual order is deliberately conservative for calls in function bodies:
-    # a later import may execute first, but this pass does not simulate that.
-    dispatcher_lines: dict[str, int]
 
 
 def _unwrap(node: ast.AST) -> ast.AST:
@@ -197,14 +210,16 @@ def _module_dispatchers(tree: ast.AST, symbols: dict[str, str], *, has_wildcard:
     return dispatchers
 
 
-def _imports(tree: ast.AST, budget: _Budget) -> _Imports:
+def _imports(
+    tree: ast.AST, budget: _Budget, resolve_dispatch: Callable[[str, str], bool | None] | None = None
+) -> _Imports:
     """Map imports that cannot be shadowed to their dotted targets.
 
     The provider request binder already rejects shadowed SDK clients. Sink
     provenance must be at least as strict: an imported ``subprocess`` can be
     replaced by a local dry-run object before the apparent dispatch.
     """
-    names: dict[str, str] = {}
+    names = _Imports()
     bindings: dict[str, int] = {}
 
     def bound(name: str) -> None:
@@ -240,15 +255,33 @@ def _imports(tree: ast.AST, budget: _Budget) -> _Imports:
             names.pop(name, None)
         if name in {"exec", "eval"} and name not in names:
             names[name] = ""  # a local binding shadows the builtin sink
-    return _Imports(names, _module_dispatchers(tree, names, has_wildcard="*" in bindings))
+    names.dispatcher_lines = _module_dispatchers(tree, names, has_wildcard="*" in bindings)
+    _resolve_dispatchers(names, resolve_dispatch)
+    return names
+
+
+def _resolve_dispatchers(names: _Imports, resolver: Callable[[str, str], bool | None] | None) -> None:
+    if resolver is None:
+        return
+    for name, target in names.items():
+        module, _, symbol = target.rpartition(".")
+        if not module:
+            continue
+        verdict = resolver(module, symbol)
+        if verdict:
+            names.dispatchers.add(name)
+        elif verdict is False:
+            # The module's local source was read and proves nothing: the
+            # interface shape alone must not establish dispatch through it.
+            names.vetoed.add(name)
 
 
 def _execution_sink(func: ast.expr, imports: _Imports) -> bool:
     if isinstance(func, ast.Name):
-        target = imports.symbols.get(func.id, f"builtins.{func.id}" if func.id in {"exec", "eval"} else "")
+        target = imports.get(func.id, f"builtins.{func.id}" if func.id in {"exec", "eval"} else "")
         return target in EXECUTION_SINKS
     if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
-        return f"{imports.symbols.get(func.value.id, '')}.{func.attr}" in EXECUTION_SINKS
+        return f"{imports.get(func.value.id, '')}.{func.attr}" in EXECUTION_SINKS
     return False
 
 
@@ -296,20 +329,32 @@ def _invalidate(statement: ast.AST, values: dict[str, str], budget: _Budget) -> 
 def _selected_dispatcher(call: ast.Call, values: dict[str, str], imports: _Imports, budget: _Budget) -> bool:
     """An unshadowed imported callable consumes this selection's name and arguments.
 
+    A helper proved by project source snapshots qualifies directly. The
+    interface shape alone qualifies only for an unconditional module-level
+    import preceding the call whose source the scan has not read: a local
+    module that was read but proves nothing cannot establish dispatch.
     Names alone, argument-only transforms, fixed tool names and keyword bags
     establish no dispatch. Known serialization/logging interfaces are not tool
     dispatchers even when their arguments mention a selected call.
     """
     if not isinstance(call.func, ast.Name) or len(call.args) != 2 or call.keywords:
         return False
-    if imports.dispatcher_lines.get(call.func.id, call.lineno) >= call.lineno:
+    name = call.func.id
+    if not (
+        _value(call.args[0], values) == "function-name"
+        and _depends(call.args[1], values, "arguments", budget)
+    ):
         return False
-    target = imports.symbols.get(call.func.id, "")
+    if name in imports.dispatchers:
+        return True
+    if name in imports.vetoed:
+        return False
+    if imports.dispatcher_lines.get(name, call.lineno) >= call.lineno:
+        return False
+    target = imports.get(name, "")
     if not target or target.split(".", 1)[0] in {"builtins", "json", "logging", "pprint", "warnings"}:
         return False
-    return _value(call.args[0], values) == "function-name" and _depends(
-        call.args[1], values, "arguments", budget
-    )
+    return True
 
 
 def _assign(
@@ -730,7 +775,11 @@ def _loop_request(
 
 
 def provider_tool_loop_lines(
-    tree: ast.AST, request_calls: set[int], *, dispatch_calls: set[int] | None = None
+    tree: ast.AST,
+    request_calls: set[int],
+    *,
+    dispatch_calls: set[int] | None = None,
+    resolve_dispatch: Callable[[str, str], bool | None] | None = None,
 ) -> list[int]:
     """Return request lines with the supported request/dispatch/feedback flow.
 
@@ -741,7 +790,7 @@ def provider_tool_loop_lines(
     if not request_calls:
         return []
     budget = _Budget()
-    imports = _imports(tree, budget)
+    imports = _imports(tree, budget, resolve_dispatch)
     schemas = _schema_variables(tree, budget)
     helpers = _request_helpers(tree, request_calls, budget)
     lines: set[int] = set()

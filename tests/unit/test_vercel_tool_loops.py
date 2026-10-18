@@ -119,7 +119,7 @@ def test_generate_text_and_namespace_imports_are_resolved(tmp_path, run_connecto
         ),
     ],
 )
-def test_single_step_or_toolless_calls_stay_sdk_usage(tmp_path, run_connector, imports, options):
+def test_disabled_or_toolless_calls_stay_sdk_usage(tmp_path, run_connector, imports, options):
     finding = _project(tmp_path, run_connector, _route(imports, options))
     assert finding.kind == Kind.FRAMEWORK_USAGE
     assert "framework.vercel-ai-sdk" in finding.frameworks
@@ -433,6 +433,20 @@ def test_unresolved_relevant_configurations_withhold_imported_tool_provenance(
     else:
         files = {"route.ts": _imported_route("./src/tools"), "src/tools.ts": TOOLS}
     findings, ctx = _imported_project(tmp_path, run_connector, {**files, "src/tsconfig.json": configuration})
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert all(f.kind != Kind.AGENT for f in findings)
+
+
+def test_overlapping_alias_pattern_cannot_map_a_shorter_module(tmp_path, run_connector):
+    # TypeScript never maps a module shorter than the pattern around its star:
+    # "ab*ba" requires at least "abba", so "aba" must stay unresolved even
+    # though the prefix and suffix each match overlapping text.
+    files = {
+        "route.ts": _imported_route("aba"),
+        "ab/ba.ts": TOOLS,
+        "tsconfig.json": '{"compilerOptions":{"paths":{"ab*ba":["./ab/ba"]}}}',
+    }
+    findings, ctx = _imported_project(tmp_path, run_connector, files)
     assert not ctx.stats.incomplete, ctx.stats.errors
     assert all(f.kind != Kind.AGENT for f in findings)
 

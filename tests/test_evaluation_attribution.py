@@ -79,6 +79,10 @@ def test_binary_tp_cannot_hide_wrong_kind_product_or_provider(tmp_path: Path) ->
     assert report["finding_assertions"]["expected_findings"] == {"checks": 4, "passed": 1, "failed": 3}
     assert report["finding_assertions"]["forbidden_findings"] == {"checks": 3, "passed": 1, "failed": 2}
     assert report["finding_assertions"]["cases_with_checks"] == 1
+    assert report["quality"]["target_classification"]["passed"] == 1
+    assert report["quality"]["labeled_assertions"]["failed"] == 1
+    assert report["quality"]["joint_correctness"]["failed"] == 1
+    assert report["scan_completeness"]["complete_cases"] == 1
 
 
 def test_attribution_must_be_on_the_same_finding_and_in_its_proper_field(tmp_path: Path) -> None:
@@ -279,11 +283,33 @@ def test_bundled_authored_attribution_passes_without_relabeling_independent_corp
     assert authored["known_gaps"]["count"] == 0
     assert authored["known_gaps"]["failing"] == []
     assert authored["known_gaps"]["passing"] == []
+    assert authored["all_cases_correct"]
+    assert authored["quality"]["labeled_assertions"]["pass_rate"] == 1.0
     assert all(not case.assertions.get("expected_findings") for case in load_corpus(DEFAULT_CORPUS)[1])
-    assert all(
-        not case.assertions.get("expected_findings")
+    # Only the two repaired authored cases add product/provider/capability
+    # assertions. The independently labeled corpus remains frozen below.
+    realistic_assertions = {
+        case.id: case.assertions["expected_findings"]
         for case in load_corpus(DEFAULT_CORPUS.with_name("realistic_corpus.json"))[1]
-    )
+        if case.assertions.get("expected_findings")
+    }
+    assert realistic_assertions == {
+        "python-openai-tool-loop-script": [
+            {
+                "kind": "agent",
+                "provider_signature": "provider.openai",
+                "capabilities": ["tool-use", "autonomous"],
+            }
+        ],
+        "litellm-proxy-docker-worker": [
+            {
+                "kind": "agent",
+                "product_signature": "platform.litellm",
+                "provider_signature": "provider.openai",
+                "capabilities": ["tool-use", "autonomous"],
+            }
+        ],
+    }
     _, independent, _ = load_corpus(DEFAULT_CORPUS.with_name("independent_corpus.json"))
     assert all(not case.assertions.get("expected_findings") for case in independent)
     assert all(not case.assertions.get("forbidden_findings") for case in independent)

@@ -152,7 +152,14 @@ class JavascriptToolImports:
         targets: list[str] = []
         for pattern, paths in (self.configs.get(project) or {}).items():
             prefix, star, suffix = pattern.partition("*")
-            if star and module.startswith(prefix) and module.endswith(suffix):
+            # The prefix and suffix must not overlap: TypeScript never maps a
+            # module shorter than the pattern around its star.
+            if (
+                star
+                and len(module) >= len(prefix) + len(suffix)
+                and module.startswith(prefix)
+                and module.endswith(suffix)
+            ):
                 middle = module[len(prefix) : len(module) - len(suffix) if suffix else None]
                 targets.extend(path.replace("*", middle) for path in paths)
             elif not star and pattern == module:

@@ -5,14 +5,13 @@
 file relative to the opened scan root without following a link, prepares the
 credential context its excerpts are redacted with, and dispatches it to the
 credential, MCP, manifest, IaC, configuration and source passes, which record
-what they observe on the file's project and the scan state. Queued Python
-re-export consumers are bound after the walk (``resolve_reexport_sources``).
+what they observe on the file's project and the scan state. Queued cross-file
+consumers are bound after the walk (``resolve_reexport_sources``).
 """
 
 from __future__ import annotations
 
 import re
-import time
 from bisect import bisect_right
 from collections.abc import Callable, Iterable, Sequence
 from collections.abc import Set as AbstractSet
@@ -32,6 +31,7 @@ from shadowscan.connectors.code.catalogs import (
     configuration_document,
     referenced_data_files,
 )
+from shadowscan.connectors.code.cross_file_sources import CrossFileSources
 from shadowscan.connectors.code.dotnet_semantics import microsoft_tool_loop_matches
 from shadowscan.connectors.code.excerpts import _excerpt, _ExcerptSource, _LazyExcerpt, _Snippet
 from shadowscan.connectors.code.go_semantics import langchaingo_agent_matches
@@ -74,9 +74,6 @@ from shadowscan.connectors.code.python_reexports import (
     MAX_PENDING_BYTES,
     MAX_PENDING_FILES,
     ImportResolver,
-    ReexportLimitError,
-    has_local_import,
-    project_path,
 )
 from shadowscan.connectors.code.rule_packs import detection_rule_format
 from shadowscan.connectors.code.scan_records import (
@@ -145,7 +142,6 @@ from shadowscan.connectors.code.walk import (
     _may_declare_mcp,
     _note_unread_settings,
     isolated,
-    scan_timeout_for_size,
 )
 from shadowscan.connectors.common import placeholder_reason
 from shadowscan.connectors.posture import (
@@ -161,7 +157,6 @@ from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import (
     MAX_SECRETS_PER_SIGNAL,
     SOURCE_EXTENSIONS,
-    WALL_BUDGET_FACTOR,
     _finditer,
     language_for_path,
     reported_credential,
@@ -245,7 +240,7 @@ class FileScanner:
     """Reads, redacts and analyzes the files of the walk, one at a time (ADR-005).
 
     ``scan_file`` runs every analysis pass over one file and records what they
-    observe; ``resolve_reexport_sources`` binds the queued Python re-export
+    observe; ``resolve_reexport_sources`` binds the queued cross-file
     consumers after the walk; ``file_errors`` records parser and validator
     issues, each a coverage gap.
     """
@@ -281,11 +276,13 @@ class FileScanner:
         self.triage = triage
         self.agent_granularity = agent_granularity
         self.model_metadata_bytes = model_metadata_bytes
+        self.cross_file = CrossFileSources(self)
 
     def scan_file(self, scan: _ScanState, rel: str, path: Path, proj_root: str) -> None:
         """Run every analysis pass over one file of the walk."""
         proj = scan.projects.setdefault(proj_root, _Project(proj_root))
         scan.reexports.note_path(proj_root, rel)
+        scan.python_dispatches.note_path(proj_root, rel)
         proj.files += 1
         self.ctx.examined()
         lang = language_for_path(rel)
@@ -1051,6 +1048,7 @@ class FileScanner:
         content_text = manifest_comment_projection(file.rel, file.text)
         if file.ext in _XML_EXTENSIONS:
             content_text = _without_xml_comments(content_text)
+        self.cross_file.index(scan, file, content_text)
         if file.ext in SOURCE_EXTENSIONS:
             if not self.triage:
                 source = self._match_source(scan.root, file, content_text)
@@ -1098,65 +1096,34 @@ class FileScanner:
         self.file_errors(file.rel, catalog_limits)
 
     def _defer_reexport_source(self, scan: _ScanState, source: _MatchedSource) -> bool:
-        """Snapshot eligible exports and queue project-import consumers within fixed budgets."""
-        file = source.file
-        if file.lang == "javascript":
-            return self._defer_javascript_tools(scan, source)
-        if file.ext != ".py" or len(project_path(file.proj_root, file.rel).parts) != 1:
-            return False
-        scan.reexports.add(file.proj_root, file.rel, file.text)
-        local = _local_module_predicate(scan.root, file.path, file.proj_root)
-        if not has_local_import(file.text, local):
-            return False
-        size = len(file.text.encode("utf-8"))
-        if len(scan.reexport_files) >= MAX_PENDING_FILES or scan.reexport_bytes + size > MAX_PENDING_BYTES:
-            self.ctx.error(
-                f"code.filesystem: {file.rel}: Python re-export source budget exceeded",
-                reason="analysis-limit",
-            )
-            return False
-        scan.reexport_files.append(source)
-        scan.reexport_bytes += size
-        file.reexport_pending = True
-        return True
+        return self.cross_file.defer(scan, source, max_files=MAX_PENDING_FILES, max_bytes=MAX_PENDING_BYTES)
 
     def _javascript_path_config(self, scan: _ScanState, file: _SourceFile) -> None:
         if file.name == "package.json":
-            scan.javascript_tools.note_package(file.rel)
+            scan.javascript_imports.note_package(file.rel)
         if file.name not in {"tsconfig.json", "jsconfig.json"}:
             return
         try:
-            scan.javascript_tools.add_config(file.proj_root, file.rel, file.text)
+            scan.javascript_imports.add_config(file.proj_root, file.rel, file.text)
         except (ValueError, RecursionError, JavascriptImportLimit):
             self.ctx.error(
                 f"code.filesystem: {file.rel}: JavaScript path configuration analysis incomplete",
                 reason="unparsed-input",
             )
 
-    def _defer_javascript_tools(self, scan: _ScanState, source: _MatchedSource) -> bool:
+    def _javascript_tool_candidate(self, scan: _ScanState, source: _MatchedSource) -> bool:
+        """Snapshot a JavaScript module's eligible tool exports; whether it consumes imported tools."""
         file = source.file
-        scan.javascript_tools.note_source(file.rel)
+        scan.javascript_imports.note_source(file.rel)
         if not self.include_tests and _is_test_path(file.rel):
             return False
-        size = len(file.text.encode("utf-8"))
-        limited = size > javascript_imports.MAX_MODULE_BYTES
+        limited = len(file.text.encode("utf-8")) > javascript_imports.MAX_MODULE_BYTES
         try:
             exports = {} if limited else javascript_tool_exports(source.text, source.ignored)
         except SourceBudgetExceeded:
             exports, limited = {}, True
-        scan.javascript_tools.add(file.proj_root, file.rel, exports, limited=limited)
-        if not has_javascript_tool_import(source.text):
-            return False
-        if len(scan.reexport_files) >= MAX_PENDING_FILES or scan.reexport_bytes + size > MAX_PENDING_BYTES:
-            self.ctx.error(
-                f"code.filesystem: {file.rel}: JavaScript imported-tool source budget exceeded",
-                reason="analysis-limit",
-            )
-            return False
-        scan.reexport_files.append(source)
-        scan.reexport_bytes += size
-        file.reexport_pending = True
-        return True
+        scan.javascript_imports.add(file.proj_root, file.rel, exports, limited=limited)
+        return has_javascript_tool_import(source.text)
 
     def _match_source(self, root: Path, file: _SourceFile, content_text: str) -> _MatchedSource:
         """Match the imports and code patterns of a source file, recording the imports."""
@@ -1203,6 +1170,8 @@ class FileScanner:
         *,
         resolve_import: ImportResolver | None = None,
         resolve_javascript_tool: JavascriptToolResolver | None = None,
+        resolve_dispatch: Callable[[str, str], bool | None] | None = None,
+        extra_bound: Sequence[Match] = (),
     ) -> None:
         """Add the import-bound calls of a matched source file and record its code evidence."""
         bound, unbound = self._bound_matches(
@@ -1212,7 +1181,10 @@ class FileScanner:
             source.is_local_module,
             resolve_import=resolve_import,
             resolve_javascript_tool=resolve_javascript_tool,
+            resolve_dispatch=resolve_dispatch,
         )
+        if not unbound:
+            bound.extend(extra_bound)
         file, content_text = source.file, source.text
         if self.agent_granularity == "source" and file.lang == "python" and file.ext == ".py" and not unbound:
             verified = {
@@ -1388,6 +1360,7 @@ class FileScanner:
         *,
         resolve_import: ImportResolver | None = None,
         resolve_javascript_tool: JavascriptToolResolver | None = None,
+        resolve_dispatch: Callable[[str, str], bool | None] | None = None,
     ) -> tuple[list[Match], list[tuple[int, int]]]:
         """Return bound evidence, including narrow Java, Go and C# proofs.
 
@@ -1439,6 +1412,7 @@ class FileScanner:
                 truncated=truncated,
                 resolve_import=resolve_import,
                 resolve_javascript_tool=resolve_javascript_tool,
+                resolve_dispatch=resolve_dispatch,
                 cells=file.cells,
             )
         except SourceBudgetExceeded as exc:
@@ -1799,79 +1773,8 @@ class FileScanner:
                 file.proj.agent_defs.append(self._parse_agent_definition(rel, file.text))
 
     def resolve_reexport_sources(self, scan: _ScanState) -> None:
-        """Bind queued consumers after all shim snapshots have been read safely.
-
-        The walk already matched their imports and code patterns. Each binder
-        starts under the walk's own rule: only while its matching budget and
-        the walk's margin fit before the connector deadline, so the findings
-        already collected are still emitted in time. A consumer left unbound is
-        named, keeps its lexical evidence and makes the results incomplete.
-        """
-        deadline = self.ctx.deadline
-        for position, source in enumerate(scan.reexport_files):
-            file = source.file
-            analysis = {"python": "Python re-export", "javascript": "JavaScript imported-tool"}[
-                file.lang or "python"
-            ]
-            size = len(file.text.encode("utf-8"))
-            budget = scan_timeout_for_size(self.scan_timeout, size)
-            wall_cap = budget * WALL_BUDGET_FACTOR
-            if deadline is not None:
-                remaining = deadline - time.monotonic()
-                # As in the walk, the binder's wall cap never runs into the deadline's margin.
-                wall_cap = max(budget, min(wall_cap, remaining - scan.margin))
-                if remaining < budget + scan.margin:
-                    if remaining > scan.margin + self.scan_timeout:
-                        self.ctx.error(
-                            f"code.filesystem: {file.rel}: {analysis} analysis skipped; the remaining "
-                            f"connector deadline cannot cover its {budget:.0f}s matching budget; "
-                            "lexical evidence retained",
-                        )
-                        self._retain_lexical_evidence([source], deadline - scan.margin / 2)
-                        continue
-                    others = len(scan.reexport_files) - position - 1
-                    queued = f" and {others} other queued files" if others else ""
-                    self.ctx.error(
-                        f"code.filesystem: connector deadline reached before {analysis} analysis of "
-                        f"{file.rel}{queued}; results incomplete",
-                    )
-                    self._retain_lexical_evidence(scan.reexport_files[position:], deadline - scan.margin / 2)
-                    break
-            resolver = scan.reexports.resolver(file.proj_root, source.is_local_module)
-            javascript_resolver = scan.javascript_tools.resolver(file.proj_root, file.rel)
-            with (
-                isolated(self.walker, file.rel, f"{analysis} analysis"),
-                self.index.scan_budget(seconds=budget, chars=size, wall_seconds=wall_cap),
-            ):
-                try:
-                    self._bind_source(
-                        source,
-                        resolve_import=resolver if file.lang == "python" else None,
-                        resolve_javascript_tool=javascript_resolver if file.lang == "javascript" else None,
-                    )
-                except (ReexportLimitError, JavascriptImportLimit) as exc:
-                    self.ctx.error(
-                        f"code.filesystem: {file.rel}: {exc}; analysis incomplete", reason="analysis-limit"
-                    )
-                    self._bind_source(source)
-        # The walk redacted every queued consumer (see scan_file), so settling
-        # only cuts the excerpts its matches asked for, reached or not.
-        for source in scan.reexport_files:
-            self._settle_excerpts(source.file)
-        scan.reexport_files.clear()
-
-    def _retain_lexical_evidence(self, sources: list[_MatchedSource], until: float) -> None:
-        """Record the walk's lexical evidence for queued consumers the binder cannot read.
-
-        As for a file over the binder's budget, the lexical matches stand in for
-        the whole file. Recording stops at ``until``, like the walk's own final
-        count, so the findings collected so far are still emitted in time.
-        """
-        for source in sources:
-            if time.monotonic() >= until:
-                return
-            with isolated(self.walker, source.file.rel, "Python re-export analysis"):
-                self._record_source(source, [], [(0, len(source.text))])
+        """Bind queued consumers after the walk has collected project snapshots."""
+        self.cross_file.resolve(scan)
 
     def _record_example_credential(self, proj: _Project, m: Match, rel: str, reason: str) -> None:
         """Remember a placeholder credential for informational project evidence."""
