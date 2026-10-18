@@ -303,7 +303,7 @@ The global `-v`/`-vv` (info/debug) and `-q` (errors only) flags go before the co
 | `--dump-records DIR` | Write sanitized connector records for offline re-analysis |
 | `--incremental` / `--no-incremental` | Enable/disable content-addressed result caching |
 | `--state-dir DIR` | Private incremental state directory |
-| `--connector-timeout-seconds N` | Per-connector deadline in seconds (default: 120) |
+| `--connector-timeout-seconds N` | Per-connector deadline in seconds (default: 120, raised up to 1800 for a large input when not set; a value you set is kept) |
 | `--job-deadline-seconds N` | CLI process deadline; exits 3 on expiry |
 | `--max-coverage-gap RATIO` | Share of examined entries that may be left unread before the scan is incomplete (default: 0.02); `0` is strict accounting, which fails on any gap (see [strict accounting](../scanning.md#coverage-budget-and-strict-accounting)), and a gap the scanner cannot bound (an early stop, a refused page) always fails closed |
 | `--allow-private-origin` / `--deny-private-origin` | Permit non-public IP addresses |

@@ -417,8 +417,9 @@ security_options = [
         "connector_timeout_seconds",
         type=float,
         callback=_connector_timeout_option,
-        help="per-connector completion deadline in seconds (default: 120); --connector-timeout is a"
-        " deprecated alias; thread workers use cooperative cancellation",
+        help="per-connector completion deadline in seconds (default: 120, raised up to 1800 for a"
+        " large input when not set); --connector-timeout is a deprecated alias; thread workers use"
+        " cooperative cancellation",
     ),
     click.option(
         "--max-coverage-gap",
