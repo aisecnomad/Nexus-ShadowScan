@@ -498,9 +498,7 @@ def _python_ranges_from(
             # this error past the last line; 3.12+ reports the start of the last
             # line, which would mask code the tokenizer already read.
             return False, None
-        start = offset(position)
-        if start < len(text):  # an error reported at EOF itself masks nothing
-            spans.append((start, len(text)))
+        _mask_rest(spans, text, offset(position))  # an error reported at EOF itself masks nothing
         # An unterminated multi-line literal is masked through EOF: nothing after
         # its opening can be executable Python. Any other tokenizer error
         # (Python 3.12+ raises for mid-file lexical errors that 3.11 tolerated)
@@ -511,15 +509,19 @@ def _python_ranges_from(
         # indented line (found by the fuzz target in tools/fuzz; see shadowscan.utils.python_tokens),
         # where 3.13 raises TokenError. Nothing past the last token read can be said to be code, so it
         # is masked and the file reported incomplete, as for any other tokenizer error.
-        start = offset(read_to)
-        if start < len(text):
-            spans.append((start, len(text)))
+        _mask_rest(spans, text, offset(read_to))
         return True, None
     if fstring_starts:
         start = fstring_starts[0]
         spans[:] = [*(span for span in spans if span[1] <= start), (start, len(text))]
         return True, None
     return False, None
+
+
+def _mask_rest(spans: list[tuple[int, int]], text: str, start: int) -> None:
+    """Mask ``text`` from ``start`` to its end; a ``start`` at the end masks nothing."""
+    if start < len(text):
+        spans.append((start, len(text)))
 
 
 def _legacy_fstring_ranges(token: str, base: int, depth: int = 0) -> tuple[list[tuple[int, int]], bool]:
