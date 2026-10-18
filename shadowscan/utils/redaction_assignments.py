@@ -1737,16 +1737,45 @@ def _redact_line_tails(text: str) -> str:
     carried: tuple[str, bool] | None = None
     closer: str | None = None
     for line in _TEXT_LINE.finditer(text):
-        body = line.group()
+        body, start = line.group(), 0
         if closer is not None:
             close = body.find(closer)
             inside = len(body) if close < 0 else close
             spans.extend(_token_spans(body, line.start(), 0, inside, _COMMENT_TOKEN))
             if close < 0:
                 continue
-        found, carried, closer = _line_tail(body, line.start(), carried)
-        spans.extend(found)
+            # Only the code after the closer is read as code: the comment's own text
+            # ("don't */ apiKey = ...") would otherwise open a phantom literal.
+            start = close + len(closer)
+        for _ in range(_MAX_COMMENT_SEGMENTS):
+            segment = body[start:]
+            found, carried, closer = _line_tail(segment, line.start() + start, carried)
+            spans.extend(found)
+            after = _after_closed_comment(segment)
+            if closer is not None or after is None:
+                break
+            # Code after a block comment that closes on the line ('/* note */ apiKey: ...')
+            # is read as a line of its own: the comment ended, the code did not.
+            start += after
     return _withhold_spans(text, spans)
+
+
+# Block comments closed on one line that are each read past. Each segment's comment is read
+# to the line's end, so a line of many comments is read past only this many; the rest of it
+# is read as comment, its key-shaped tokens withheld, as before.
+_MAX_COMMENT_SEGMENTS = 16
+
+
+def _after_closed_comment(line: str) -> int | None:
+    """Where the code after ``line``'s block comment starts, when that comment closes on the line."""
+    _, comment = _line_regions(line)
+    if comment is None:
+        return None
+    for opener, closer in _COMMENT_CLOSERS.items():
+        if line.startswith(opener, comment):
+            close = line.find(closer, comment + len(opener))
+            return None if close < 0 else close + len(closer)
+    return None
 
 
 def _redact_plain_assignments(value: str, depth: int = 0, *, former: bool = False) -> str:

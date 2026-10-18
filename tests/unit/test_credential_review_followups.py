@@ -122,3 +122,51 @@ def test_an_environment_read_keeps_its_password_fallback_of_any_shape(run_connec
     findings = _scan(run_connector, tmp_path, "src/db.ts", text)
     assert _secret_lines(findings) == [1]
     assert password not in _snippets(findings)
+
+
+@pytest.mark.parametrize("prefix", ["/* note */ ", "/* don't */ ", "/* a */ /* b */ ", "<!-- x --> "])
+@pytest.mark.parametrize(
+    "shape",
+    [
+        'const opts = {{ apiKey: env.KEY, other: "{key}" }};',
+        'dbPassword: process.env.DB_PASSWORD?.trim() || "{password}",',
+        'password: env("P", default_value="{password}")',
+    ],
+)
+def test_a_line_after_a_closed_block_comment_is_read_as_code(prefix, shape):
+    # Regression (shared with main): a block comment that closed on the line made
+    # the whole rest of the line read as comment, where only key-shaped tokens are
+    # withheld, so a credential name's fallback literal after it was shown.
+    from shadowscan.utils.redaction import sanitize_text
+
+    key, password = "Zx9QwEr7Ty" + "Ui3OpAs5Df", "Xk9#mQ2" + "$vL!pR7@wZ4%"
+    out = sanitize_text(prefix + shape.format(key=key, password=password))
+    assert key not in out and password not in out
+
+
+def test_code_after_a_multiline_comment_that_closes_mid_line_is_read_alone():
+    # The comment's own text ("don't */") is not read as code: its apostrophe would open
+    # a literal that hid the fallback after the closer.
+    from shadowscan.utils.redaction import sanitize_text
+
+    password = "Xk9#mQ2" + "$vL!pR7@wZ4%"
+    text = f"/* start\n it's don't */ dbPassword: process.env.DB_PASSWORD?.trim() || \"{password}\",\n"
+    assert password not in sanitize_text(text)
+
+
+def test_a_line_of_many_block_comments_is_read_in_linear_time():
+    import time
+
+    from shadowscan.utils.redaction import sanitize_text
+
+    def cost(count: int) -> float:
+        text = "apiKey = x; " + "/**/ " * count
+        best = float("inf")
+        for _ in range(3):
+            started = time.process_time()
+            sanitize_text(text)
+            best = min(best, time.process_time() - started)
+        return best
+
+    small, large = cost(4_000), cost(16_000)
+    assert large < max(small, 0.02) * 10, (small, large)
