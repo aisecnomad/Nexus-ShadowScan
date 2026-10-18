@@ -8,7 +8,9 @@ by the returned tool name, or a process/code execution sink fed with the
 model's arguments, and append the dispatch result and matching call ID to the
 same message history (an OpenAI ``role: tool`` message or an Anthropic
 ``tool_result`` block, directly or through a collected results list). Merely
-declaring schemas or transforming arguments does not qualify. The request may be
+declaring schemas or transforming arguments does not qualify. A separately
+proved project-local dispatcher may receive the returned name and arguments;
+the dispatcher name alone establishes nothing. The request may be
 a plain call, a raw-response call whose ``.parse()`` result is used, a
 streaming call whose ``get_final_message()`` / ``get_final_completion()``
 result is used, or a call to a module function that returns such a request
@@ -22,11 +24,20 @@ recognizers.
 from __future__ import annotations
 
 import ast
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
 
 MAX_FLOW_STEPS = 100_000
+
+
+class _Imports(dict[str, str]):
+    """Unshadowed imports and dispatch functions proved from source snapshots."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.dispatchers: set[str] = set()
+
 
 # Calls that execute whatever the model selected: its tool input reaches a
 # shell, a process or an interpreter. Names resolve through the module's imports.
@@ -104,17 +115,9 @@ def _value(node: ast.AST, values: dict[str, str]) -> str | None:
         return values.get(node.id)
     if isinstance(node, ast.Attribute):
         base = node.value
-        if node.attr == "message" and isinstance(base, ast.Subscript):
-            if (
-                isinstance(base.slice, ast.Constant)
-                and type(base.slice.value) is int
-                and base.slice.value == 0
-                and isinstance(base.value, ast.Attribute)
-                and base.value.attr == "choices"
-                and _value(base.value.value, values) == "response"
-            ):
-                return "message"
         parent = _value(base, values)
+        if node.attr == "message" and parent == "choice":
+            return "message"
         if node.attr == "tool_calls" and parent == "message":
             return "calls"
         if node.attr == "content" and parent == "response":
@@ -129,8 +132,18 @@ def _value(node: ast.AST, values: dict[str, str]) -> str | None:
             return "function-name"
         if node.attr == "id" and parent == "tool":
             return "tool-id"
-    if isinstance(node, ast.Subscript) and _value(node.slice, values) == "function-name":
-        return "dispatcher"
+    if isinstance(node, ast.Subscript):
+        if (
+            isinstance(node.slice, ast.Constant)
+            and type(node.slice.value) is int
+            and node.slice.value == 0
+            and isinstance(node.value, ast.Attribute)
+            and node.value.attr == "choices"
+            and _value(node.value.value, values) == "response"
+        ):
+            return "choice"
+        if _value(node.slice, values) == "function-name":
+            return "dispatcher"
     return None
 
 
@@ -158,14 +171,16 @@ def _pairs(node: ast.AST) -> dict[str, ast.expr] | None:
     return pairs
 
 
-def _imports(tree: ast.AST, budget: _Budget) -> dict[str, str]:
+def _imports(
+    tree: ast.AST, budget: _Budget, resolve_dispatch: Callable[[str, str], bool] | None = None
+) -> _Imports:
     """Map imports that cannot be shadowed to their dotted targets.
 
     The provider request binder already rejects shadowed SDK clients. Sink
     provenance must be at least as strict: an imported ``subprocess`` can be
     replaced by a local dry-run object before the apparent dispatch.
     """
-    names: dict[str, str] = {}
+    names = _Imports()
     bindings: dict[str, int] = {}
 
     def bound(name: str) -> None:
@@ -201,7 +216,17 @@ def _imports(tree: ast.AST, budget: _Budget) -> dict[str, str]:
             names.pop(name, None)
         if name in {"exec", "eval"} and name not in names:
             names[name] = ""  # a local binding shadows the builtin sink
+    _resolve_dispatchers(names, resolve_dispatch)
     return names
+
+
+def _resolve_dispatchers(names: _Imports, resolver: Callable[[str, str], bool] | None) -> None:
+    if resolver is None:
+        return
+    for name, target in names.items():
+        module, _, symbol = target.rpartition(".")
+        if module and resolver(module, symbol):
+            names.dispatchers.add(name)
 
 
 def _execution_sink(func: ast.expr, imports: dict[str, str]) -> bool:
@@ -261,7 +286,7 @@ def _assign(
     *,
     dispatch: bool,
     declared_tools: set[str],
-    imports: dict[str, str],
+    imports: _Imports,
     dispatch_calls: set[int] | None = None,
 ) -> None:
     targets, expression = _assignment(statement)
@@ -284,6 +309,7 @@ def _assign(
                 and call.func.id in declared_tools
                 or _value(call.func, values) == "dispatcher"
                 or _execution_sink(call.func, imports)
+                or _dispatch_helper(call, values, imports, budget)
             )
             if dispatch and target_is_tool:
                 kind = "result"
@@ -301,6 +327,18 @@ def _assign(
     for target in targets:
         if kind and isinstance(target, ast.Name):
             values[target.id] = kind
+
+
+def _dispatch_helper(call: ast.Call, values: dict[str, str], imports: _Imports, budget: _Budget) -> bool:
+    """A proved helper receives the selected name and arguments in its proven order."""
+    return (
+        isinstance(call.func, ast.Name)
+        and call.func.id in imports.dispatchers
+        and len(call.args) == 2
+        and not call.keywords
+        and _value(call.args[0], values) == "function-name"
+        and _depends(call.args[1], values, "arguments", budget)
+    )
 
 
 def _history_call(statement: ast.stmt, history: str) -> tuple[str, ast.expr] | None:
@@ -440,7 +478,7 @@ def _tool_iteration(
     history: str,
     budget: _Budget,
     declared_tools: set[str],
-    imports: dict[str, str],
+    imports: _Imports,
     collected: set[str],
     dispatch_calls: set[int],
 ) -> bool:
@@ -505,7 +543,7 @@ def _statements(
     history: str,
     budget: _Budget,
     declared_tools: set[str],
-    imports: dict[str, str],
+    imports: _Imports,
     dispatch_calls: set[int],
 ) -> bool:
     for number, statement in enumerate(statements):
@@ -563,7 +601,7 @@ def _request_loop(
     history: str,
     budget: _Budget,
     declared_tools: set[str],
-    imports: dict[str, str],
+    imports: _Imports,
     dispatch_calls: set[int],
 ) -> bool:
     values = {response: kind}
@@ -671,7 +709,11 @@ def _loop_request(
 
 
 def provider_tool_loop_lines(
-    tree: ast.AST, request_calls: set[int], *, dispatch_calls: set[int] | None = None
+    tree: ast.AST,
+    request_calls: set[int],
+    *,
+    dispatch_calls: set[int] | None = None,
+    resolve_dispatch: Callable[[str, str], bool] | None = None,
 ) -> list[int]:
     """Return request lines with the supported request/dispatch/feedback flow.
 
@@ -682,7 +724,7 @@ def provider_tool_loop_lines(
     if not request_calls:
         return []
     budget = _Budget()
-    imports = _imports(tree, budget)
+    imports = _imports(tree, budget, resolve_dispatch)
     schemas = _schema_variables(tree, budget)
     helpers = _request_helpers(tree, request_calls, budget)
     lines: set[int] = set()

@@ -17,6 +17,18 @@ page stays the rollout guide.
 
 ## Review before deployment
 
+Cross-surface relationship consumers must now read `metadata.related_groups`
+as well as `related`: large exact-identifier groups and capped exact pairs
+retain compact memberships, with `related_truncation` explaining omitted
+pairwise expansion. These observations do not establish authorization or
+runtime activity. No inventory binding or risk policy changes.
+
+Code scans can classify additional provider feedback loops and locally imported
+AI SDK executable tools as agents. Cross-file proofs use only source snapshots
+already read within the scan root and manifest project; no sample code is
+executed. Omitted files in a diff/triage scan cannot supply a proof. Rerun a full
+reviewed baseline before treating newly classified agents as drift.
+
 The model-identifier pass leaves coverage incomplete (exit 3) when a file
 exceeds its 400-literal analysis limit. Only literals that carry a vendor stem
 (model-id candidates) count; ordinary strings never reach the limit. Findings

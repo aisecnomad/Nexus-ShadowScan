@@ -4,9 +4,10 @@ The evaluation tool creates one isolated temporary repository per labeled case.
 It never clones a repository, executes sample code, uses credentials, or makes
 network requests. It invokes the same `code.filesystem` connector and bundled
 signature index used by a normal scan, with Git enrichment disabled and secret
-scanning enabled. A warning, partial scan, skipped connector, or unstable
-repeated scan stops evaluation instead of counting missing detections as true
-negatives.
+scanning enabled. A partial scan, skipped connector, error or noninformational
+warning makes the case unscored and fails evaluation; the JSON report retains
+the diagnostic. An unstable repeated scan stops evaluation. Missing or unstable
+observations never count as true negatives.
 
 Corpus paths must identify distinct files and directories under conservative
 case-folded, Unicode-normalized comparison. A file cannot also be a parent
@@ -16,13 +17,11 @@ scanning. Sample creation never overwrites an existing path; an unexpected host
 alias stops evaluation instead of changing the labeled input.
 
 The nine bundled corpora (synthetic, public, realistic, review, field review,
-attribution, current SDK idioms, benchmark follow-up and independent) are regression checks on known
-inputs. The synthetic, realistic, review, attribution, current SDK idioms and
-public sets were written or selected by the maintainers; the independent corpus
-was labeled separately, as described below. None of them is a random or
-representative sample of repositories, so none estimates field precision,
-recall or calibration; see the held-out procedure below for that.
-
+attribution, current SDK idioms, benchmark follow-up and independent) are
+regression checks on known inputs. The maintainers wrote or selected eight of
+these sets; the independent corpus was labeled separately, as described below.
+None is a random or representative sample of repositories, so none estimates
+field precision, recall or calibration; see the held-out procedure below.
 
 ## Real-world repository benchmark against other tools
 
@@ -113,31 +112,56 @@ python -m tools.evaluation.benchmark --files 1000 --runs 3 \
 ```
 
 Use distinct output filenames: reports are created as private mode `0600` files
-and will not overwrite existing ones. Exit 0 means all labels and structural
-assertions passed, or that every failing case carries `known_gap: true` within
-the corpus's valid waiver budget; exit 1 means at least one unwaived regression
-or a stale waiver whose case now passes; exit 2 means an invalid corpus
-(including a missing, expired or over-budget known-gap policy), incomplete
-scan, nondeterministic observations, or output error. A corpus containing a `known_gap` must declare
-`known_gap_policy.max_count` and `known_gap_policy.expires_on`. The evaluator
-rejects a missing or expired policy and fails when the number of flags exceeds
-the cap. A `known_gap` case is a temporary, documented miss or false positive.
-It stays in the metrics, so precision and recall report the scanner as it is,
-and the report's `known_gaps` section lists the flagged count, cases that still
-fail, stale flags and unflagged regressions. The flag is never a reason to
-change the scanner to fit a case; the case description records why the scanner
-gets it wrong. Pin the
-scanner commit, signature pack, corpus SHA-256 (included in each report), Python
-version and platform beside the report before comparing runs. Timing includes
-connector analysis only; fixture creation, index loading and report writing
-are excluded. The median and nearest-rank p95 of these tiny scans are regression
-diagnostics, **not** a full-repository capacity benchmark or a latency SLO. The
-separate benchmark builds up to 10,000 source files plus at most 20 manifests in isolated Python
-projects and repeats the entire scan up to 10 times, verifying that every file
-was examined and that finding counts remain stable. It reports bytes, finding
-count, elapsed time, files per second and runtime platform. Hold file count and
-worker resources fixed for comparisons; test real repository and connector
-sizes separately before setting a production latency or memory target.
+and will not overwrite existing ones.
+
+| Exit | Meaning |
+|---|---|
+| `0` | Every scan completed and the gate passed. Failures covered by a valid known-gap policy may remain. |
+| `1` | An unwaived mismatch, a stale waiver whose case now passes, or an incomplete scan failed the gate. |
+| `2` | Invalid inputs, nondeterministic observations, or another evaluation or output error prevented a result. |
+
+The JSON report and the console summary printed with `--output` distinguish
+detection, correctness and completeness:
+
+| Report field | What it measures |
+|---|---|
+| `metrics` | TP/FP/FN/TN, precision, recall and specificity by family and in aggregate. `scored_cases` excludes `incomplete_cases`; `cases` retains the total. |
+| `quality.target_classification` | Whether each complete case matches its declared kind/signature target. This is a binary target check, not exhaustive multiclass classification. |
+| `quality.labeled_assertions` | Whether every declared attribution, capability or structural assertion passes on each complete case with assertions. Unlabeled cases are unscored. |
+| `quality.joint_correctness` | Whether both the target and the declared assertions pass, restricted to complete cases with assertions. |
+| `finding_assertions` | Explicit selector and exact-finding-set check counts, including product/provider attribution and capabilities where labeled. Categories overlap. |
+| `scan_completeness` | Complete and incomplete case and scan counts, including every repeat, plus the case completion rate. |
+| `all_cases_correct` | Whether every case completed and matched its target and all declared assertions, without applying waivers. |
+| `passed` | Whether the regression gate passed after applying the bounded known-gap policy and rejecting incomplete cases or stale waivers. |
+
+Each `quality` group reports scored and unscored case counts, passes, failures
+and a pass rate. Undefined rates are `null`. A case must complete every repeat
+before it can be scored. An incomplete case has `scan_complete: false`, null
+`predicted` and `score`, and diagnostics in `scan_errors`; it contributes no
+TP/FP/TN/FN or calibration observation. It always fails evaluation and acceptance,
+including when marked as a known gap. These selected-case correctness rates
+are not field accuracy, and unlabeled cases are never attribution successes.
+
+A corpus containing a `known_gap` must declare `known_gap_policy.max_count`
+and `known_gap_policy.expires_on`. The evaluator rejects a missing or expired
+policy and fails when the number of flags exceeds the cap. A `known_gap` case
+is a temporary, documented miss, false positive or assertion error. If its
+scan completes, it stays in the metrics unchanged, and the report's
+`known_gaps` section lists the flagged count, cases that still fail, stale
+flags and unflagged regressions. The flag is never a reason to change the
+scanner to fit a case; the case description records why the scanner gets it
+wrong. Pin the scanner commit, signature pack, corpus SHA-256 (included in
+each report), Python version and platform beside the report before comparing
+runs. Timing includes connector analysis only; fixture creation, index loading
+and report writing are excluded. The median and nearest-rank p95 of these tiny
+scans are regression diagnostics, **not** a full-repository capacity benchmark
+or a latency SLO. The separate benchmark builds up to 10,000 source files plus
+at most 20 manifests in isolated Python projects and repeats the entire scan
+up to 10 times, verifying that every file was examined and that finding counts
+remain stable. It reports bytes, finding count, elapsed time, files per second
+and runtime platform. Hold file count and worker resources fixed for
+comparisons; test real repository and connector sizes separately before
+setting a production latency or memory target.
 
 `tools/evaluation/corpus.json` has handwritten positives and hard negatives
 for executable Python/TypeScript calls, f-string interpolation, JavaScript
@@ -192,26 +216,24 @@ standup bot, a crypto exchange client named `gemini-python`, a `copilot-css`
 theme and a monitoring agent Helm chart. Each case labels one target kind and
 signature; placeholder cases also assert that no secret finding is produced.
 
-This corpus was written to be failable, and its first run found three
-misses. Two were fixed in the signature data: the Semantic Kernel app now
-promotes to an agent through C# code patterns for `Kernel.CreateBuilder()`,
+This corpus was written to be failable, and its first run found three misses.
+Two were fixed in the signature data: the Semantic Kernel app now promotes to
+an agent through C# code patterns for `Kernel.CreateBuilder()`,
 `Plugins.AddFromType<>()`, `[KernelFunction("...")]` and automatic tool
-invocation, and a Flask view defined as `def create_agent():` no longer matches
-the LangChain `create_agent(` call pattern. At the time of writing the scanner
-scores 15 TP, 1 FP, 2 FN and 15 TN on it (precision 0.94, recall 0.88,
-specificity 0.94). Three failures of the binary target carry `known_gap: true` and explain the
-cause in their description: the runbook's illustrative provider-shaped value is
-reported as a hardcoded credential because it is well formed and high entropy,
-a finding a secret scanner cannot rule out from the surrounding prose; and the
-OpenAI tool-calling script and the LiteLLM proxy worker are reported as LLM
-usage rather than agents because generic loops and subprocess idioms cannot
-confirm an agent without corroborating framework evidence, a deliberate
-precision rule documented in docs/scanning.md. Binary-correct cases can still
-contain off-target findings or vendor attribution. The separate authored
-attribution suite below checks those aspects. Like the other corpora, this one
-is author-written: the authors chose the frameworks, the file layouts and the
-distractors, so its rates describe these 33 cases only and are not a field
-precision estimate.
+invocation, and a Flask view defined as `def create_agent():` no longer
+matches the LangChain `create_agent(` call pattern. The October 18 changes
+resolve the OpenAI tool-calling script and LiteLLM proxy worker through
+connected model responses, dispatch and feedback, including bounded inspection
+of local dispatcher definitions. A generic loop, tool schema or subprocess
+call still does not establish an agent. The remaining known gap is the
+runbook's illustrative provider-shaped value: it is well formed and high
+entropy, so the scanner cannot rule out a real credential from surrounding
+prose. This label remains a false positive and is not hidden by the waiver.
+Binary-correct cases can still contain off-target findings or vendor
+attribution. The separate authored attribution suite below checks those
+aspects. Like the other corpora, this one is author-written: the authors chose
+the frameworks, the file layouts and the distractors, so its rates describe
+these 33 cases only and are not a field precision estimate.
 
 `tools/evaluation/attribution_corpus.json` contains 24 short, handwritten
 source cases without credential examples. They cover framework-only usage,
@@ -219,12 +241,12 @@ agent construction, product/provider attribution and configured capabilities.
 The October 2 additions check Genkit initialization, explicit agents, registered
 tool generation, disabled dispatch and function-local registrations. Each case
 checks expected and forbidden findings and declares an `exact_findings` list
-to compare the full emitted finding multiset. On the October 2 implementation,
-the binary target scores 14 TP and 10 TN, while one binary-correct case fails attribution
-checks: Docker Compose beside an n8n workflow is also credited to Kubernetes
-agent workloads. That case has explicit `known_gap: true` under the corpus's
-bounded `known_gap_policy`, remains in the case and assertion counts, and is
-listed as a failing gap. Twenty-three of 24 exact finding sets pass. These are
+to compare the full emitted finding multiset. The October 18 correction removes
+the n8n image from the generic Kubernetes/container signature while retaining
+its dedicated product signature. The exact label set now includes the valid
+n8n Compose infrastructure finding alongside the workflow agent; the earlier
+label omitted that deployment observation. The forbidden Kubernetes assertion
+remains. All 24 exact finding sets pass without a known-gap waiver. These are
 intentionally selected development fixtures; their scores do not measure field
 error rates or human-labeled vendor accuracy.
 `field_review_corpus.json` holds eight synthetic cases written after a field
@@ -255,33 +277,37 @@ annotation ledger remain frozen; adding regression cases does not refresh their
 independence. The [acceptance verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md) requires
 separate declared human-reviewed holdout evidence for deployment decisions.
 
-`tools/evaluation/current_idioms_corpus.json` holds 28 short synthetic cases
-(17 positives, 11 negatives) written from scratch, with AI assistance, in the
+`tools/evaluation/current_idioms_corpus.json` holds 31 short synthetic cases
+(19 positives, 12 negatives) written from scratch, with AI assistance, in the
 shape current SDK documentation uses. The positives are an AI SDK 7 chat route
 whose `streamText` call loops over imported tools with `stopWhen:
 isStepCount(5)`, an AI SDK 6 `ToolLoopAgent`, OpenAI Agents SDK agents in
-Python (`Runner.run`) and TypeScript (`run`), Claude Agent SDK `query()` in
-Python and TypeScript and a `ClaudeSDKClient` session with an in-process tool,
-LangGraph `create_react_agent`, LangChain 1.0 `create_agent`, a Google ADK
-`LlmAgent`, a Pydantic AI agent with a tool, a smolagents `CodeAgent`, a
-Strands agent, a Microsoft Agent Framework `ChatAgent`, a Mastra agent and an
-OpenAI chat-completions loop that dispatches the selected function. The hard
+Python (`Runner.run`) and TypeScript (`run`), Realtime agents in both
+languages, Claude Agent SDK `query()` in Python and TypeScript and a
+`ClaudeSDKClient` session with an in-process tool, LangGraph
+`create_react_agent`, LangChain 1.0 `create_agent`, a Google ADK `LlmAgent`, a
+Pydantic AI agent with a tool, a smolagents `CodeAgent`, a Strands agent, a
+Microsoft Agent Framework `ChatAgent`, a Mastra agent and an OpenAI
+chat-completions loop that dispatches the selected function. The hard
 negatives are a plain AI SDK 7 chat route, a multi-step call without tools, a
 tool loop disabled with `toolChoice: 'none'`, single chat-completions and
-Messages API calls without tools, a local `agents` package whose `Agent` and
-`Runner` classes are not the OpenAI SDK, a repository of Semgrep, Sigma and
+Messages API calls without tools, local `Agent`, `Runner` and `RealtimeAgent`
+classes without an OpenAI SDK binding, a repository of Semgrep, Sigma and
 gitleaks rules that name LLM keys and hosts, which must produce no finding at
 all, a Python FastMCP server and a TypeScript `McpServer`, each of which must
 be reported as `framework-usage` with exactly the `mcp-server` and `tool-use`
-capabilities and never as an agent, HTTP and socket servers imported under
-the name `Server`, which must produce no finding, and an MCP client next to
+capabilities and never as an agent, HTTP and socket servers imported under the
+name `Server`, which must produce no finding, and an MCP client next to
 `aiohttp` and `socket.io` servers constructed as `Server(`, which must keep
-`tool-use` alone and no `mcp-server`. The positives also assert an
-agent finding attributed to the expected product or provider. One case is a
-`known_gap`: a single-step `generateText` call with an imported executable tool is model-selected dispatch, but without a
-stop condition the scanner only recognizes inline `tool({ execute })`
-definitions, so it reports SDK usage. Its first run, against the scanner before
-the October fixes, failed two cases: the AI SDK 7 tool loop was missed and the
+`tool-use` alone and no `mcp-server`. The positives also assert an agent
+finding attributed to the expected product or provider. The single-step
+imported-tool case now resolves a local exported `tool({ execute })` through
+its import. The fixture's previously implicit `@/` path alias is now declared
+in `tsconfig.json`; without an explicit mapping it remains unresolved, as a
+new negative regression verifies. This corrects the fixture's missing context,
+so the amended corpus is not identical to the earlier one. No current-idiom
+case carries a known-gap waiver. Its first run, against the scanner before the
+October fixes, failed two cases: the AI SDK 7 tool loop was missed and the
 rule repository was reported as LLM usage. Like the other authored suites, its
 scores describe these cases only, not field precision or recall.
 
@@ -585,21 +611,23 @@ python -m tools.evaluation.accept \
 The command requires a private corpus outside the source checkout and a
 SHA-256-bound, two-reviewer ledger declaring
 `independent-human-double-label-before-scan`. Bundled suites and AI annotation
-records remain regression evidence. It rescans every case with complete, stable
-observations and checks the method on the evaluated ledger. The ledger records
-declarations; a reviewer still needs to verify the sampling and review process. It
-checks the frozen corpus digest, all required groups, minimum positive and
-negative counts, structural assertions and the predeclared precision, recall and
-specificity **lower endpoints of two-sided 95% Wilson intervals**. It accepts a
-bounded number of errors if the predeclared endpoints still pass; it does not
-silently demand perfect classification. Undefined rates fail the gate. Exit `0`
-passes, `1` fails a bound/assertion, and `2` means invalid inputs, incomplete
-coverage or an output error. The private `0600` summary will not overwrite an
-existing file; it contains counts and failures, not source content. Retain the
-scanner and signature commit, corpus/policy digests, the full labeled result
-from `tools.evaluation.evaluate`, reviewer decisions and CI logs in the
-restricted release record. Changing labels, exclusions, scanner signatures or
-sampling after seeing results requires a new blinded holdout and reviewed policy.
+records remain regression evidence. It rescans every case with complete,
+stable observations and checks the method on the evaluated ledger. The ledger
+records declarations; a reviewer still needs to verify the sampling and review
+process. It checks the frozen corpus digest, all required groups, minimum
+positive and negative counts, structural assertions and the predeclared
+precision, recall and specificity **lower endpoints of two-sided 95% Wilson
+intervals**. It accepts a bounded number of errors if the predeclared
+endpoints still pass; it does not silently demand perfect classification.
+Undefined rates fail the gate. Exit `0` passes, `1` fails a bound, assertion
+or completeness requirement, and `2` means invalid inputs, nondeterministic
+observations or another evaluation/output error. The private `0600` summary
+will not overwrite an existing file; it contains counts and failures, not
+source content. Retain the scanner and signature commit, corpus/policy
+digests, the full labeled result from `tools.evaluation.evaluate`, reviewer
+decisions and CI logs in the restricted release record. Changing labels,
+exclusions, scanner signatures or sampling after seeing results requires a new
+blinded holdout and reviewed policy.
 
 The standalone command requires declared human labels, rejects known-gap waivers
 and exact source reuse from the nine bundled evaluated corpora. It cannot find

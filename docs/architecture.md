@@ -103,7 +103,17 @@ cannot fill is recorded in the scan statistics and makes the scan incomplete
    2. **Correlate** (`correlation.py`). Findings from different connectors or
       surfaces that share an exact identifier are linked in `metadata.related`,
       with `metadata.related_details` records of the identifier type, the
-      matching fields and the scope. A fully qualified reference (an ARN, a
+      matching fields and the scope. Pairwise lists remain bounded to 24 peers.
+      Exact identifier groups larger than 25 observations retain compact
+      `metadata.related_groups` memberships: findings with the same `group_id`
+      share the recorded identifier type and identical verified scope. A capped
+      exact pair from a smaller group also retains a two-member membership.
+      `metadata.related_truncation` discloses omitted pairwise expansion;
+      consumers must read group membership as well as `related` to reconstruct
+      the available relationships. Large groups with compatible but different
+      partial scopes are not merged: compatibility is not transitive. Group
+      tokens contain no raw identifier and establish no ownership, runtime
+      activity or approval. A fully qualified reference (an ARN, a
       GCP resource name, an Azure resource id, an OCI OCID) carries its own
       account or project. A GCP service account address, bare or as
       `projects/<project>/serviceAccounts/<address>`, names one service

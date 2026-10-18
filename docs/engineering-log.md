@@ -13,6 +13,37 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Exact correlation groups, local tool dispatch and evaluation correctness (October 18)
+
+- Exact identifier groups above 25 observations retain deterministic compact
+  `related_groups` memberships instead of disappearing. Small groups retain
+  their bounded pairwise links; exact edges omitted by the peer cap retain
+  two-member memberships. `related_truncation` explains expansion limits.
+  Conflicting or unverifiable scopes never gain exact links. Large compatible
+  partial scopes are not merged transitively. This does not change approval,
+  runtime assurance or risk policy.
+- Provider tool-loop analysis tracks the first response choice through a local
+  alias and accepts a typed SDK client parameter only with a matching constructed
+  client at a visible callsite. An imported dispatcher must resolve to a bounded
+  local source proof; the response-selected name, arguments, result and feedback
+  history remain connected. Source is never executed.
+- AI SDK generation can resolve stable named imports of explicitly exported
+  executable tools from already-read local modules. Ambiguous paths, unconfigured
+  aliases, SDK path remapping, mutation and schema-only tools remain unresolved.
+  Unknown or inherited module-resolution configuration and explicit `baseUrl`
+  also prevent that SDK proof. The imported-tool
+  corpus now includes an explicit tsconfig path mapping that was absent from
+  the original fixture, with a negative regression preserving the no-config case.
+- n8n image evidence belongs to its dedicated platform signature and no longer
+  duplicates the generic Kubernetes/container signature. The attribution
+  fixture now explicitly expects its valid n8n infrastructure finding alongside
+  the workflow agent, retaining its forbidden Kubernetes assertion.
+- Evaluation prints target classification, labeled assertions and completeness
+  beside binary metrics. Incomplete cases are unscored and force evaluation and
+  acceptance failure even with a known-gap waiver. `all_cases_correct` is
+  separate from the waiver-policy gate. These remain author-written regression
+  cases, not independent or field accuracy evidence.
+
 ### SARIF notifications name their connector once; the docs show how one scan gives both the JSON ledger and SARIF (October 18)
 
 - A SARIF run's `toolExecutionNotifications` prefixed each diagnostic with its

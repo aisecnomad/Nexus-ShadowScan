@@ -15,6 +15,33 @@ See the [shared connector entry guide](../connectors.md#connector-entry-guide)
 for the common modes, permissions, options, fail-closed and evidence-limit
 references.
 
+## Cross-file tool dispatch
+
+The code scanner resolves a bounded subset of local tool dispatch from files
+already read inside the same manifest project. Python provider feedback loops
+must connect an import-bound client response to a verified dispatcher, then
+return its result and tool-call identifier to the same message history. A typed
+client parameter alone is insufficient: a visible call must supply the matching
+constructed SDK client. Supported local dispatcher helpers use literal handler
+tables for file readers or literal-name branches with import-bound HTTP clients.
+Other dynamic or unproven dispatch remains supporting evidence.
+
+For JavaScript/TypeScript AI SDK calls, a stable local named import must resolve
+to an explicitly exported `const` initialized by import-bound `ai.tool` with an
+executable callback. Relative imports and explicit one-target tsconfig/jsconfig
+path mappings are supported. The scanner does not guess `@/` aliases, execute
+code, follow re-export chains, or read omitted files to complete a proof.
+Ambiguous paths, changed bindings and schema-only tools cannot establish an agent.
+An AI SDK import must also remain external: an `ai` path remapping, an explicit
+`baseUrl`, or an unreadable or inherited nearest tsconfig/jsconfig leaves that
+SDK proof unresolved.
+Cross-file analysis shares the scan's deadlines and bounded source budgets;
+limits that prevent a requested proof leave the scan incomplete.
+
+An n8n container image supplies n8n infrastructure evidence. Its image alone
+never establishes a Kubernetes deployment; the dedicated product signature is
+used without duplicating the generic Kubernetes/container signature.
+
 ## `code.filesystem`
 
 Optional `diff_base` (`shadowscan code PATH --diff-base REF`) accepts a local

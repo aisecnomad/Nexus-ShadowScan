@@ -147,6 +147,7 @@ class _SourceFile:
     unparsed: _CellSpans = ()  # syntax the import binder could not read; lexical evidence only
     source_agent_regions: list[tuple[int, int, str]] = field(default_factory=list)
     reexport_pending: bool = False  # queued for re-export analysis after the walk
+    vercel_sdk_unresolved: bool = False  # config not yet checked, or can replace the ai module
     # Tool regions a project-level construction, registration or dispatch path may also reach.
     project_tool_regions: list[tuple[int, int]] = field(default_factory=list)
 

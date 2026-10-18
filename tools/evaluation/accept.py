@@ -165,6 +165,7 @@ def accept(corpus: Path, policy_path: Path, annotations: Path) -> dict[str, Any]
     if set(policy["groups"]) != set(metrics):
         raise CorpusError("policy must declare exactly all observed families and the all group")
     assertions_passed = all(not case["assertion_failures"] for case in result["cases"])
+    scans_complete = all(case["scan_complete"] for case in result["cases"])
     groups: dict[str, dict[str, Any]] = {}
     for name, counts in sorted(metrics.items()):
         requirements = policy["groups"][name]
@@ -198,9 +199,10 @@ def accept(corpus: Path, policy_path: Path, annotations: Path) -> dict[str, Any]
         "annotation_validation": result["annotation_validation"],
         "annotation_method": method,
         "case_assertions_passed": assertions_passed,
+        "scan_completeness": result["scan_completeness"],
         "all_labels_matched": result["passed"],
         "groups": groups,
-        "passed": assertions_passed and all(group["passed"] for group in groups.values()),
+        "passed": scans_complete and assertions_passed and all(group["passed"] for group in groups.values()),
         "note": (
             "Human review must verify independent sampling, labels, and tenant "
             "applicability. A passing gate is not live tenant acceptance."

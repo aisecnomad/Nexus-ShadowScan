@@ -57,6 +57,9 @@ from shadowscan.connectors.code.provider_tools import (
 )
 from shadowscan.connectors.code.python_reexports import ImportResolver
 from shadowscan.connectors.code.responses_loops import responses_dispatch_lines, responses_tool_loop_lines
+from shadowscan.connectors.code.source_bindings import PythonClientParameters
+from shadowscan.connectors.code.source_bindings import SourceBinding as _Binding
+from shadowscan.connectors.code.source_bindings import SourceCall as _Call
 from shadowscan.connectors.code.source_capabilities import (
     CONFIGURED_FRAMEWORKS,
     CallCapabilities,
@@ -134,31 +137,6 @@ class SourceNotParsed(Exception):
     the file's lexical evidence, framework patterns included, and report that
     the import binder did not run.
     """
-
-
-@dataclass(frozen=True)
-class _Binding:
-    module: str
-    symbol: str
-    constructed: bool = False
-
-
-@dataclass(frozen=True)
-class _Call:
-    binding: _Binding
-    arguments: str
-    line: int
-    structural_arguments: str = ""
-    node: ast.Call | None = None
-    tool_factories: tuple[str, ...] = ()
-    start: int = 0
-    end: int = 0
-    decorator: bool = False
-    receiver: str = ""
-    genkit_tools: tuple[str, ...] = ()
-    # The argument text stops at MAX_CALL_TEXT (or the end of the source) before the
-    # call closes: options past that point are unread, so they establish nothing.
-    partial: bool = False
 
 
 @dataclass
@@ -347,6 +325,7 @@ class _PythonBindings(ast.NodeVisitor):
         resolve_import: ImportResolver | None = None,
         equivalent: Callable[[_Binding, _Binding], bool] | None = None,
         cells: Sequence[tuple[int, int]] = (),
+        parameter_bindings: Mapping[str, Mapping[str, _Binding | None]] | None = None,
     ):
         self.text = text
         self.resolve_import = resolve_import
@@ -373,6 +352,7 @@ class _PythonBindings(ast.NodeVisitor):
         # A star import may bind any name; None means no module was visited.
         self._binding_sites: dict[str, list[tuple[int, int]]] | None = None
         self._star_import = True
+        self.client_parameters = PythonClientParameters(parameter_bindings)
 
     def visit(self, node: ast.AST) -> Any:
         self._visited += 1
@@ -515,6 +495,7 @@ class _PythonBindings(ast.NodeVisitor):
             for name in names:
                 sites.setdefault(name, []).append((item.lineno, item.col_offset))  # type: ignore[attr-defined]
         self._binding_sites, self._star_import = sites, star
+        self.client_parameters.note_module(node, sites, star)
         if not self.cell_starts:
             self.generic_visit(node)
             return
@@ -693,6 +674,7 @@ class _PythonBindings(ast.NodeVisitor):
                 self.imports.append((binding, node.lineno))
 
     def visit_Call(self, node: ast.Call) -> None:
+        self.client_parameters.record_call(node, self._resolve)
         binding = self._resolve(node.func)
         if binding and (self.relevant is None or self.relevant(binding)):
             if len(self.calls) >= MAX_BOUND_CALLS:
@@ -783,6 +765,7 @@ class _PythonBindings(ast.NodeVisitor):
         for arg in (node.args.vararg, node.args.kwarg):
             if arg:
                 locals_[arg.arg] = None
+        typed_clients = self.client_parameters.bind_function(node, self._resolve)
         body = [node.body] if isinstance(node, ast.Lambda) else node.body
         pending = list(body)
         while pending:
@@ -811,6 +794,7 @@ class _PythonBindings(ast.NodeVisitor):
                 for alias in item.names:
                     locals_[alias.asname or alias.name.split(".")[0]] = None
             pending.extend(ast.iter_child_nodes(item))
+        locals_.update(typed_clients)
         self.scopes.append(locals_)
         self.scope_kinds.append("function")
         self._visit_block(body)
@@ -1461,6 +1445,11 @@ def _python_bindings(
             raise SourceBudgetExceeded("source binding AST limit exceeded")
     visitor = _PythonBindings(text, relevant, resolve_import, equivalent, cells)
     visitor.visit(tree)
+    if visitor.client_parameters.requires_second_pass():
+        visitor = _PythonBindings(
+            text, relevant, resolve_import, equivalent, cells, visitor.client_parameters.parameter_calls
+        )
+        visitor.visit(tree)
     return visitor.calls, visitor.imports, tree
 
 
@@ -2325,6 +2314,7 @@ def bound_source_matches(
     max_ast_nodes: int | None = None,
     truncated: list[int] | None = None,
     resolve_import: ImportResolver | None = None,
+    resolve_dispatch: Callable[[str, str], bool] | None = None,
     cells: Sequence[tuple[int, int]] = (),
 ) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
@@ -2464,7 +2454,7 @@ def bound_source_matches(
         ):
             registrations.append((call.node, call.line, call.decorator))
     dispatch_calls: set[int] = set()
-    found.extend(_protocol_evidence(index, tree, text, ignored, requests, dispatch_calls))
+    found.extend(_protocol_evidence(index, tree, text, ignored, requests, dispatch_calls, resolve_dispatch))
     if found:
         if tree is not None:
             regions = python_tool_regions(
@@ -2746,6 +2736,7 @@ def _protocol_evidence(
     ignored: list[tuple[int, int]],
     requests: _LoopRequests,
     dispatch_calls: set[int],
+    resolve_dispatch: Callable[[str, str], bool] | None = None,
 ) -> list[Match]:
     """Return tool-calling protocol evidence from the loops and dispatch around bound requests."""
     protocol = index.get("protocol.openai-function-calling")
@@ -2755,7 +2746,9 @@ def _protocol_evidence(
     if tree is not None:
         # Autonomy: approval-bypass evidence. The loop runs each tool the model selects and feeds
         # the result back without a person approving the call.
-        for line in provider_tool_loop_lines(tree, requests.provider, dispatch_calls=dispatch_calls):
+        for line in provider_tool_loop_lines(
+            tree, requests.provider, dispatch_calls=dispatch_calls, resolve_dispatch=resolve_dispatch
+        ):
             found.append(
                 Match(
                     protocol,

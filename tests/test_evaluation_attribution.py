@@ -79,6 +79,10 @@ def test_binary_tp_cannot_hide_wrong_kind_product_or_provider(tmp_path: Path) ->
     assert report["finding_assertions"]["expected_findings"] == {"checks": 4, "passed": 1, "failed": 3}
     assert report["finding_assertions"]["forbidden_findings"] == {"checks": 3, "passed": 1, "failed": 2}
     assert report["finding_assertions"]["cases_with_checks"] == 1
+    assert report["quality"]["target_classification"]["passed"] == 1
+    assert report["quality"]["labeled_assertions"]["failed"] == 1
+    assert report["quality"]["joint_correctness"]["failed"] == 1
+    assert report["scan_completeness"]["complete_cases"] == 1
 
 
 def test_attribution_must_be_on_the_same_finding_and_in_its_proper_field(tmp_path: Path) -> None:
@@ -258,31 +262,52 @@ def test_finding_selector_schema_rejects_invalid_or_contradictory_labels(
         load_corpus(_sample(tmp_path, assertions))
 
 
-def test_bundled_authored_attribution_gaps_are_visible_without_relabeling_independent_corpus() -> None:
+def test_bundled_authored_attribution_passes_without_relabeling_independent_corpus() -> None:
     authored = evaluate(DEFAULT_CORPUS.with_name("attribution_corpus.json"))
     assert authored["passed"]
     assert authored["metrics"]["all"] | {"tp": 14, "fp": 0, "fn": 0, "tn": 10} == authored["metrics"]["all"]
     assert authored["finding_assertions"]["provider_signature"]["checks"] >= 4
     assert authored["finding_assertions"]["forbidden_findings"] == {
         "checks": 13,
-        "passed": 12,
-        "failed": 1,
+        "passed": 13,
+        "failed": 0,
     }
     assert authored["finding_assertions"]["exact_finding_sets"] == {
         "checks": 24,
-        "passed": 23,
-        "failed": 1,
+        "passed": 24,
+        "failed": 0,
     }
     assert authored["finding_assertions"]["capabilities"] == {"checks": 20, "passed": 20, "failed": 0}
-    # The one remaining gap is waived by the corpus's bounded policy; a passing
-    # flagged case fails the run so the waiver cannot outlive the defect.
-    assert set(authored["known_gaps"]["failing"]) == {"n8n-compose-workflow"}
+    assert authored["known_gaps"]["count"] == 0
+    assert authored["known_gaps"]["failing"] == []
     assert authored["known_gaps"]["passing"] == []
+    assert authored["all_cases_correct"]
+    assert authored["quality"]["labeled_assertions"]["pass_rate"] == 1.0
     assert all(not case.assertions.get("expected_findings") for case in load_corpus(DEFAULT_CORPUS)[1])
-    assert all(
-        not case.assertions.get("expected_findings")
+    # Only the two repaired authored cases add product/provider/capability
+    # assertions. The independently labeled corpus remains frozen below.
+    realistic_assertions = {
+        case.id: case.assertions["expected_findings"]
         for case in load_corpus(DEFAULT_CORPUS.with_name("realistic_corpus.json"))[1]
-    )
+        if case.assertions.get("expected_findings")
+    }
+    assert realistic_assertions == {
+        "python-openai-tool-loop-script": [
+            {
+                "kind": "agent",
+                "provider_signature": "provider.openai",
+                "capabilities": ["tool-use", "autonomous"],
+            }
+        ],
+        "litellm-proxy-docker-worker": [
+            {
+                "kind": "agent",
+                "product_signature": "platform.litellm",
+                "provider_signature": "provider.openai",
+                "capabilities": ["tool-use", "autonomous"],
+            }
+        ],
+    }
     _, independent, _ = load_corpus(DEFAULT_CORPUS.with_name("independent_corpus.json"))
     assert all(not case.assertions.get("expected_findings") for case in independent)
     assert all(not case.assertions.get("forbidden_findings") for case in independent)

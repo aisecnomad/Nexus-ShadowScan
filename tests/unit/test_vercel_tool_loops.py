@@ -1,4 +1,4 @@
-"""Vercel AI SDK multi-step tool loops are agents; single-step calls stay SDK usage.
+"""Vercel AI SDK tool loops and resolved executable single-step tools are agents.
 
 AI SDK 5 and later run tools in a loop only past the first step (``stopWhen``;
 AI SDK 7 renamed ``stepCountIs`` to ``isStepCount``), AI SDK 4 with ``maxSteps``.
@@ -97,13 +97,8 @@ def test_generate_text_and_namespace_imports_are_resolved(tmp_path, run_connecto
         ("streamText", "temperature: 0.2,"),
         # Several steps without tools add nothing for the model to call.
         ("isStepCount, streamText", "stopWhen: isStepCount(5),"),
-        # Imported tools without a stop condition: the call ends after one step.
-        ("streamText", "tools: { getWeather },"),
-        ("isStepCount, streamText", "tools: { getWeather },\n    stopWhen: isStepCount(1),"),
-        ("streamText", "tools: { getWeather },\n    maxSteps: 1,"),
         ("isStepCount, streamText", "tools: {},\n    stopWhen: isStepCount(5),"),
         ("isStepCount, streamText", "tools: undefined,\n    stopWhen: isStepCount(5),"),
-        ("isStepCount, streamText", "tools: { getWeather },\n    stopWhen: undefined,"),
         (
             "isStepCount, streamText",
             "tools: { getWeather },\n    stopWhen: isStepCount(5),\n    toolChoice: 'none',",
@@ -117,15 +112,31 @@ def test_generate_text_and_namespace_imports_are_resolved(tmp_path, run_connecto
             "isStepCount, streamText",
             "tools: { getWeather },\n    stopWhen: isStepCount(5),\n    ...overrides,",
         ),
-        # Option text inside a prompt string is not an option.
-        ("streamText", "tools: { getWeather },\n    prompt: 'stopWhen: isStepCount(5), maxSteps: 9',"),
     ],
 )
-def test_single_step_or_toolless_calls_stay_sdk_usage(tmp_path, run_connector, imports, options):
+def test_disabled_or_toolless_calls_stay_sdk_usage(tmp_path, run_connector, imports, options):
     finding = _project(tmp_path, run_connector, _route(imports, options))
     assert finding.kind == Kind.FRAMEWORK_USAGE
     assert "framework.vercel-ai-sdk" in finding.frameworks
     assert "tool-use" not in finding.capabilities
+
+
+@pytest.mark.parametrize(
+    ("imports", "options"),
+    [
+        ("streamText", "tools: { getWeather },"),
+        ("isStepCount, streamText", "tools: { getWeather }, stopWhen: isStepCount(1),"),
+        ("streamText", "tools: { getWeather }, maxSteps: 1,"),
+        ("isStepCount, streamText", "tools: { getWeather }, stopWhen: undefined,"),
+        ("streamText", "tools: { getWeather }, prompt: 'stopWhen: isStepCount(5), maxSteps: 9',"),
+    ],
+)
+def test_resolved_single_step_tools_are_model_selected_dispatch(tmp_path, run_connector, imports, options):
+    finding = _project(tmp_path, run_connector, _route(imports, options))
+    assert finding.kind == Kind.AGENT
+    assert "tool-use" in finding.capabilities
+    assert any("resolved local executable tool" in e.description for e in finding.evidence)
+    assert not any("multi-step tool loop" in e.description for e in finding.evidence)
 
 
 def test_a_local_function_named_like_the_sdk_is_not_bound(tmp_path, run_connector):

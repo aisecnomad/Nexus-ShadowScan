@@ -237,6 +237,6 @@ signatures:
         weight: 0.05
       - type: image
         # Images of products with their own signature (LiteLLM, LocalAI,
-        # llama.cpp, LM Studio) are attributed there, not here.
-        patterns: ['kagent-dev/kagent', 'ghcr\.io/kagent-dev', 'agentgateway/agentgateway', 'kgateway', 'ghcr\.io/nvidia/nemo', 'nvcr\.io/nvidia/nemo', 'ghcr\.io/kubeflow/', 'ray-project/ray', 'triton', 'text-generation-inference', 'ghcr\.io/open-webui', 'ghcr\.io/coollabsio', 'anythingllm', 'langgenius', 'flowiseai', 'langflowai', 'n8nio', 'portkeyai']
+        # llama.cpp, LM Studio, n8n) are attributed there, not here.
+        patterns: ['kagent-dev/kagent', 'ghcr\.io/kagent-dev', 'agentgateway/agentgateway', 'kgateway', 'ghcr\.io/nvidia/nemo', 'nvcr\.io/nvidia/nemo', 'ghcr\.io/kubeflow/', 'ray-project/ray', 'triton', 'text-generation-inference', 'ghcr\.io/open-webui', 'ghcr\.io/coollabsio', 'anythingllm', 'langgenius', 'flowiseai', 'langflowai', 'portkeyai']
         weight: 0.85

@@ -16,6 +16,7 @@ imported definitions, so only their presence and explicit disabling are read.
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 
 from shadowscan.signatures.matcher import pattern_timeout
 
@@ -124,7 +125,25 @@ def _execution_callback(raw: str, masked: str) -> bool:
     return bool(code.strip()) or _literal(body) is not None
 
 
-def has_executable_vercel_tools(arguments: str, masked: str, tool_factories: tuple[str, ...]) -> bool:
+def _executable_definition(raw: str, code: str, tool_factories: tuple[str, ...]) -> bool:
+    definition = _object(raw, code)
+    if definition is None:
+        wrapper = re.match(rf"\s*({_NAME}(?:\s*\.\s*{_NAME})*)\s*", code)
+        if wrapper is None or re.sub(r"\s", "", wrapper[1]) not in tool_factories:
+            return False
+        inner = _unwrap(raw[wrapper.end() :], code[wrapper.end() :], "(")
+        definition = _object(*inner) if inner is not None else None
+    return bool(definition and "execute" in definition and _execution_callback(*definition["execute"]))
+
+
+def has_executable_vercel_tools(
+    arguments: str,
+    masked: str,
+    tool_factories: tuple[str, ...],
+    *,
+    executable_names: Collection[str] = (),
+    named_only: bool = False,
+) -> bool:
     """Whether a resolved generateText/streamText call can dispatch a tool."""
     inner = _unwrap(arguments, masked, "(")
     if inner is None:
@@ -153,16 +172,9 @@ def has_executable_vercel_tools(arguments: str, masked: str, tool_factories: tup
     for name, (raw, code) in tools.items():
         if active_names is not None and name not in active_names:
             continue
-        definition = _object(raw, code)
-        if definition is None:
-            wrapper = re.match(rf"\s*({_NAME}(?:\s*\.\s*{_NAME})*)\s*", code)
-            if wrapper is None or re.sub(r"\s", "", wrapper[1]) not in tool_factories:
-                continue
-            inner = _unwrap(raw[wrapper.end() :], code[wrapper.end() :], "(")
-            definition = _object(*inner) if inner is not None else None
-        if not definition or "execute" not in definition:
-            continue
-        if _execution_callback(*definition["execute"]):
+        if code.strip() in executable_names:
+            return True
+        if not named_only and _executable_definition(raw, code, tool_factories):
             return True
     return False
 

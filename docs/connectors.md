@@ -1,5 +1,9 @@
 # Connectors
 
+Code connector analysis includes bounded local tool-import and dispatcher
+resolution from already-read snapshots. See [cross-file tool dispatch](connectors/code.md#cross-file-tool-dispatch)
+for the supported shapes, alias requirements and conservative limits.
+
 ## Modes and shared collection rules
 
 Most connectors have a **live** mode (API credentials) and an **offline** mode
