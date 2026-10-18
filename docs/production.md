@@ -225,8 +225,11 @@ intended connector instance; export names are not a fixed `cloud_aws.jsonl`.
 
 Plugin connectors default to `plugin_execution: process` workers, so a
 plugin that exceeds its deadline can be stopped and never sees the raw
-operator identity key; `options.plugin_execution: thread` keeps the old
-in-process behavior and gives both guarantees up.
+operator identity key in its environment. The worker still holds the decoded
+key, because it keys the credential identities of the plugin's findings with
+it, so they match those of the same credentials in other scans under that key;
+a plugin is not sandboxed and can reach it. `options.plugin_execution: thread`
+keeps the old in-process behavior and gives both guarantees up.
 
 ```yaml
 options:

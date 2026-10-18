@@ -402,6 +402,7 @@ def _worker(
     number: int,
     deadline: float,
     identity_key: bytes,
+    identity_key_stable: bool,
     dump_directory: Path | None,
 ) -> None:
     """Import and execute the approved plugin only inside its spawned process."""
@@ -435,7 +436,10 @@ def _worker(
             dump_directory,
             exports,
         )
+        # The worker starts without the operator's key in its environment, so its own
+        # Engine cannot tell whether this key is that stable key or the run's own.
         runner._run_identity_key = identity_key
+        runner._identity_key_stable = identity_key_stable
         state = _JobState(started_at=now_iso(), deadline=deadline)
         spec = config.connectors[0]
         _, findings, stats = runner._run_job(number, spec, state)
@@ -643,6 +647,7 @@ def _run_plugin_process(
                 number,
                 deadline,
                 runner._run_identity_key,
+                runner._identity_key_stable,
                 dump_directory,
             ),
             daemon=True,

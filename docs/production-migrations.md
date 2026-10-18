@@ -1034,12 +1034,15 @@ pseudonyms, so rotating it changes gateway identities too. Keep the key out of
 configuration files, logs, command-line arguments and shared reports. No key is
 generated into persistent storage automatically, and scan reports/export/cache
 files never contain it. A process-mode plugin worker is started without the
-key in its environment, even when `options.plugin_env` names it, so a
-third-party connector receives it only as the decoded run key, and only when it
-declares `uses_run_identity_key`. The worker runs as the scanner's user, which
-can read the scanner's own environment (on Linux `/proc/<scanner pid>/environ`),
-and a thread-mode plugin shares that environment: keep the key out of jobs that
-run plugins you do not trust with it.
+key in its environment, even when `options.plugin_env` names it. The worker
+holds the decoded key in memory, because it keys the credential identities of
+the plugin's findings with it, and it labels them `keyed` as the scan does; a
+third-party connector is handed the key through `ConnectorContext` only when it
+declares `uses_run_identity_key`. A plugin is not sandboxed: it can reach the
+key in its own process, the worker runs as the scanner's user, which can read
+the scanner's own environment (on Linux `/proc/<scanner pid>/environ`), and a
+thread-mode plugin shares that environment. Keep the key out of jobs that run
+plugins you do not trust with it.
 
 The report's `collection_scope.credential_identity_schema` is
 `shadowscan.credential-identity/v1`; `credential_identity_scope` is `run` or

@@ -17,6 +17,7 @@ Notion bots, gateway routes, Kubernetes serving images, n8n HTTP model calls
 and ServiceNow flow names were adjusted), so a later ShadowScan run on that
 estate is in-sample.
 
+- A process-mode plugin's credential identities are labelled `keyed` under the operator's identity key again (October 18)
 - A report nested past 256 levels is refused as nesting on every interpreter, not only where the parser runs out of stack (October 18)
 - A CPython 3.12 tokenizer fault is an unreadable source, not an exception; JavaScript string spans stay inside the text (#259; October 18)
 - go.mod require blocks read in linear time; no dependency named "(" (October 18)
