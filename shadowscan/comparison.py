@@ -51,6 +51,12 @@ _EMBEDDED_CREDENTIAL_FINGERPRINT = re.compile(r"credential:(?:hmac-)?sha256:[a-f
 # An evidence location names a file and, after a colon, the line it was observed on.
 _LINE_SUFFIX = re.compile(r":\d+$")
 MAX_REPORT_BYTES = 64 * 1024 * 1024
+# Arrays and objects a report may nest. Far deeper than any report ShadowScan writes
+# (finding metadata is sanitized to 64 levels), and shallower than the C recursion limit
+# of every supported interpreter, which runs from about 1,000 levels on 3.11 to tens of
+# thousands on 3.14, where it depends on the stack. Without it the same file would be
+# refused on one interpreter and parsed on another.
+MAX_REPORT_DEPTH = 256
 # Environment variable with the operator's stable identity key; the engine
 # reads it. Gateway identities and credential pseudonyms are stable under one key.
 IDENTITY_KEY_ENV = "SHADOWSCAN_IDENTITY_KEY"
@@ -80,6 +86,26 @@ class ReportDigestMismatch(ValueError):
     """A report file's raw bytes do not have the pinned SHA-256 digest."""
 
 
+def _nests_deeper_than(value: Any, limit: int) -> bool:
+    """Whether arrays and objects in ``value`` nest more than ``limit`` levels.
+
+    One iterator per open level, so memory follows the depth, not the size.
+    """
+    if not isinstance(value, (dict, list)):
+        return False
+    levels = [iter(value.values() if isinstance(value, dict) else value)]
+    while levels:
+        for child in levels[-1]:
+            if isinstance(child, (dict, list)):
+                if len(levels) >= limit:
+                    return True
+                levels.append(iter(child.values() if isinstance(child, dict) else child))
+                break
+        else:
+            levels.pop()
+    return False
+
+
 def _parse_report(data: bytes) -> dict[str, Any]:
     try:
         try:
@@ -89,6 +115,8 @@ def _parse_report(data: bytes) -> dict[str, Any]:
             # attacker-controlled field names or values.
             message = "duplicate report field" if "Duplicate" in str(exc) else "report numbers must be finite"
             raise ValueError(message) from None
+        if _nests_deeper_than(report, MAX_REPORT_DEPTH):
+            raise ValueError("report structure exceeds nesting limit")
         if not isinstance(report, dict):
             raise ValueError("report must be a JSON object")
         _findings(report)

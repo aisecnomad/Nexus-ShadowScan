@@ -13,6 +13,25 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### A report nested past 256 levels is refused as nesting on every interpreter, not only where the parser runs out of stack (October 18)
+
+- `diff`, `merge`, `dashboard` and `inventory`, the commands that read a
+  ShadowScan report, refused a deeply nested one only when the JSON parser
+  raised `RecursionError`. That limit belongs to the interpreter: about 1,000
+  levels on Python 3.11, about 10,000 on 3.12 and 3.13, and on 3.14 whatever
+  the stack allows (65,000 levels locally on 3.14.8, and more on the CI
+  runner). The same file was refused as nesting on one interpreter and parsed
+  on another, where it was then refused for its type or accepted. The 3.14 CI
+  leg failed on this: a 100,000-level baseline parsed there and was refused as
+  "report must be a JSON object" instead.
+- A report is now refused with "report structure exceeds nesting limit" when
+  its arrays and objects nest more than 256 levels (`MAX_REPORT_DEPTH` in
+  `shadowscan/comparison.py`), whatever the interpreter. ShadowScan's own
+  reports stay far inside it, because finding metadata is sanitized to 64
+  levels. The walk keeps one iterator per open level, so its memory follows
+  the depth, not the size. On a 38 MB report it costs about a fifth of the
+  parse.
+
 ### A CPython 3.12 tokenizer fault is an unreadable source, not an exception; JavaScript string spans stay inside the text (#259; October 18)
 
 Two fixes carried from #259, whose coverage-guided fuzzing found them. The
