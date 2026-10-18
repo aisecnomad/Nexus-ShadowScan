@@ -30,6 +30,8 @@ from pathlib import Path
 MAX_ANNOTATIONS = 50
 #: Characters of the failure message kept after redaction.
 MAX_MESSAGE = 200
+#: Characters of a test's node id kept in the title; a parameter id can run to thousands.
+MAX_TITLE = 200
 
 
 @dataclass(frozen=True)
@@ -103,7 +105,8 @@ def failures(reports: Iterable[Path]) -> Iterator[Failure]:
 
 def annotation(failure: Failure) -> str:
     """The ``::error`` workflow command for ``failure``."""
-    properties = [f"title={_escape_property(failure.node_id)}"]
+    title = failure.node_id if len(failure.node_id) <= MAX_TITLE else failure.node_id[: MAX_TITLE - 3] + "..."
+    properties = [f"title={_escape_property(title)}"]
     if failure.file:
         properties.insert(0, f"file={_escape_property(failure.file)}")
         if failure.line is not None:

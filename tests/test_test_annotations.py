@@ -59,3 +59,10 @@ def test_a_newline_in_a_message_cannot_start_a_second_workflow_command(tmp_path)
     failure = test_annotations.Failure("t::x", "", None, "Error", "a\n::warning::forged")
     command = test_annotations.annotation(failure)
     assert "\n" not in command and command.count("::") == 4
+
+
+def test_a_long_parameter_id_is_cut_in_the_title():
+    failure = test_annotations.Failure("t.py::test_deep[" + "[" * 5000 + "]", "t.py", 3, "AssertionError", "")
+    title = test_annotations.annotation(failure).split("title=", 1)[1].split("::", 1)[0]
+    # The cut is made before escaping; "::" is escaped to "%3A%3A" afterwards.
+    assert len(title.replace("%3A", ":")) == test_annotations.MAX_TITLE and title.endswith("...")
