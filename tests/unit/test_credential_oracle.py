@@ -3674,7 +3674,18 @@ def _worse(row: Row) -> bool:
     )
 
 
-def _scan_outcome(index: SignatureIndex, root: Path, files: dict[str, str]) -> tuple[object, ...]:
+# The matching budget of the slow rows (CPU seconds per 256 KiB of a file, and four times that
+# in elapsed time). The rows hold inputs of 1,500 to 12,531 lines whose outcome is the
+# pipeline's answer on a scan that completes; the default budget of 2 s completes them on an
+# idle machine but not under coverage tracing (the CI 3.11 leg) or a loaded runner, where a
+# row then read 'incomplete' for the budget alone. What the budget does to a scan has its own
+# tests (tests/unit/test_adaptive_timeout.py, tests/unit/test_performance_guards.py).
+SLOW_ROW_SCAN_TIMEOUT = 60.0
+
+
+def _scan_outcome(
+    index: SignatureIndex, root: Path, files: dict[str, str], *, slow: bool = False
+) -> tuple[object, ...]:
     from shadowscan.connectors import get_connector_class
 
     secrets: set[str] = set()
@@ -3684,7 +3695,10 @@ def _scan_outcome(index: SignatureIndex, root: Path, files: dict[str, str]) -> t
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(text.encode())
-    ctx = ConnectorContext(config={"path": str(root), "use_git": False}, index=index)
+    config: dict[str, object] = {"path": str(root), "use_git": False}
+    if slow:
+        config["scan_timeout"] = SLOW_ROW_SCAN_TIMEOUT
+    ctx = ConnectorContext(config=config, index=index)
     findings = get_connector_class("code.filesystem")(ctx).run()
     report = json.dumps([f.to_dict() for f in findings], default=str)
     report += json.dumps(
@@ -3703,7 +3717,7 @@ def _scan_outcome(index: SignatureIndex, root: Path, files: dict[str, str]) -> t
 def _outcome(index: SignatureIndex, row: Row, root: Path) -> object:
     if row.kind == "scan":
         assert isinstance(row.given, dict)
-        return _scan_outcome(index, root, row.given)
+        return _scan_outcome(index, root, row.given, slow=row.mode == "slow")
     assert isinstance(row.given, str)
     text, secrets = _expand(row.given)
     if row.kind == "sanitize":
