@@ -40,6 +40,13 @@ already read within the scan root and manifest project; no sample code is
 executed. Omitted files in a diff/triage scan cannot supply a proof. Rerun a full
 reviewed baseline before treating newly classified agents as drift.
 
+Earlier imported-tool baselines may also lose agent findings when a Python
+dispatcher's import is conditional, outside the scope of its use, or appears
+after that use, or when JavaScript alias resolution previously selected the
+wrong module before substituting a wildcard. Recheck the source evidence for
+removed findings rather than treating them as removed deployments. Legitimate
+imports of correctly resolved, confined local targets remain supported.
+
 The model-identifier pass leaves coverage incomplete (exit 3) when a file
 exceeds its 400-literal analysis limit. Only literals that carry a vendor stem
 (model-id candidates) count; ordinary strings never reach the limit. Findings
@@ -785,11 +792,25 @@ integrations were not resolved to application names during the readback.
 that ruleset carries no status-check rule and the committed payload does not
 add one. `python -m tools.governance.rulesets verify` against each committed
 `.update.json` reports `readback differs from reviewed payload:
-bypass_actors` and nothing else. The merge gate is therefore not yet enforced
-against a repository administrator, who can merge without the non-author
-approval. Removing the bypass actors and a readback showing
-`bypass_actors: []` remain outstanding. The committed observed snapshots
-record this readback.
+bypass_actors` and nothing else. At that readback, the merge gate was not yet
+enforced against a repository administrator, who could merge without the
+non-author approval. Removing the bypass actors and a readback showing
+`bypass_actors: []` were still outstanding. The top-level committed observed
+snapshots retain this historical response unchanged.
+
+On 2026-10-18, fresh administrator readbacks showed both `main` rulesets active
+with `bypass_actors: []`; their managed settings match the committed
+`.update.json` payloads exactly. The strict required checks, GitHub Actions
+bindings, one required approval, stale-review dismissal, last-push approval and
+resolved-thread requirements remain in place. The API reports their last
+updates on 2026-10-11 at 06:45:21 UTC (`Protect main`) and 06:45:33 UTC
+(`Require CI and CodeQL`). The immutable release-tag ruleset also read back
+active with no bypass actors, blocking updates and deletion of `refs/tags/v*`.
+The complete responses are retained in
+[the October 18 snapshot directory](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/.github/rulesets/observed/2026-10-18).
+No settings were changed for this readback; it does not establish continuous
+historical enforcement, an independent approval of any PR, or release or
+deployment acceptance.
 
 Classic branch protection is not readable through the app
 integration. Read and retain the current configuration before changing it,
@@ -800,8 +821,8 @@ does not describe the live state; a repository administrator applies it under
 **Settings → Rules → Rulesets**.
 
 Do not claim that the full merge gate is enforced until a readback shows
-`CI gate` required and `bypass_actors: []`. The 2026-10-10 readback meets the
-first condition and not the second. If the API connection lacks
+`CI gate` required and `bypass_actors: []`. The 2026-10-18 readback meets both
+conditions; the October 10 readback met only the first. If the API connection lacks
 administration access, use an authorized administrator session rather than
 weakening the rules.
 
@@ -871,10 +892,11 @@ The [two-ruleset payload helper](https://github.com/aisecnomad/Nexus-ShadowScan/
 additionally prepares `Protect main` and `Require CI and CodeQL` together,
 removing bypass actors from both. The observed snapshots and proposed PUT
 bodies are in [.github/rulesets](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/.github/rulesets).
-The committed observed snapshots capture the 2026-10-10 readback: active
-rulesets that still list four `always` bypass actors. Refresh
-those observations and regenerate the bodies before applying them; the files
-are preparation, not evidence of active enforcement. After administrator PUTs,
+The top-level observed snapshots retain the 2026-10-10 readback with four
+`always` bypass actors. The separate `observed/2026-10-18/` snapshots record
+both rulesets active with empty bypass lists and matching the existing payloads.
+Fetch new observations and regenerate the bodies before any future settings
+change; a committed snapshot is not evidence of continuing enforcement. After administrator PUTs,
 compare each fresh full API response against its exact approved body:
 
 ```bash

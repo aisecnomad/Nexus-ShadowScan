@@ -140,9 +140,9 @@ both the selected name and arguments reach it and its result is fed back; its
 implementation and external effects remain unobserved. A dispatcher imported
 from a local module whose source the scan has read must additionally prove the
 dispatch in that source; a local source that proves nothing withholds it.
-Dispatcher provenance is otherwise
-limited to unshadowed, unconditional module imports preceding the dispatch; an
-import in another function or conditional branch cannot establish it. A local helper's annotated
+Dispatcher provenance, including source-proven local helpers, is limited to
+unshadowed, unconditional module imports preceding the dispatch; an import in
+another function or conditional branch cannot establish it. A local helper's annotated
 SDK parameter is usable only when its observed direct call sites pass agreeing,
 constructed SDK clients. An annotation, a generic loop, argument parsing or an
 unrelated callback is insufficient.
@@ -152,7 +152,9 @@ manifest project. The bounded static resolver follows supported named exports
 with a proven `ai` tool factory and an executable callback, including named
 re-exports. It reads only source snapshots already admitted by the confined
 scanner. Relative imports and explicit root `tsconfig.json` / `jsconfig.json`
-path mappings are supported; package imports, inherited configurations and an
+path mappings are supported. Wildcard substitution precedes parent-path
+normalization, and the resulting target must remain within the project.
+Package imports, inherited configurations and an
 assumed `@/` convention are not. Ambiguous or unresolved targets retain SDK
 usage evidence. Default/namespace tool imports and exporter modules without
 complete semicolon-terminated statements remain unresolved. The resolver retains

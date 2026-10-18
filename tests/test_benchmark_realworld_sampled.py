@@ -812,16 +812,20 @@ def test_contamination_search_finds_repositories_named_in_tool_files() -> None:
     assert list(found) == ["a"] and found["a"]["files"] == ["packs/x.yaml"]
 
 
-def test_freeze_detects_a_changed_file(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "changed", ["oracle.py", "install_cdxgen.py", "cdxgen/package.json", "cdxgen/package-lock.json"]
+)
+def test_freeze_detects_a_changed_file(tmp_path: Path, changed: str) -> None:
     from tools.benchmark.realworld import freeze
 
     record = tmp_path / "freeze.json"
     freeze.main(["--write", str(record)])
     assert freeze.check(record) == []
     recorded = json.loads(record.read_text())
-    recorded["files"]["oracle.py"] = "0" * 64
+    assert changed in recorded["files"]
+    recorded["files"][changed] = "0" * 64
     record.write_text(json.dumps(recorded))
-    assert freeze.check(record) == ["oracle.py: changed since the freeze"]
+    assert freeze.check(record) == [f"{changed}: changed since the freeze"]
     first = freeze.tree_sha256(tmp_path)
     (tmp_path / "a.py").write_text("x = 1\n")
     assert freeze.tree_sha256(tmp_path) != first

@@ -1,7 +1,9 @@
 # Connectors
 
 Code connector analysis includes bounded local tool-import and dispatcher
-resolution from already-read snapshots. See [cross-file tool dispatch](connectors/code.md#cross-file-tool-dispatch)
+resolution from already-read snapshots. Python dispatcher imports must be
+unconditional module-level bindings before use; JavaScript aliases substitute
+wildcards before path normalization and confinement. See [cross-file tool dispatch](connectors/code.md#cross-file-tool-dispatch)
 for the supported shapes, alias requirements and conservative limits.
 
 ## Modes and shared collection rules

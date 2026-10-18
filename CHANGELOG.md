@@ -17,6 +17,8 @@ Notion bots, gateway routes, Kubernetes serving images, n8n HTTP model calls
 and ServiceNow flow names were adjusted), so a later ShadowScan run on that
 estate is in-sample.
 
+- New cdxgen benchmark installations use a frozen npm dependency graph, a patched Undici override and disabled lifecycle scripts with a lock-digest receipt (October 18)
+- Local Python dispatcher proof retains import scope/order checks; JavaScript aliases substitute before parent-path normalization (October 18)
 - App-name attribution requires corroboration; provider tool loops, local executable JavaScript tools and structural Kubernetes image attribution corrected (October 18)
 - Preserve large exact correlations, resolve bounded local tool dispatch, correct n8n image attribution, and expose evaluation correctness/completeness (October 18)
 - SARIF notifications name their connector once; the docs show how one scan gives both the JSON ledger and SARIF (October 18)

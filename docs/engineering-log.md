@@ -13,6 +13,40 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Frozen cdxgen benchmark installations (October 18)
+
+- Replace the top-level-only npm install pin with committed private package and
+  integrity-bearing lock manifests. New installations use `npm ci` with lifecycle
+  scripts disabled and strict Node 22/npm 10 engine checks in their isolated tool
+  directory. Python and Go benchmark-tool builds still execute third-party code.
+- Retain cdxgen 12.8.5 and narrowly override its vulnerable Undici 7.28.0 pin to
+  [7.29.1](https://github.com/nodejs/undici/releases/tag/v7.29.1); the currently
+  published cdxgen 12.8.6 retains the affected pin. The patched lock's npm audit
+  reports no known vulnerabilities as of this change. This is a new installation
+  graph, not evidence about the graph used for the historical benchmark.
+- Each successful new installation writes its manifest/lock SHA-256 digests,
+  tool and runtime versions, override and lifecycle policy to an install receipt.
+  Failures after replacement begins cannot retain an old success receipt. Tests cover frozen
+  input handling, integrity-pinned registry artifacts and receipt failure paths.
+  Future freezes include the helper and both npm manifests. Historical results,
+  manifests and freeze records are unchanged.
+
+### Imported-tool integration regressions (October 18)
+
+- A source-proven local Python dispatcher still needs an unshadowed,
+  unconditional module import before its call. Reading a helper's implementation
+  cannot make an import in another function, a conditional import or a later
+  import available at that call. Scan-level regressions cover those cases with
+  an indexed synthetic helper, plus direct and aliased module-import positives.
+- JavaScript path mappings retain their wildcard template until the import
+  supplies its path components. Parent-path normalization follows substitution,
+  so `@/deep/file` mapped through `./*/../tools` selects `deep/tools`, not the
+  unrelated root `tools` module. Positive and negative controls swap the two
+  modules' executable definitions; substituted paths escaping the project remain
+  unresolved. Resolution budgets and confined source reads are unchanged.
+- These are offline regression checks; scanned fixture source is never executed
+  and they do not establish field accuracy or independent human review.
+
 ### App-name corroboration, executable-tool provenance and Kubernetes image attribution (October 18)
 
 - Identity and SaaS app assessments treat every display-name, publisher and

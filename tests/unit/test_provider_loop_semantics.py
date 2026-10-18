@@ -422,6 +422,29 @@ DISPATCH_LOOP = (
 )
 
 
+@pytest.fixture(params=[False, True], ids=["external", "local-source"])
+def dispatcher_source(tmp_path, request):
+    if request.param:
+        fixture = Path(__file__).parents[1] / "fixtures/code/provider_dispatch_imports/worker/tools.py"
+        destination = tmp_path / "worker/tools.py"
+        destination.parent.mkdir()
+        destination.write_text(fixture.read_text())
+
+
+@pytest.mark.parametrize("alias", [False, True], ids=["direct", "alias"])
+def test_local_dispatcher_keeps_valid_module_imports(tmp_path, run_connector, dispatcher_source, alias):
+    source = DISPATCH_LOOP
+    if alias:
+        source = source.replace(
+            "import dispatch, TOOL_SPECS", "import dispatch as selected_tool, TOOL_SPECS"
+        ).replace("result = dispatch(", "result = selected_tool(")
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    agents = [finding for finding in findings if finding.kind == Kind.AGENT]
+    assert len(agents) == 1
+    assert {"tool-use", "autonomous"} <= set(agents[0].capabilities)
+
+
 @pytest.mark.parametrize(
     "source",
     [
@@ -500,14 +523,18 @@ def test_unbound_or_disconnected_dispatcher_cannot_establish_an_agent(tmp_path, 
         "from worker.tools import TOOL_SPECS\nfrom worker.tools import dispatch\nfrom elsewhere import *\n",
     ],
 )
-def test_dispatcher_imports_need_unconditional_module_provenance(tmp_path, run_connector, replacement):
+def test_dispatcher_imports_need_unconditional_module_provenance(
+    tmp_path, run_connector, replacement, dispatcher_source
+):
     source = DISPATCH_LOOP.replace("from worker.tools import dispatch, TOOL_SPECS\n", replacement)
     findings, ctx = scan(tmp_path, run_connector, source)
     assert not ctx.stats.incomplete, ctx.stats.errors
     assert not any(finding.kind == Kind.AGENT for finding in findings)
 
 
-def test_dispatcher_import_within_the_loop_function_stays_unproven(tmp_path, run_connector):
+def test_dispatcher_import_within_the_loop_function_stays_unproven(
+    tmp_path, run_connector, dispatcher_source
+):
     source = DISPATCH_LOOP.replace("from worker.tools import dispatch, TOOL_SPECS\n", "")
     source = (
         "def run():\n    from worker.tools import dispatch, TOOL_SPECS\n"
@@ -519,7 +546,7 @@ def test_dispatcher_import_within_the_loop_function_stays_unproven(tmp_path, run
     assert not any(finding.kind == Kind.AGENT for finding in findings)
 
 
-def test_dispatcher_import_after_the_call_stays_unproven(tmp_path, run_connector):
+def test_dispatcher_import_after_the_call_stays_unproven(tmp_path, run_connector, dispatcher_source):
     source = (
         DISPATCH_LOOP.replace(
             "from worker.tools import dispatch, TOOL_SPECS\n", "from worker.tools import TOOL_SPECS\n"

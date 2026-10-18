@@ -27,6 +27,12 @@ host/runtime inventories), network logs, and running processes.
 
 > The repository was formerly `aisecnomad/Project-Nexus`; GitHub redirects the old links.
 
+This README describes the current source branch, including changes not yet
+published on PyPI. For the published alpha, see the
+[0.1.2 documentation](https://github.com/aisecnomad/Nexus-ShadowScan/blob/v0.1.2/README.md).
+Newer commands require a
+[reviewed source installation](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/getting-started/install.md#from-a-reviewed-revision-hash-locked).
+
 ---
 
 <details open>
@@ -128,7 +134,8 @@ pip install "NexusShadowScan[cloud]"         # adds AWS, GCP, Azure, and OCI SDK
 shadowscan --help
 ```
 
-> **Requirements:** Python 3.11, 3.12, 3.13 or 3.14.
+> **PyPI 0.1.2 requirements:** Python 3.11–3.13. Current source supports
+> Python 3.11, 3.12, 3.13 or 3.14; Python 3.14 support is not in that release.
 >
 > The distribution is `NexusShadowScan`; the unrelated `shadowscan` package on
 > PyPI is not this project. Releases are uploaded through PyPI trusted publishing

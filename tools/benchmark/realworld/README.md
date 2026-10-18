@@ -34,6 +34,7 @@ were written in this repository and which cannot say anything about code in the 
 | `rerun_errors.py`, `record_environment.py` | re-run timeouts alone (declared sensitivity); hash the stored corpus and tool packages |
 | `diagnose_shadowscan.py` | a diagnostic, not a score: repeats the ShadowScan scans that were partial or incomplete and counts the causes into `results/shadowscan-incomplete-causes.json` (labels and counts only) |
 | `install_tools.sh` | pinned installation of the third-party tools (ShadowScan from this checkout) |
+| `install_cdxgen.py`, `cdxgen/package.json`, `cdxgen/package-lock.json` | frozen npm installation, disabled lifecycle scripts, and a receipt for each new cdxgen installation |
 | [SHADOWSCAN-FIXES.md](SHADOWSCAN-FIXES.md) | what was changed in ShadowScan after reading its failures in REPORT.md, and what was measured afterwards; not a second person's audit |
 | `results/` | normalised per-repository outcomes, scored summary, run manifest, freeze record (no raw tool output) |
 | `results-rerun/` | the timeout, kill and adapter-exception pairs re-run alone with two workers (`rerun_errors.py --out`); a declared deviation that REPORT.md describes and PROTOCOL.md does not |
@@ -42,7 +43,7 @@ were written in this repository and which cannot say anything about code in the 
 
 ## Reproduce
 
-Needs root (namespaces, cgroups, `pivot_root`), a user named `rwb` (`useradd -r -M rwb`), Python 3.13, Node 22,
+Needs root (namespaces, cgroups, `pivot_root`), a user named `rwb` (`useradd -r -M rwb`), Python 3.13, Node 22 with npm 10,
 Go and `uv`. Use a disposable machine: the scripts download and run third-party code and clone untrusted
 repositories (nothing from a repository is ever executed outside the sandbox).
 
@@ -63,6 +64,32 @@ python -m tools.benchmark.realworld.report --summary results/summary.json --run-
 ```
 
 Unit tests: `python -m pytest tests/test_benchmark_realworld_sampled.py`.
+
+### cdxgen dependency installation
+
+New installations copy the committed `cdxgen/package.json` and `package-lock.json`
+into `TOOL_ROOT/cdxgen`, then use `npm ci --ignore-scripts --engine-strict`.
+The lock pins the transitive registry tarballs and their integrity hashes; npm
+fails if the manifest and lock disagree. No npm lifecycle script runs. Python
+and Go tool installation still executes third-party build code, so the disposable
+machine requirement applies.
+
+The tool version remains cdxgen 12.8.5. Its exact Undici 7.28.0 dependency has
+known vulnerabilities, and cdxgen 12.8.6 still uses that pin. The committed
+manifest narrowly overrides it to
+[Undici 7.29.1](https://github.com/nodejs/undici/releases/tag/v7.29.1), which
+contains the security fixes. This creates a new dependency graph; it does **not**
+reconstruct or validate the dependencies used for the historical benchmark.
+Existing results, run manifests and freeze records are preserved.
+
+After a successful installation, `TOOL_ROOT/cdxgen/install-receipt.json` records
+the manifest and lock SHA-256 hashes, tool and runtime versions, override and
+lifecycle policy. Once replacement begins, a failed install leaves no success
+receipt; a preflight failure leaves the intact prior installation's receipt alone. Save
+that receipt with any new run's evidence. Before updating the lock, review the
+dependency changes, run `npm audit --package-lock-only` in the committed `cdxgen`
+directory, and verify the installed CLI on a small synthetic input. Do not run
+benchmark repositories or their scripts while reviewing installation.
 
 ## Safety notes
 

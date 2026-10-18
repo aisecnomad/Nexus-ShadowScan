@@ -329,10 +329,10 @@ def _invalidate(statement: ast.AST, values: dict[str, str], budget: _Budget) -> 
 def _selected_dispatcher(call: ast.Call, values: dict[str, str], imports: _Imports, budget: _Budget) -> bool:
     """An unshadowed imported callable consumes this selection's name and arguments.
 
-    A helper proved by project source snapshots qualifies directly. The
-    interface shape alone qualifies only for an unconditional module-level
-    import preceding the call whose source the scan has not read: a local
-    module that was read but proves nothing cannot establish dispatch.
+    Both source-proven helpers and interface-only dispatch require an
+    unconditional module-level import preceding the call. Source proof cannot
+    make a conditional, out-of-scope or later binding available to the caller.
+    A local module that was read but proves nothing cannot establish dispatch.
     Names alone, argument-only transforms, fixed tool names and keyword bags
     establish no dispatch. Known serialization/logging interfaces are not tool
     dispatchers even when their arguments mention a selected call.
@@ -345,11 +345,11 @@ def _selected_dispatcher(call: ast.Call, values: dict[str, str], imports: _Impor
         and _depends(call.args[1], values, "arguments", budget)
     ):
         return False
+    if imports.dispatcher_lines.get(name, call.lineno) >= call.lineno:
+        return False
     if name in imports.dispatchers:
         return True
     if name in imports.vetoed:
-        return False
-    if imports.dispatcher_lines.get(name, call.lineno) >= call.lineno:
         return False
     target = imports.get(name, "")
     if not target or target.split(".", 1)[0] in {"builtins", "json", "logging", "pprint", "warnings"}:

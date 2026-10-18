@@ -4,10 +4,9 @@
 file in ``FROZEN`` plus the ShadowScan source tree hash; ``--check results/freeze.json`` (also done by
 ``run.py --freeze``) fails when any of them has changed since.
 
-This is a self-attested record. Nothing in this benchmark is committed to version control, so the record
-cannot prove *when* a file was written; it proves that the files used for the scored run are the files
-listed here, byte for byte, and it stops the author from editing the oracle, the adapters or the sample
-between the freeze and the run without the run noticing.
+This is a self-attested record of tracked benchmark inputs. Its hashes establish file identity, not
+when a run occurred or whether an independent reviewer approved it. Checking the record detects changes
+to the recorded oracle, adapters, installer, dependency lock or sample between the freeze and a run.
 """
 
 from __future__ import annotations
@@ -24,7 +23,8 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[2]
 FROZEN = (
     "PROTOCOL.md", "adapters.py", "baseline_grep.py", "contamination.py", "exclusions.json", "fetch.py",
-    "fetch_corpus.py", "frames.py", "freeze.py", "install_tools.sh", "oracle.py", "purposive.json",
+    "fetch_corpus.py", "frames.py", "freeze.py", "install_tools.sh", "install_cdxgen.py",
+    "cdxgen/package.json", "cdxgen/package-lock.json", "oracle.py", "purposive.json",
     "registry/ai_registry.json", "registry/vocab-overlap.json", "run.py", "sample.py", "sandbox.py",
     "score.py", "vocab_overlap.py", "manifest.jsonl", "calibration.jsonl", "labels.jsonl",
     "labels-calibration.jsonl", "rejects.jsonl", "sampling-summary.json",
@@ -53,7 +53,7 @@ def git(*args: str) -> str:
 def snapshot() -> dict[str, object]:
     return {
         "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "note": "self-attested; nothing is committed, so this proves identity of files, not time of writing",
+        "note": "self-attested file identity; not evidence of execution time or independent review",
         "files": {name: sha256(HERE / name) for name in FROZEN},
         "shadowscan_source_tree_sha256": tree_sha256(REPO_ROOT / "shadowscan"),
         "git_head": git("rev-parse", "HEAD"),

@@ -437,6 +437,35 @@ def test_unresolved_relevant_configurations_withhold_imported_tool_provenance(
     assert all(f.kind != Kind.AGENT for f in findings)
 
 
+@pytest.mark.parametrize("executable_target", [False, True], ids=["wrong-root-tool", "correct-deep-tool"])
+def test_alias_substitution_precedes_parent_normalization(tmp_path, run_connector, executable_target):
+    unproven = "export const getWeather = undefined;\n"
+    files = {
+        "route.ts": _imported_route("@/deep/file"),
+        "tools.ts": unproven if executable_target else TOOLS,
+        "deep/tools.ts": TOOLS if executable_target else unproven,
+        "tsconfig.json": '{"compilerOptions":{"paths":{"@/*":["./*/../tools"]}}}',
+    }
+    findings, ctx = _imported_project(tmp_path, run_connector, files)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert any(f.kind == Kind.AGENT for f in findings) is executable_target
+
+
+@pytest.mark.parametrize("module", ["@/../../outside/file", "@/../../../file"])
+def test_substituted_alias_cannot_escape_the_project(tmp_path, run_connector, module):
+    (tmp_path / "tools.ts").write_text(TOOLS)
+    project = tmp_path / "project"
+    project.mkdir()
+    files = {
+        "route.ts": _imported_route(module),
+        "tools.ts": TOOLS,
+        "tsconfig.json": '{"compilerOptions":{"paths":{"@/*":["./*/../tools"]}}}',
+    }
+    findings, ctx = _imported_project(project, run_connector, files)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert all(f.kind != Kind.AGENT for f in findings)
+
+
 def test_overlapping_alias_pattern_cannot_map_a_shorter_module(tmp_path, run_connector):
     # TypeScript never maps a module shorter than the pattern around its star:
     # "ab*ba" requires at least "abba", so "aba" must stay unresolved even

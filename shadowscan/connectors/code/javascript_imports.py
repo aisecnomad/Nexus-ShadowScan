@@ -267,8 +267,11 @@ def _path_mappings(paths: dict[object, object], base: str) -> dict[str, list[str
             or target.endswith(("/", "/.", "/.."))
         ):
             continue
-        path = _confined(posixpath.join(base, target))
-        if path is not None:
+        # Keep the template until _mapped substitutes the complete wildcard:
+        # "*/../tools" depends on how many path components the import supplies.
+        # _module checks confinement again after substitution and normalization.
+        path = posixpath.join(base, target)
+        if _confined(path) is not None:
             mapped[pattern] = [path]
     return mapped
 
