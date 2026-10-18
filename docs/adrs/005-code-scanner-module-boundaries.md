@@ -193,7 +193,7 @@ holds 2,192 lines and `file_scan.py` 2,259 (`project_findings.py` 1,268,
 `scan_records.py` 272, the façade 1,188). `tools/complexity_baseline.json`
 records those sizes and the complexity gate fails closed when either grows;
 a rise a review accepts is recorded with `--rebaseline` and explained in the
-pull request, as [CONTRIBUTING](../../CONTRIBUTING.md) says. Getting both
+pull request, as [CONTRIBUTING](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md#quality-gates) says. Getting both
 below the mark is a further step, not a precondition of this split.
 
 `FilesystemConnector` is the façade: configuration and its validation, the
