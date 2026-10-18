@@ -17,6 +17,7 @@ Notion bots, gateway routes, Kubernetes serving images, n8n HTTP model calls
 and ServiceNow flow names were adjusted), so a later ShadowScan run on that
 estate is in-sample.
 
+- SARIF notifications name their connector once; the docs show how one scan gives both the JSON ledger and SARIF (October 18)
 - A file's source-binding time budget is counted as `timeout`, as the docs define it (October 18)
 - Under the ci profile a project whose manifest repeats a key is a project, as npm and Composer read it; a template at the repository root is documented as not declared (October 18)
 - Plugin workers also start without npm's per-registry `_auth`, more webhook names and values, and .NET connection strings under any configuration path (October 18)

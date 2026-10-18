@@ -255,8 +255,18 @@ its `invocations[].toolExecutionNotifications` hold each connector's warnings
 and errors, among them the verdict line and the diagnostic of each gap that
 was reported, but not the counts, nor the gaps that one representative
 diagnostic stands for (a tree's further unread links). The verdict line names
-the JSON report for that reason. To read the ledger from a SARIF run, write a
-JSON report of the same scan as well (`--format json`).
+the JSON report for that reason. To have both from one scan, write the JSON
+report and render the SARIF log from it:
+
+```bash
+shadowscan code . --format json --output report.json
+shadowscan merge report.json --format sarif --output report.sarif
+```
+
+The rendered log has the scan's results and notifications, and one more saying
+the source report is incomplete when it was; `merge` exits 3 as the scan did.
+A second scan would not do: it is a different scan, whose ledger need not be
+the one the SARIF log came from.
 
 ### Coverage budget and strict accounting
 
