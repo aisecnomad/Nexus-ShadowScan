@@ -535,8 +535,9 @@ environment read, and the default a settings read is given
 (`GetValue<string>("OpenAI:ApiKey", "<key>")`,
 `configService.get("OPENAI_API_KEY", "<key>")`,
 `.orElse("<key>")`), is reported when it looks like a key; under a
-password's, passphrase's or secret's name it is reported whatever its shape
-unless the redactor would keep it (a variable's name, a path, a URL, a
+password's, passphrase's or secret's name after an environment read it is
+reported whatever its shape (after any other read, a message catalog's or
+ConfigParser's, it must look like a key) unless the redactor would keep it (a variable's name, a path, a URL, a
 placeholder, fewer than six characters) or it is a label. A key pasted in
 place of an environment variable's name is reported where the generic rule
 reads the read itself: a member read (`process.env.<KEY>`,

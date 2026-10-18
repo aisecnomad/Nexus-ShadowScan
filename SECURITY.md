@@ -384,8 +384,8 @@ coverage, even when a response includes an empty collection field.
   mapping, object or argument list is withheld whole, whatever its shape
   (`dbPassword: process.env.DB_PASSWORD?.trim() || "..."`, `db_password:
   os.getenv("K", "...")`, `clientSecret: process.env.S?.trim() || "..."`, a
-  passphrase with spaces too), as the assignment form withholds it: the
-  matcher reports such a fallback whatever its shape. A keyword argument of the read is part of the value
+  passphrase with spaces too), as the assignment form withholds it: after an
+  environment read the matcher reports such a fallback whatever its shape. A keyword argument of the read is part of the value
   (`cfg.get("db", "password", fallback="...")`, `env("P",
   default_value="...")`, `{ fallback: "..." }`), and a closer that closes
   no opener on the line (an earlier pass withheld it with the start of the

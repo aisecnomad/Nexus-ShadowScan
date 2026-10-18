@@ -444,7 +444,10 @@ and tests, which call and test the products they detect.
   `settings.get("OPENAI_API_KEY", default="<key>")`, `GetValue<string>("OpenAI:ApiKey", defaultValue:
   "<key>")`, `Optional.ofNullable(System.getenv("OPENAI_API_KEY")).orElse("<key>")`). Under a
   password's, passphrase's or secret's name (the lower-cased name ends in `password`, `passphrase` or
-  `secret`) a fallback or default of any shape is the credential unless evidence would keep it
+  `secret`), after an environment read (`process.env`, `os.environ`, `getenv`, `ENV.fetch`, `env()`,
+  `GetEnvironmentVariable`; `_environment_read`), a fallback or default of any shape is the credential;
+  after any other read (a message catalog's `.get("forgot_password", "Forgot password?")`, ConfigParser's
+  `.get("db", "password")`) it is judged as a key is. Either way it is not the credential when evidence would keep it
   (`redaction_rules.password_literal`: a variable's name, a path, a URL, a placeholder, fewer than six
   characters) or it is a label, so `dbPassword: process.env.DB_PASSWORD?.trim() || "<password>"` is reported.
   Three or more letter words joined by `-` or `_`, or by `.` as a password outside source code

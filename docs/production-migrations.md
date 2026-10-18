@@ -256,8 +256,10 @@ across this change reports findings as resolved or new that are neither.
   neither reported nor evidence), the default a settings read is given when
   it looks like a key (`GetValue<string>("OpenAI:ApiKey", "<key>")`,
   `configService.get("OPENAI_API_KEY", "<key>")`, `.orElse("<key>")`), a fallback or
-  default of any shape under a password's, passphrase's or secret's name
-  (`dbPassword: process.env.DB_PASSWORD?.trim() || "<password>"`) unless
+  default of any shape under a password's, passphrase's or secret's name after an
+  environment read (`dbPassword: process.env.DB_PASSWORD?.trim() || "<password>"`;
+  after any other read, such as a message catalog's or ConfigParser's, it must look
+  like a key) unless
   evidence would keep it (a variable's name, a path, a URL, a placeholder,
   fewer than six characters) or it is a label, a key pasted as an
   environment variable's name where the generic rule reads the read itself

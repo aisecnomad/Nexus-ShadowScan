@@ -603,7 +603,8 @@ only with an instruction word and every word in that closed vocabulary
 credential file is reported unless every word of it labels it, a key pasted
 as an environment variable's name in a member read (`process.env.<KEY>`) is
 reported, and so are a key given as a settings read's default argument and a
-fallback of any shape under a password's or secret's name. One credential
+fallback of any shape under a password's or secret's name after an environment
+read. One credential
 repeated on several lines (one password per compose service) counts once
 toward the five-per-format quota and in the finding's `count`, while its
 lines (up to five) are still listed, and a pasted name that does not look
