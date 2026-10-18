@@ -1140,6 +1140,33 @@ def test_a_spawned_plugin_keys_credentials_as_the_scan_does(installed_probe, mon
     _assert_reaped(installed_probe)
 
 
+def test_a_worker_keeps_the_deadline_its_supervisor_enforces(monkeypatch):
+    """Regression: the worker received the unset default deadline, so a plugin that proposes a
+    longer one for a large input (estimate_timeout_seconds, as FilesystemConnector does) raised
+    the worker's deadline while the supervisor still stopped it at the original one: the worker
+    paced itself to a deadline it never had and was stopped with nothing reported."""
+    from shadowscan import plugin_process
+    from shadowscan.config import connector_timeout_is_default
+
+    seen = []
+
+    class Refused(Exception):
+        pass
+
+    def capture(*args, **kwargs):
+        seen.append(kwargs["args"][1])
+        raise Refused
+
+    monkeypatch.setattr(plugin_process, "_WorkerProcess", capture)
+    engine = _engine()
+    assert connector_timeout_is_default(engine.config.connector_timeout_seconds)
+    result = engine.run()
+    assert not result.complete
+    (config,) = seen
+    assert not connector_timeout_is_default(config.connector_timeout_seconds)
+    assert config.connector_timeout_seconds == engine.config.connector_timeout_seconds
+
+
 def _worker_ledger(gaps: int) -> dict:
     ledger = CoverageLedger()
     ledger.add_examined(40)
@@ -1165,6 +1192,23 @@ def test_result_stats_over_budget_are_incomplete_whatever_the_worker_says():
     payload = json.dumps({"stats": stats, "findings": [], "exports": []}).encode()
     _, decoded, _ = _decode_result(payload, 1, ConnectorSpec(ENTRY))
     assert decoded.incomplete
+
+
+def test_result_stats_accept_the_part_a_published_gap_names_and_refuse_a_forged_one():
+    ledger = CoverageLedger()
+    ledger.begin_part("plugin-root")
+    ledger.add_examined(1_000)
+    ledger.record(CoverageGap(detail="code.filesystem: tests/a.bin: unreadable", path="tests/a.bin"))
+    summary = ledger.evaluate(CoveragePolicy())[1]
+    assert summary["details"][0]["part"] == "plugin-root"
+    stats = {**asdict(ScanStats(ENTRY, "now")), "coverage": summary}
+    payload = json.dumps({"stats": stats, "findings": [], "exports": []}).encode()
+    _, decoded, _ = _decode_result(payload, 1, ConnectorSpec(ENTRY))
+    assert decoded.coverage["details"][0]["part"] == "plugin-root"
+    forged = {**summary, "details": [{**summary["details"][0], "part": 3}]}
+    payload = json.dumps({"stats": {**stats, "coverage": forged}, "findings": [], "exports": []}).encode()
+    with pytest.raises(ValueError):
+        _decode_result(payload, 1, ConnectorSpec(ENTRY))
 
 
 def test_result_stats_accept_a_combined_ledger_and_check_its_part_counts():

@@ -535,3 +535,28 @@ def test_a_template_at_the_repository_root_is_not_declared(run_connector, tmp_pa
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, profile="ci")
     assert ctx.stats.declared_omissions == 0, ctx.stats.warnings
     assert not may_be_declared(rel)
+
+
+def test_diff_reads_a_ledger_over_budget_as_incomplete_whatever_the_flag_says(tmp_path, index):
+    # The rule merge applies: a report whose own ledger is over budget (or
+    # blinded) did not read everything, so its missing findings do not resolve.
+    root = _repo(tmp_path / "repo")
+    (root / "svc").mkdir()
+    (root / "svc" / ".mcp.json").write_text('{"mcpServers": {"evil": {"command": "npx"}}}')
+    (root / "certs").mkdir()
+    (root / "certs" / "server.pem").symlink_to(root / "missing.pem")
+    options = {"max_coverage_gap": 0.5}
+    baseline = _scan(index, root, **options)
+    assert baseline["summary"]["complete"] and baseline["stats"][0]["coverage"]["within_budget"]
+    (root / "svc" / ".mcp.json").unlink()
+    current = _scan(index, root, **options)
+    assert not [f for f in current["findings"] if f["kind"] == "mcp-server"]
+    result = _diff(tmp_path, baseline, current)
+    assert result.exit_code == 0 and json.loads(result.output)["comparable"] is True
+    for forged in ({"within_budget": False}, {"blinding_gaps": 1}):
+        report = copy.deepcopy(current)
+        report["stats"][0]["coverage"].update(forged)
+        result = _diff(tmp_path, baseline, report)
+        assert result.exit_code == 3, result.output
+        comparison = json.loads(result.output)
+        assert comparison["comparable"] is False and comparison["resolved"] == []

@@ -30,15 +30,20 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   they change the exit code. A gap the scanner *cannot* bound still fails
   closed with no budget: an early stop, a refused page, an expired deadline,
   a symbolic link to a directory, an unparseable manifest or agent card
-  outside test code, an agent, MCP or dependency configuration file whose
-  name selects it over `max_file_size`, linked to a file the walk does not
-  scan or replaced by a FIFO or device, undecodable bytes anywhere but in
+  outside test code, agent, MCP or coding-agent configuration whose name
+  selects it (compared in any letter case, directory-wide coding-agent
+  signatures such as `.roo/rules/` included) over `max_file_size`, linked to
+  a file the walk does not scan or replaced by a FIFO or device, a JSON, TOML
+  or YAML file over `max_file_size` whose content names an MCP server table,
+  an oversize `.env` file, undecodable bytes anywhere but in
   test code while `include_tests` is off, and any sanitizer limit. Test code
   whose evidence is discounted (`include_tests` off) is the exception for
-  manifests and undecodable bytes: a malformed fixture is charged to the
-  budget at a quarter weight and an undecodable one, read for credentials
-  first, at a whole entry: a root tolerates malformed fixtures up to about
-  8% of its entries and undecodable ones up to about 2%, so a 200-file
+  manifests and undecodable bytes: each gap a malformed fixture records
+  (one to three) is charged to the budget at a quarter weight and an
+  undecodable fixture, read for credentials first, at a whole entry: a root
+  tolerates malformed fixtures up to about 8% of its entries when each
+  records one gap (4% for a structured file with duplicate keys, which
+  records two) and undecodable ones up to about 2%, so a 200-file
   service with four binary fixtures and a dangling certificate link exits 3. An MCP configuration, coding-agent file or
   agent card keeps the gap in test code too. The budget is judged per scan
   root and per repository.
@@ -272,6 +277,12 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
 
 ### Operations
 
+- A release candidate's two attestation bundles are `provenance.sigstore.json`
+  and `sbom.sigstore.json` (they were `provenance.json` and `sbom.json`), the
+  names release-signature checks look for among a release's assets. Verify a
+  download with `gh attestation verify --bundle` as the
+  [publishing runbook](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/operations/publishing.md)
+  shows; a script that downloaded the old names needs the new ones.
 - The next release uploads a source distribution beside the universal
   `py3-none-any` wheel. The release workflow builds the wheel from that sdist
   with `python -m build`, checks that both carry the same metadata and package

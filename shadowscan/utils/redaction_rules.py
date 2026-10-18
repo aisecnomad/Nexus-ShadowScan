@@ -291,6 +291,9 @@ _PLACEHOLDER_FILL = re.compile(r"(?i)x{4,}|\*{4,}|\.{3,}")
 # Random keys change character class (digit, lower, upper) often inside one
 # long alphanumeric run; names, words and model identifiers rarely do.
 _OPAQUE_RUN = re.compile(r"[A-Za-z0-9]{8,}")
+# A UUID: Pinecone and Heroku API keys, among others, have its shape. Its hyphens cut it into
+# runs too short to alternate letters and digits as an opaque key's run does.
+_UUID = re.compile(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}")
 # A lowercase word: prose or an argument name rather than a value.
 _CLI_WORD = re.compile(r"[a-z][a-z_-]*")
 
@@ -332,9 +335,44 @@ def pasted_key_name(name: str) -> bool:
     between its words, digits or none ('process.env.QWERTYUIOPASDFGHJKLZXCVBNM').
     Evidence withholds such a read (``_environment_lookup``) and the
     credential detector reports it (``shadowscan.signatures.matcher``), by
-    this one test.
+    this one test; the detector counts it toward its quota only when it is
+    opaque (``opaque_key``).
     """
-    return _opaque(name) or (len(name) >= _PASTED_KEY_NAME and "_" not in name)
+    return opaque_key(name) or (len(name) >= _PASTED_KEY_NAME and "_" not in name)
+
+
+def opaque_key(value: str) -> bool:
+    """Whether ``value`` looks like an opaque key: letters and digits alternate in a long run (``_opaque``).
+
+    The redactor withholds a literal after a credential's name by this test
+    (``_credential_literal``); the credential detector counts a key pasted as
+    a variable's name toward its quota only when it passes it, since a long
+    name without separators ('SVC1OPENAIAPIKEYPROD') does not.
+    """
+    return _opaque(value)
+
+
+# A literal shorter than this in a password's value is an argument or a flag ('a', 'utf8').
+_PASSWORD_LITERAL = 6
+# An upper-case variable name, as an environment read names one.
+_VARIABLE_NAME = re.compile(r"[A-Z_][A-Z0-9_]*+")
+
+
+def password_literal(value: str) -> bool:
+    """Whether a literal in a password's value may be the password: not a name, path, URL or placeholder.
+
+    A password need not look like an opaque key ('Xk9#mQ2$vL!pR7@wZ4%',
+    'correct horse battery staple'), so its shape is not tested. Evidence
+    withholds such a literal under a password's name
+    (``_redact_line_tails``) and the credential detector reports it as a
+    password's fallback (``shadowscan.signatures.matcher``), by this one test.
+    """
+    value = value.strip()
+    if len(value) < _PASSWORD_LITERAL or _kept_value(value) or "://" in value:
+        return False
+    if _VARIABLE_NAME.fullmatch(value) and not pasted_key_name(value):
+        return False  # the variable a read names ('PGPASSWORD', 'DB_PASSWORD')
+    return not (_FILE_PATH.fullmatch(value) or _placeholder(value))
 
 
 def environment_read_name(text: str, start: int = 0) -> str | None:
@@ -400,7 +438,7 @@ def _credential_literal(value: str, *, positional: bool) -> bool:
         return False
     if _ENVIRONMENT_NAME.fullmatch(value) or _FILE_PATH.fullmatch(value) or _placeholder(value):
         return False
-    return positional or _opaque(value)
+    return positional or _opaque(value) or _UUID.fullmatch(value) is not None
 
 
 def _interpolated(prefix: str, quote: str, value: str) -> bool:
@@ -481,7 +519,13 @@ def _blanks_before(text: str, end: int) -> int:
 
 
 def _withhold_spans(text: str, spans: list[tuple[int, int]]) -> str:
-    """Replace each span that does not overlap an earlier one with the marker."""
+    """Replace the union of the spans with the marker, one marker for spans that overlap.
+
+    Overlapping spans are withheld to their union, never to the first of
+    them: a token span at the start of a password literal and the span of the
+    whole literal overlap, and keeping the shorter one showed the password's
+    tail ('"[REDACTED]&tail"').
+    """
     if not spans:
         return text
     pieces: list[str] = []
@@ -491,5 +535,7 @@ def _withhold_spans(text: str, spans: list[tuple[int, int]]) -> str:
             pieces.append(text[cursor:start])
             pieces.append(REDACTED)
             cursor = end
+        elif end > cursor:
+            cursor = end  # it overlaps the span withheld last, and runs past it
     pieces.append(text[cursor:])
     return "".join(pieces)

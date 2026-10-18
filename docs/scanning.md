@@ -26,14 +26,42 @@ that are never silent:
   and document aliases, whose parsing can depend on their path; aliases into
   another project or test directory; links into excluded or unread content;
   links outside the root; and unresolved links. A dangling link, or one to a
-  single regular file, costs one entry of the coverage budget; a link to a
-  directory, whose alias paths are not inspected and which can stand for any
-  number of files, makes the scan incomplete (exit code 3) at once. So does a
-  dangling link or one to a single file whose own name is configuration the
-  scanner reads (`.mcp.json` or `.claude/settings.json` pointing outside the
-  tree, `CLAUDE.md`, a manifest), as an oversize copy of that file does,
-  except in discounted test code; an MCP configuration or coding-agent file
-  under a test path (`tests/.mcp.json`) is not discounted.
+  single regular file, costs one entry of the coverage budget, and so does an
+  alias of a directory the walk scans whole at its real path inside the root
+  (`lib_alias` linking to `lib`, `docs/_static` to `../assets`): its files are
+  read and counted there, and only the paths below the alias are not
+  assessed. Any other link to a directory (outside the root, into an excluded
+  or unselected directory, or reading test code as product code), which can
+  stand for any number of files, makes the scan incomplete (exit code 3) at
+  once, and so does a link to a directory, or a dangling one, whose path is,
+  leads to or lies within a directory a coding-agent or MCP file signature
+  names (`.claude`, `.cursor`, `.vscode`, `.roo`, `.continue`,
+  `.github/instructions`, `.github/agents`, `.cursor/rules/team`,
+  `.well-known`): one generic dot-directory on its path does not make it so
+  (`.github/actions/setup` holds no file `.github/copilot-instructions.md`
+  names). An alias of a scanned directory there stays blinding when a file it
+  holds would be configuration at the alias path (`.cursor` aliasing a
+  directory with `mcp.json` or `rules/`): under that path its files are
+  configuration, at their real path they are not. One that holds none
+  (`web/public/.well-known` aliasing `static/well-known` without an MCP
+  manifest or agent card) is an alias like any other, one entry. The `ci`
+  profile never declares a link that stands for configuration. So does a
+  dangling link or one to a single file whose own name makes it agent
+  configuration, as an oversize copy of that file does, under a test path
+  too: an MCP configuration by a dedicated name in any letter case
+  (`.mcp.json`, `.MCP.JSON`), a coding-agent instruction, rule or settings
+  file (`CLAUDE.md`, `.claude/settings.json`), a client's own settings file
+  under a shared name (`.vscode/settings.json`, whose `mcp` table VS Code
+  reads servers from), a file a coding-agent or MCP
+  file signature selects, directory-wide globs included
+  (`.roo/rules/deploy.md`, `.continue/mcpServers/x.yaml`), or that lies in an
+  agent definition directory, whatever its suffix (`.cursor/rules/deploy.rule`,
+  `.clinerules/01-deploy.rules`, `.windsurf/rules/x.rst`; only a binary asset
+  kept there, an image, font, archive, audio or video file, is not), or an
+  agent manifest or card. A link named like a manifest or build file (`Dockerfile`,
+  `package.json`, `requirements.txt`, `.env`, `*.tf`) or like a shared client
+  file outside its client's directory (`config.json`, `settings.json`), which
+  is MCP configuration only by its content, costs one entry like any other.
   Files are read relative to the opened scan root without following a link in
   any path component, so a directory replaced by a link after the walk listed it
   fails that file's read (incomplete) instead of reading content outside the
@@ -42,7 +70,18 @@ that are never silent:
 * **Oversize files** (`max_file_size`, default 1,000,000 bytes) that the scanner would
   inspect are a coverage gap when skipped: one entry of the
   [budget](#coverage-budget-and-strict-accounting), or an immediate exit 3 for
-  a configuration file its name selects. Known generated, binary and
+  agent configuration (as the links above), for a JSON, TOML or YAML file
+  the MCP parser decides by its content (`deploy/tools.json`,
+  `config/settings.json`) whose bytes may name a server table key
+  (`mcpServers`, `mcp_servers`, an `mcp` key however quoted, spaced or
+  escaped, any of its characters written as a `\u`, `\U` or `\x` escape, or
+  the quoted key folded across a line by a YAML escaped line break, read
+  behind any padding up to 128 MiB, and taken to name one past that; a
+  recorded cassette's other folded strings and a script's line continuations
+  name none), which the `ci` profile never declares, with `scan_secrets` off
+  too, for an MCP registry `server.json`, and, while `scan_secrets` is on,
+  for a dotenv file (`.env`, `.env.production`), which exists to hold a
+  credential (a tool credential file such as `.npmrc` costs one entry). Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain
   warnings, including when `strict_coverage` is enabled.
 * **Binary or undecodable content.** Text with a UTF-8, UTF-16 or UTF-32
@@ -118,7 +157,18 @@ that are never silent:
   servers, which is read for that check even with `scan_secrets` off), a
   coding-agent instruction, rule or settings file (`CLAUDE.md`,
   `AGENTS.md`, `.cursor/rules/`, `.claude/settings.json`, …) and an agent
-  manifest or card stay a gap there as anywhere else. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
+  manifest or card make the scan incomplete there as anywhere else, under
+  either profile. For the check, the text without its NUL bytes is parsed as
+  the client parses the file, so a quoted, spaced, explicit or escaped key, a
+  TOML inline table or literal key counts, and the servers it declares are
+  reported; text that does not parse counts when any spelling of a server
+  table key appears in it. So does a readable JSON, TOML or YAML file there
+  whose parse failed (a syntax error, a duplicate key, a nesting limit): a
+  quoted (`'mcpServers':`) or escaped key keeps it MCP configuration, so its
+  defect is recorded at full weight. An analysis limit reached in a file that
+  is MCP configuration by its content (a 100-deep array beside
+  `mcpServers` in `tests/fixtures/tools.json`) is never discounted or
+  declared either. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
   decoded and analyzed (the mark is removed, so a BOM-prefixed `.mcp.json`
   parses). A file with a NUL byte in its first 8 KiB and no byte-order mark is
   not text in any supported encoding, yet interpreters such as Node and `sh`
@@ -136,10 +186,11 @@ that are never silent:
 * **Entries that are not regular files** (a directory, FIFO, socket or device)
   named like a file the scanner analyzes are a coverage gap of one entry
   each, as a symbolic link of the same name to a single file is. A FIFO,
-  socket or device in place of configuration the scanner reads (`.mcp.json`,
-  `.claude/settings.json`, `requirements.txt`) makes the scan incomplete at
-  once, outside discounted test code, as a link or an oversize copy of it
-  does. A directory is only reported when its name is an MCP configuration
+  socket or device in place of agent configuration (`.mcp.json`,
+  `.claude/settings.json`, `.roo/rules/deploy.md`) makes the scan incomplete
+  at once, under a test path too, as a link or an oversize copy of it does;
+  one named like a manifest or build file (`requirements.txt`, `.env`,
+  `Dockerfile`) costs one entry. A directory is only reported when its name is an MCP configuration
   file name such as `.mcp.json`, and costs one entry: its contents are still
   scanned. Directories that agent tools read as directories (`.roo/rules/`,
   `.clinerules/`, `.cursor/rules/`) are not reported.
@@ -209,14 +260,16 @@ entry; the summary's `status` still says `incomplete`.
 ### The coverage budget
 
 A gap the scanner cannot bound is *blinding*: the walk stopped early, a page
-was refused, a deadline expired, a link names a directory, a sanitizer limit
+was refused, a deadline expired, a link names a directory the walk does not
+scan whole or an agent's configuration directory, a sanitizer limit
 was reached. It marks the scan incomplete at once. A *partial* gap costs a
 known number of entries (a dangling link is one) and is charged against a
 budget: `max_coverage_gap` (`--max-coverage-gap`), by default 2% of the entries
 the connector examined and at most 100 weighted entries. A gap under a
 dependency, cache or test path (`node_modules`, `vendor`, `tests`, `fixtures`
 and similar) is charged a quarter of its entries, unless the scanner could not
-read or decode the content. Within the budget the scan stays complete and the
+read or decode the content or, while `scan_secrets` is on, read no byte of it
+for credentials (a file over `max_file_size`). Within the budget the scan stays complete and the
 gaps' diagnostics remain warnings; over it the scan is incomplete and every
 partial gap is counted under its reason in `stats[].incomplete_reasons`.
 `strict_coverage: true` or `--max-coverage-gap 0` sets the budget to zero.
@@ -236,7 +289,7 @@ the scan is incomplete.
 | `allowance` | Weighted entries the scan could lose: `max_gap_ratio` times `examined`, at most 100, and 0 under strict accounting |
 | `within_budget` | Whether `weighted_gap_entries` stayed within `allowance` |
 | `max_gap_ratio` | The ratio in force |
-| `details` | The first 50 gaps (`MAX_PUBLISHED_GAPS`) in the order they were recorded |
+| `details` | The first 50 gaps (`MAX_PUBLISHED_GAPS`): a root's blinding gaps first, then its partial ones, each in the order they were recorded |
 | `details_truncated` | Present only when more than 50 gaps were recorded: how many `details` leaves out. Every gap is still counted in `gaps` and `gap_entries`. |
 | `parts` | Present only when the connector was judged in parts (several roots or repositories): how many parts recorded a gap |
 | `parts_over_budget` | Present with `parts`: how many of them went over their own allowance, so `within_budget` is false exactly when it is above 0 |
@@ -245,8 +298,11 @@ the scan is incomplete.
 Each entry of `details` has `detail` (the diagnostic), `path`, `kind`
 (`blinding` or `partial`), `entries`, `full_weight` (true when the path discount
 was not applied), `reason` (the `incomplete_reasons` category the gap counts
-under if it leaves the scan incomplete) and `relevance` (`low` for a dependency,
-cache or test path, otherwise `high`). `shadowscan merge` and a process-mode plugin's result are
+under if it leaves the scan incomplete), `relevance` (`low` for a dependency,
+cache or test path, otherwise `high`) and `part`, the scan root's label (its
+path unless `label` names it) or the repository (`github:<repo>`) the gap lies
+in, so the gap a verdict line names can be found when several roots share a
+path; a report written before `part` existed has none. `shadowscan merge` and a process-mode plugin's result are
 checked against this shape (`shadowscan.coverage.validate_coverage_summary`), and
 a ledger that does not match is refused rather than republished.
 
@@ -272,9 +328,11 @@ the one the SARIF log came from.
 
 A coverage gap is *blinding* when the scanner cannot bound what it lost: the
 walk stopped early (`max_files`, `max_entries`, a deadline), a page was
-refused, a symbolic link names a directory, undecodable bytes, padding past
-`max_file_size`, a link or a FIFO, socket or device hide a file read as
-configuration, or a sanitizer limit was hit. A blinding gap marks the scan
+refused, a symbolic link names a directory the walk does not scan whole
+inside the root or an agent's configuration directory, undecodable bytes, padding past
+`max_file_size`, a link or a FIFO, socket or device hide agent configuration
+(padding also hides a dotenv file), or a sanitizer limit
+was hit. A blinding gap marks the scan
 incomplete at once. A *partial* gap costs a known number of entries: any other
 dangling link or link to a single file, any other non-regular entry, an
 incidental file over `max_file_size`. Partial gaps
@@ -286,7 +344,10 @@ deployed code as the scan reads it: under a dependency tree or tool cache
 (`node_modules`, `vendor`, `third_party`, …), or under a test path while
 `include_tests` is off (the test paths of
 [test and fixture code](#test-and-fixture-code), test file names such as
-`test_*.py`, `*.test.ts` and `conftest.py` included). With `include_tests` a
+`test_*.py`, `*.test.ts` and `conftest.py` included), unless no byte of the
+file was read for credentials while `scan_secrets` is on: an oversize fixture
+or cassette, or one the scanner could not read, weighs a whole entry wherever
+it lies, since a key in it is missed. With `include_tests` a
 test path is source and its gaps weigh in full, and so does a file whose
 findings keep their full weight under a test path (an MCP configuration such
 as `tests/.mcp.json`, a coding-agent instruction, rule or settings file, an
@@ -330,7 +391,9 @@ recomputes it from the stats and treats a source whose summary states a
 different value as inconsistent (incomplete). A ledger summary that claims to
 be within budget while losing more than it allows, or whose part counts its
 own counts refute, is refused, and one over budget or blinded marks its
-connector incomplete whatever the report or a plugin worker says.
+connector incomplete whatever the report or a plugin worker says, in
+`shadowscan merge`, in a plugin worker's result and in `shadowscan diff`, which
+then resolves no finding from that report.
 
 Every gap a `code.filesystem` scan records (and every gap in a `code.github`
 or `code.gitlab` checkout, which that connector scans) is decided by one rule,
@@ -346,10 +409,12 @@ applied in this order:
    `--profile ci --strict-coverage` or `--profile ci --max-coverage-gap 0`.
    The two settings differ only in where a gap the budget would charge (a
    link, a non-regular entry, an incidental oversize file) is reported:
-   `strict_coverage` records each as an error where it happens, while a
+   `strict_coverage` records each as an error where it happens (one named
+   error per root for its skipped links, and for its non-regular entries past
+   the first ten, every further one counted under its reason), while a
    budget of 0 charges each to the budget, so those gaps stay listed in
    `stats[].coverage` and the verdict that leaves the scan incomplete is one
-   error line. Every other gap is a diagnostic at the file under either
+   error line. Both count every such gap in `incomplete_reasons`. Every other gap is a diagnostic at the file under either
    setting, counted under its reason and absent from `stats[].coverage`: a
    test-code gap the default accounting discounts (a malformed fixture, or a
    binary one after its credential-only read) is an error, and content the
@@ -362,13 +427,18 @@ applied in this order:
    incomplete under every profile, in test code too. No file is declared
    without a credential read: a gap that left a file's bytes unread by
    credential detection while `scan_secrets` is on (a file over
-   `max_file_size`, a notebook's saved outputs) is recorded as without the
-   profile, an oversize file as one entry of the budget weighed by its path
-   like any other gap, or blinding when its name selects it as
-   configuration. A binary or undecodable test fixture is read for
-   credentials before its gap is recorded, under every accounting. The one
-   exception left is an undecodable file under a documentation, example or
-   generated path, which `profile: ci` declares without that read.
+   `max_file_size`, a notebook's saved outputs, a file that could not be
+   opened or read) is recorded as without the
+   profile, an oversize file as one whole entry of the budget wherever it
+   lies (never a quarter under a test path), or blinding when it is agent
+   configuration or a dotenv file. Oversize content is not
+   read for credentials at all: a key in an oversize fixture is missed while
+   the budget tolerates the entry, the trade-off
+   [SECURITY.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-can-remain)
+   records; raise `max_file_size` to read such files. A binary or undecodable file whose gap would be discounted
+   or declared (a test fixture, or a documentation, example or generated file
+   under `profile: ci`) is read for credentials before its gap is recorded,
+   under every accounting, so `profile: ci` declares it only after that read.
 3. **Declared omissions.** Under `profile: ci`, a gap in a path the
    [profile](#the-ci-profile) names is declared: counted in
    `declared_omissions`, every entry of it, never charged to the budget. A
@@ -381,10 +451,16 @@ applied in this order:
    settle) is charged to the budget as a partial gap at a quarter weight, and
    a binary or undecodable fixture, read for credentials first, at a whole
    entry. Its warning and its `stats[].coverage.details` entry say `test code
-   is discounted evidence`. Against the default 2% budget a root therefore
-   tolerates malformed fixtures up to about 8% of its entries, but binary
-   ones only up to about 2%, fewer beside other gaps: a 200-file service with
-   four binary fixtures and one dangling certificate link exits 3 (see
+   is discounted evidence`. Each gap a malformed fixture records costs a
+   quarter, and a fixture can record more than one: XML or a manifest that
+   does not parse records one, a structured file that fails the integrity
+   checks (duplicate keys, non-finite numbers) two (its excerpts withheld,
+   then its ambiguous data), and such a dependency manifest three (adding its
+   input defect). Against the default 2% budget a root therefore tolerates
+   about 8% of its entries in one-gap fixtures, 4% in structured ones and
+   under 3% in such manifests, but binary ones only up to about 2%, fewer
+   beside other gaps: a 200-file service with four binary fixtures and one
+   dangling certificate link exits 3 (see
    [test and fixture code](#test-and-fixture-code)).
 5. **Budget.** Every other partial gap is charged to the budget; a blinding
    one marks the scan incomplete.
@@ -406,7 +482,10 @@ or generated path, but only while `scan_secrets` is off (an oversize test
 fixture is then skipped with a warning under every profile): with credential
 detection on (the default) a recorded cassette or fixture over the limit may
 hide a key, and credentials are never declared without a read, so its gap is
-charged to the budget as without the profile. Every declared entry is counted:
+charged to the budget as without the profile. For the same reason an
+undecodable file under those paths is read for credentials, its bytes as
+Latin-1 without NUL bytes, before it is declared, and a key in it is reported.
+Every declared entry is counted:
 of a run of skipped links,
 one warning per root names the first and the rest are counted without one, as
 the budget counts every undeclared link. Test paths are declared only while
@@ -522,8 +601,10 @@ placeholders (repeated characters, marker words such as `EXAMPLE` or their
 Portuguese, Spanish, French, German, Italian, Dutch, Indonesian and Turkish
 equivalents written as whole words between separators, such as
 `sk-proj-sua-chave-aqui-...`, a possessive followed by words that name the
-credential, such as `sua_chave_openai`, `votre-cle-api` or `your_api_key`, or
-very low character diversity) are never reported. A translated word joined to
+credential, such as `sua_chave_openai`, `votre-cle-api` or `your_api_key`,
+when every word after the possessive is template vocabulary, so
+`ton-jardin-secret` is a passphrase, or very low character diversity) are
+never reported. A translated word joined to
 the rest by a case boundary (`SuaChaveDaOpenAI`) is read as part of a token,
 as random keys hold such runs, and so is a passphrase that only begins with a
 possessive or a pronoun (`je-suis-le-patron`). An assigned value shaped like
@@ -697,9 +778,11 @@ incomplete depends on what the file could hide:
   `test_*.py`) is skipped with the warning `skipped oversize test fixture` and
   the scan stays complete: test code is discounted evidence that cannot
   establish a deployment, so its omission is disclosed and counted (one
-  summary warning per root) rather than treated as a gap. A coding-agent
-  settings file under such a path is still recorded as unread for its
-  project's approval gate, which then covers only some actions. With credential
+  summary warning per root) rather than treated as a gap. Agent configuration
+  is not discounted test code, so an oversize `tests/.mcp.json`,
+  `tests/CLAUDE.md`, coding-agent rule or settings file, or a JSON, TOML or
+  YAML fixture whose bytes name an MCP server table, makes the scan
+  incomplete under such a path too. With credential
   detection on, or `include_tests: true`, the file is analyzable like any
   other and the gap returns; strict accounting keeps it a gap too, and
   `strict_coverage` records it as an error.
@@ -708,8 +791,10 @@ incomplete depends on what the file could hide:
   that does not parse, YAML that fails the integrity checks, source the lexer
   cannot settle, a parser input defect) is a warning ending `test code is
   discounted evidence (include_tests is false)`, charged to the coverage
-  budget at a quarter weight, so a root tolerates such files up to about 8%
-  of its entries (2% at a quarter each), fewer beside other gaps. Its
+  budget at a quarter weight per gap it records (one to three: see
+  [discounted test code](#coverage-budget-and-strict-accounting)), so a root
+  tolerates such files up to about 8% of its entries when each records one,
+  and 4% or less when they record more, fewer beside other gaps. Its
   credentials were scanned on the text as read. The
   same file outside a test path is a gap, and `include_tests: true` or
   [strict accounting](#coverage-budget-and-strict-accounting) keeps it one.

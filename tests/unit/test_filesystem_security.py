@@ -18,10 +18,13 @@ from click.testing import CliRunner
 
 from shadowscan.cli import main
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
+from shadowscan.connectors.code import file_scan as file_scan_module
 from shadowscan.connectors.code import filesystem as filesystem_module
 from shadowscan.connectors.code import lockfiles, manifests
+from shadowscan.connectors.code import walk as walk_module
 from shadowscan.connectors.code.filesystem import FilesystemConnector, _excerpt
 from shadowscan.connectors.code.mcp_config import _parse_mcp_servers
+from shadowscan.connectors.code.walk import TreeWalker
 from shadowscan.models import Kind
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.text import BINARY_CONTENT_ERROR, read_text
@@ -367,7 +370,7 @@ def test_source_alias_to_test_directory_marks_incomplete(tmp_path, run_connector
 
 
 @pytest.mark.parametrize("strict", [False, True])
-def test_in_root_directory_alias_keeps_findings_but_marks_incomplete(tmp_path, run_connector, strict):
+def test_in_root_directory_alias_keeps_findings_and_costs_one_entry(tmp_path, run_connector, strict):
     repo = tmp_path / "repo"
     source = repo / "source"
     source.mkdir(parents=True)
@@ -376,9 +379,14 @@ def test_in_root_directory_alias_keeps_findings_but_marks_incomplete(tmp_path, r
 
     findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, strict_coverage=strict)
     assert any("framework.crewai" in finding.frameworks for finding in findings)
-    # Every path below the alias is unassessed: an error, never a budgeted gap.
+    # The target is scanned at its real path; the paths below the alias are not
+    # assessed. One budgeted entry, which this two-entry tree cannot absorb, or an
+    # error under strict accounting.
     assert ctx.stats.incomplete
-    assert any("symbolic link agents" in issue for issue in ctx.stats.errors)
+    channel = ctx.stats.errors if strict else ctx.stats.warnings
+    assert any("symbolic link agents" in issue for issue in channel)
+    if not strict:
+        assert ctx.stats.coverage["blinding_gaps"] == 0 and ctx.stats.coverage["gap_entries"] == 1
 
 
 @pytest.mark.parametrize("kind", ["root", "ancestor", "dotdot"])
@@ -838,7 +846,7 @@ def test_blank_lines_after_agent_front_matter_marker_cannot_stall_the_scan(tmp_p
 )
 def test_agent_front_matter_formats_still_parse(tmp_path, index, document):
     connector = FilesystemConnector(ConnectorContext(config={"path": str(tmp_path)}, index=index))
-    info = connector._parse_agent_definition(".claude/agents/reviewer.md", document)
+    info = connector.file_scanner._parse_agent_definition(".claude/agents/reviewer.md", document)
     assert info["name"] == "reviewer" and info["tools"] == "Bash"
 
 
@@ -868,7 +876,7 @@ class _Stalls:
 def test_pattern_timeout_is_an_explicit_coverage_gap(
     tmp_path, index, monkeypatch, attribute, path, text, error
 ):
-    monkeypatch.setattr(filesystem_module, attribute, _Stalls(error))
+    monkeypatch.setattr(file_scan_module, attribute, _Stalls(error))
     target = tmp_path / path
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text)
@@ -1235,7 +1243,7 @@ def test_symbolic_link_checks_stop_at_the_listing_deadline(tmp_path, index, monk
         links.mkdir()
         for number in range(300):
             os.symlink("../pkg", links / f"alias{number}")
-    original = FilesystemConnector._link_target_is_scanned
+    original = TreeWalker._link_target_is_scanned
     checks: list[str] = []
 
     def slow(self, rel, target, root, walk=None):
@@ -1248,8 +1256,8 @@ def test_symbolic_link_checks_stop_at_the_listing_deadline(tmp_path, index, monk
     # depend on how busy the machine is.
     deadline = time.monotonic() + 3600.0
     connector_clock = types.SimpleNamespace(monotonic=lambda: deadline - 3.0 + 0.01 * len(checks))
-    monkeypatch.setattr(FilesystemConnector, "_link_target_is_scanned", slow)
-    monkeypatch.setattr(filesystem_module, "time", connector_clock)
+    monkeypatch.setattr(TreeWalker, "_link_target_is_scanned", slow)
+    monkeypatch.setattr(walk_module, "time", connector_clock)
     ctx = ConnectorContext(
         config={"path": str(tmp_path), "use_git": False, "scan_timeout": 0.5},
         index=index,
@@ -1364,7 +1372,7 @@ def test_agent_definition_frontmatter_keeps_multiline_metadata(tmp_path, index, 
     ctx = ConnectorContext(config={"path": str(tmp_path)}, index=index)
     connector = FilesystemConnector(ctx)
     text = newline.join(["--- \t", "", "name: reviewer", "tools:", "  - Read", "--- \t", "Body"])
-    info = connector._parse_agent_definition(".claude/agents/reviewer.md", text)
+    info = connector.file_scanner._parse_agent_definition(".claude/agents/reviewer.md", text)
     assert info["name"] == "reviewer" and info["tools"] == ["Read"]
 
 
@@ -1430,13 +1438,13 @@ def test_unread_settings_path_outside_the_root_drives_no_lookup_outside_it(tmp_p
     (repo / ".claude").mkdir(parents=True)
     (repo / ".claude" / "settings.json").write_text(json.dumps({"permissions": {"defaultMode": "default"}}))
     looked_up: list[str] = []
-    real = filesystem_module._project_root
+    real = walk_module._project_root
 
     def recording(root, path, *args, **kwargs):
         looked_up.append(path)
         return real(root, path, *args, **kwargs)
 
-    monkeypatch.setattr(filesystem_module, "_project_root", recording)
+    monkeypatch.setattr(walk_module, "_project_root", recording)
     ctx = ConnectorContext(config={"path": str(repo), "label": "repo", "use_git": False}, index=index)
     connector = FilesystemConnector(ctx)
     connector.unread_settings = [rel, ".claude/settings.local.json"]
@@ -1971,7 +1979,7 @@ def test_remote_code_connectors_forward_artifact_options(provider):
 
 def test_large_artifact_reserves_metadata_scan_time():
     connector = FilesystemConnector(ConnectorContext(config={"inspect_model_artifacts": True}))
-    assert connector._reserved_budget("model.gguf", Path("model.gguf"), 2**40, 10.0) == 2.0
+    assert connector.walker._reserved_budget("model.gguf", Path("model.gguf"), 2**40, 10.0) == 2.0
 
 
 _AGENT_SCRIPT = (

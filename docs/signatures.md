@@ -415,10 +415,18 @@ and tests, which call and test the products they detect.
   not a template such as `.env.example`) the name-shape rules apply only to token names (`API_KEY`,
   `ACCESS_TOKEN`, `CLIENT_SECRET`); a PASSWORD or CREDENTIAL value there
   (`POSTGRES_PASSWORD=TrustNoOneEverAgain`, also with blanks around `=`) cannot name a variable, unless every
-  word of it is label vocabulary, a function word or a word of the name and every number is the name's
-  (`KeycloakAdminPassword`; `PostgresProd2024Secure` is a password). A reference whose variable name is a key
-  pasted in the name's place (`process.env.<KEY>`, `os.environ.<KEY>`; `redaction_rules.pasted_key_name`, the
-  test that withholds the read from evidence) reports that name. When operators follow such a reference instead of a value end (`;`, `,`, `)`, `}`, `]`, an
+  word of it is label vocabulary, a qualifier (`only`, `for`, `not`) or a word of the name and every number is
+  the name's (`KeycloakAdminPassword` under `KEYCLOAK_ADMIN_PASSWORD`; `PostgresProd2024Secure` is a
+  password), or it is an instruction whose every word is in the closed vocabulary of instructions
+  (`change_me_to_a_strong_password`). There `admin`, `user`, `strong`, `internal` and `commit` label nothing
+  and a sentence without an instruction word is a password (`MyStrongPassword`, `my_secret_password`). A
+  member read whose variable name is a key pasted in the name's place (`process.env.<KEY>`,
+  `import.meta.env.<KEY>`, `os.environ.<KEY>`, and `Environment.GetEnvironmentVariable("<KEY>")`;
+  `redaction_rules.pasted_key_name`, the test that withholds the read from evidence) reports that name; a
+  call or subscript read (`os.getenv("<KEY>")`, `process.env["<KEY>"]`) is withheld from evidence by the same
+  test but gives no match. A pasted name counts toward the five-per-signal cap only when it looks like an
+  opaque key (`redaction_rules.opaque_key`: letters and digits alternate in a long run); any other one is
+  returned without counting, at most five per signal. When operators follow such a reference instead of a value end (`;`, `,`, `)`, `}`, `]`, an
   empty line before an operator), past any call, subscript, optional or non-null chain, generic call's type
   arguments or TypeScript cast on it (`GetEnvironmentVariable("X") ??`, `process.env.X?.trim() ||`,
   `configService.get<string>("X") ??`, `GetValue<string>("X") ??`, `as string ||`), through
@@ -431,6 +439,17 @@ and tests, which call and test the products they detect.
   at the first blank, so `apiKey = process.env.OPENAI_API_KEY || "<key>"` matches only the read and the
   fallback is the credential (`Match.extra["credential"]`, which the placeholder test judges). A literal
   passed to a call there (`?? getSecret("<path>")`, `?: error("X is not set")`) is not a fallback operand.
+  The default argument a settings read is given is read the same way
+  (`GetValue<string>("OpenAI:ApiKey", "<key>")`, `configService.get('OPENAI_API_KEY', '<key>')`,
+  `settings.get("OPENAI_API_KEY", default="<key>")`, `GetValue<string>("OpenAI:ApiKey", defaultValue:
+  "<key>")`, `Optional.ofNullable(System.getenv("OPENAI_API_KEY")).orElse("<key>")`). Under a
+  password's, passphrase's or secret's name (the lower-cased name ends in `password`, `passphrase` or
+  `secret`), after an environment read (`process.env`, `os.environ`, `getenv`, `ENV.fetch`, `env()`,
+  `GetEnvironmentVariable`; `_environment_read`), a fallback or default of any shape is the credential;
+  after any other read (a message catalog's `.get("forgot_password", "Forgot password?")`, ConfigParser's
+  `.get("db", "password")`) it is judged as a key is. Either way it is not the credential when evidence would keep it
+  (`redaction_rules.password_literal`: a variable's name, a path, a URL, a placeholder, fewer than six
+  characters) or it is a label, so `dbPassword: process.env.DB_PASSWORD?.trim() || "<password>"` is reported.
   Three or more letter words joined by `-` or `_`, or by `.` as a password outside source code
   (a dotted slug's words each lower case, Capitalized or upper case; in source code a dotted string of words
   names a package, a key or a namespace, such as `net.openid.appauth.state`), are a label, not a high-entropy

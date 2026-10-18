@@ -31,29 +31,57 @@ Expect these exit-code changes against the earlier October 17 behaviour:
 - **`profile: ci` declares no file left unread for credentials.** While
   `scan_secrets` is on (the default), a file over `max_file_size` under a
   test, fixture, documentation, example or generated path (a recorded
-  cassette, a large JSON fixture) and a notebook whose saved outputs were not
-  read are no longer declared: `declared_omissions` falls by their number,
+  cassette, a large JSON fixture), a file there that could not be read, and
+  a notebook whose saved outputs were not read are no longer declared, and an
+  undecodable file there is read for credentials before it is declared: `declared_omissions` falls by their number,
   and each gap is charged to the coverage budget (listed in
   `stats[].coverage` and counted in `summary.tolerated_gaps` when tolerated)
-  as without the profile, so a ci scan of a small repository holding one, or
-  of one holding many, now exits 3. Raise `max_file_size` for such files, or
+  as without the profile, at a whole entry under a test path too (not a
+  quarter, since no byte of it was read for credentials), so a ci or default
+  scan of a small repository holding one, or of one holding a few, now exits
+  3. Raise `max_file_size` for such files, or
   set `scan_secrets: false` on a gate that does not need credential findings.
-- **A link or special file named like configuration fails closed.** A
-  dangling symbolic link or one to a single file, a FIFO, socket or device
-  whose own name is configuration the scanner reads (`.mcp.json`,
-  `.claude/settings.json`, `CLAUDE.md`, a dependency manifest, a shared
-  client name such as `config.json` or `settings.json`) now makes the scan
-  incomplete (exit 3) at once, as an oversize copy of the file already did,
-  instead of costing one entry of the budget; `tests/.mcp.json` and
-  `tests/CLAUDE.md` included, since they are not discounted test code.
-  Under discounted test code (`tests/fixtures/package.json`) it still costs
-  one entry. This includes an alias inside the tree whose target the walk
-  scans under another name, project or test classification, since the
-  alias's own name may be what makes a client read it as configuration
-  (`.mcp.json` linked to `notes/servers.txt`): expect exit 3 for a monorepo
-  that links `apps/web/.env` or a `Dockerfile` to a shared copy. Review such
-  a link and list its path in `exclude` (`exclude: ["apps/web/.env"]`; an
-  entry without `/` or `*` names directories) to keep scanning without it.
+- **A link or special file named like agent configuration fails closed.**
+  A dangling symbolic link or one to a single file, a FIFO, socket or device
+  whose own name makes it agent configuration now makes the scan incomplete
+  (exit 3) at once, as an oversize copy of the file does, instead of costing
+  one entry of the budget: a dedicated MCP name in any letter case
+  (`.mcp.json`, `.MCP.JSON`, `Claude_Desktop_Config.json`), a coding-agent
+  instruction, rule or settings file (`CLAUDE.md`, `.claude/settings.json`),
+  a file a coding-agent or MCP file signature selects, directory-wide globs
+  included (`.roo/rules/deploy.md`, `.continue/mcpServers/x.yaml`,
+  `.kiro/steering/x.md`), and an agent manifest or card;
+  `tests/.mcp.json` and `tests/CLAUDE.md` included, since they are not
+  discounted test code. This includes an alias inside the tree whose target
+  the walk scans under another name, project or test classification, since
+  the alias's own name may be what makes a client read it as configuration
+  (`.mcp.json` linked to `notes/servers.txt`). Review such a link and list
+  its path in `exclude` (`exclude: ["apps/web/.mcp.json"]`; an entry without
+  `/` or `*` names directories) to keep scanning without it. A manifest or
+  build file (`Dockerfile`, `package.json`, `requirements.txt`, `.env`,
+  `*.tf`, `docker-compose.yml`) or a shared client name outside its client's
+  directory (`config.json`, `settings.json`, but not `.vscode/settings.json`)
+  linked, inside the tree or out, or replaced by a FIFO
+  still costs one entry, so a monorepo that links `apps/web/.env` or a
+  `Dockerfile` to a shared copy stays complete; an image or video beside
+  agent rules (`.cursor/rules/demo.mp4`) over `max_file_size` costs one
+  entry too. An oversize `.env` file exits 3 while `scan_secrets` is on,
+  and so does an oversize JSON,
+  TOML or YAML file whose bytes name an MCP server table key anywhere in its
+  first 128 MiB (or that is larger), as an oversize `.mcp.json` does; an
+  oversize data export that names none still costs one entry.
+- **An alias of a scanned directory costs one entry.** A directory link
+  whose target the walk scans whole inside the root (`lib_alias` to `lib`,
+  `docs/_static` to `../assets`, a monorepo's `packages/web/shared` to
+  `libs/shared`) is one entry of the coverage budget instead of an immediate
+  exit 3, with the diagnostic `an alias of a scanned directory; paths below it
+  not assessed`. A link to a directory outside the root, into an excluded or
+  unselected directory, or that reads test code as product code still exits
+  3, and so does one whose path names an agent's configuration directory
+  (`.claude`, `.cursor`, `.vscode`, `.roo`, `.github` and the others the
+  coding-agent and MCP signatures name), which `profile: ci` now never
+  declares under a test or documentation path (`tests/e2e/.claude`,
+  `docs/.vscode`).
 - **Gap weights follow `include_tests`.** With `include_tests: true` a gap
   under a test path weighs a whole entry in the coverage budget instead of a
   quarter, so fewer such gaps are tolerated. Without it, gaps under
@@ -66,9 +94,11 @@ Expect these exit-code changes against the earlier October 17 behaviour:
 - **Discounted test-code gaps are budgeted.** A malformed or binary fixture
   under a test path (with `include_tests` off) is charged to the coverage
   budget and listed in `stats[].coverage.details`, instead of a warning
-  nothing counted. A malformed fixture costs a quarter of an entry and a
-  binary one a whole entry, so a root tolerates malformed fixtures up to
-  about 8% of its entries but binary ones only up to about 2%: a 200-file
+  nothing counted. Each gap a malformed fixture records costs a quarter of
+  an entry (invalid XML records one, a structured file with duplicate keys
+  or non-finite numbers two, such a `package.json` three) and a binary
+  fixture a whole entry, so a root tolerates malformed fixtures up to about
+  8%, 4% or under 3% of its entries but binary ones only up to about 2%: a 200-file
   service with four binary fixtures and one dangling certificate link,
   complete before, exits 3, and a tiny tree (a lone fixture) exits 3 on one,
   as it does for any other gap.
@@ -85,6 +115,11 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   incomplete first; consumers that pin `stats[].coverage` keys must accept
   the three (a single root's summary has none, and older reports load).
   Cached and uncached runs agree.
+- **Published gaps name their root.** Each entry of
+  `stats[].coverage.details` from `code.filesystem`, `code.github` and
+  `code.gitlab` gains `part`, the scan root's label or the repository it was
+  recorded in. Consumers that pin the keys of a published gap must accept it;
+  reports without it still merge, compare and load.
 - **`summary.tolerated_gaps`.** Reports gain this count of unread entries
   the coverage budget tolerated, including those a root within its own
   budget tolerated while another root went over; the table banner and the
@@ -218,8 +253,20 @@ across this change reports findings as resolved or new that are neither.
   set")`, is no fallback; a placeholder fallback that reads as a token, such
   as `?? "your-api-key-here-Abc123XyZ"`, is `example-credential` evidence,
   and one of words and an ellipsis, such as `?? "sk-ant-api03-..."`, is
-  neither reported nor evidence), a key pasted as an environment variable's
-  name (`process.env.<KEY>`, the name evidence withholds) and generated
+  neither reported nor evidence), the default a settings read is given when
+  it looks like a key (`GetValue<string>("OpenAI:ApiKey", "<key>")`,
+  `configService.get("OPENAI_API_KEY", "<key>")`, `.orElse("<key>")`), a fallback or
+  default of any shape under a password's, passphrase's or secret's name after an
+  environment read (`dbPassword: process.env.DB_PASSWORD?.trim() || "<password>"`;
+  after any other read, such as a message catalog's or ConfigParser's, it must look
+  like a key) unless
+  evidence would keep it (a variable's name, a path, a URL, a placeholder,
+  fewer than six characters) or it is a label, a key pasted as an
+  environment variable's name where the generic rule reads the read itself
+  (a member read such as `process.env.<KEY>` or `os.environ.<KEY>`, or
+  `Environment.GetEnvironmentVariable("<KEY>")`; a call or subscript read
+  such as `os.getenv("<KEY>")` or `process.env["<KEY>"]` is withheld from
+  evidence but not reported) and generated
   passphrases (`DB_PASSWORD=snout-fiber-thump-bloom-gravel`, also in upper
   case, and joined by `.` as a password outside source code; a label of
   words carries credential, placeholder, development or filler vocabulary or
@@ -228,14 +275,28 @@ across this change reports findings as resolved or new that are neither.
   word, or two function words, such as `change-me-please` and
   `must-be-set-at-runtime`, while one common word such as `default`,
   `passed` or a two-letter word of the name such as `db` alone does not make
-  a label) are reported as before. References, documentation placeholders,
+  a label) are reported as before. A sentence (a pronoun, article,
+  preposition or the copula among its words) is a label only with an
+  instruction word or a word of the label vocabulary and with every word in
+  that closed vocabulary (`change_me_to_a_strong_password` and
+  `DoNotCommitThisOne` are labels; `fly-me-to-the-moon` and
+  `my-secret-garden-gate` are reported), and a possessive followed by words
+  (`ton-jardin-secret`) is a label only when the placeholder test reads it
+  as a template. References, documentation placeholders,
   short `sk-` look-alikes, a second pattern matching a credential already
-  counted and a credential repeated on another line (one password in each
-  service of a compose file) take no place in the five-per-format quota, so
+  counted, a further line of a credential already counted (one password in
+  each service of a compose file) and a pasted variable name that does not
+  look like an opaque key (letters and digits alternating in a long run;
+  at most five such names per format are reported) take no place in the
+  five-per-format quota, so
   a real key after any number of them is reported (the quota used to drop
-  it), a `.env.example` of sample keys no longer exits 3, and a finding's
-  `count` counts each credential of a format once: a repeated one is
-  reported at its first line only. A digit-free
+  it), a `.env.example` of sample keys no longer exits 3, and every
+  credential finding's `count` counts the distinct credentials of its
+  evidence, a credential matched by several patterns or on several lines
+  once; that includes the `.env` provider-key finding, whose `count` counted
+  each match before (one key on six lines counted six and now counts one). The evidence
+  of a repeated credential lists up to five of its lines, and in a `.env*`
+  file every line whose value holds a provider-format key. A digit-free
   value is held to the mixed-case rule only when it is built like a name
   (snake_case, dotted or camelCase), so a single-word passphrase or an AWS
   key id whose body has no digit is reported. In an env or credential file
@@ -244,9 +305,15 @@ across this change reports findings as resolved or new that are neither.
   CREDENTIAL value there (`POSTGRES_PASSWORD=TrustNoOneEverAgain`,
   `POSTGRES_PASSWORD = PostgresProd2024Secure` with blanks around `=` as
   python-dotenv and Node's dotenv read it) is reported as before, unless
-  every word of it is label vocabulary, a function word or a word of the
-  name and every number is the name's (`KeycloakAdminPassword`,
-  `svc1_local_dev_password` under `SVC1_DB_PASSWORD`). Env templates, Helm
+  every word of it is label vocabulary, a qualifier (`only`, `for`, `not`)
+  or a word of the name and every number is the name's
+  (`KeycloakAdminPassword` under `KEYCLOAK_ADMIN_PASSWORD`,
+  `svc1_local_dev_password` under `SVC1_DB_PASSWORD`), or it is an
+  instruction whose every word is in the closed vocabulary of instructions
+  (`change_me_to_a_strong_password`). There `admin`, `user`, `strong`,
+  `internal` and `commit` label nothing, and a sentence without an
+  instruction word is a password (`MyStrongPassword`, `my_secret_password`,
+  `InternalUserPassword`). Env templates, Helm
   values, compose files, workflows and documentation keep the name rules,
   so a single-case snake_case password with digits there
   (`admin_password_123`) reads as a setting's name and is not reported.
@@ -260,13 +327,19 @@ across this change reports findings as resolved or new that are neither.
   of the expression). After that end, on a line that joins a credential name
   to a value (`:`, `=`, `=>`) or gives a credential-named callee its
   arguments (`setApiKey(...)`), each string-literal or comment token that
-  looks like an opaque key is withheld, and so is every literal of a
-  password's value up to the line's next entry, whatever its shape
-  (`dbPassword: process.env.DB_PASSWORD?.trim() || "<password>"`). A later
+  looks like an opaque key is withheld, and so, under each password's or
+  secret's name on the line (not only its first credential name), is every
+  literal of its value up to the next entry of its own mapping, object or
+  argument list, whatever its shape (`dbPassword:
+  process.env.DB_PASSWORD?.trim() || "<password>"`, `clientSecret: ... ||
+  "<secret>"`, a keyword argument of the read such as `fallback="..."` or
+  `default_value="..."` included). Spans withheld for one value merge, so a
+  literal whose start looks like a token is withheld to its end. A later
   line that starts with a fallback operator, or follows a line that ends
   with one, and a block comment that runs past the line are read the same
-  way. What can still remain after such a read (a word-like literal under a
-  name that is no password's, a password literal of fewer than six
+  way. What can still remain after such a read (a literal under a name that
+  is no password's or secret's that does not look like an opaque key,
+  punctuated or not, a password literal of fewer than six
   characters or that reads as an upper-case variable name, a literal on a
   later line that no operator joins) is listed under
   [what can remain](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-can-remain).
@@ -304,7 +377,9 @@ across this change reports findings as resolved or new that are neither.
   a later line before a `password`, `passwd` or `account` in the entry's
   eight-line region, an indented or trailing comment in a string with `\n`
   escapes, where a comment ends at the next one, a netrc file's own
-  comment with a path in it, which runs to the end of its line, and an
+  comment with a path in it, which runs to the end of its line, a Windows
+  path whose directory is a netrc keyword such as `\\nas\user\fred`
+  included, and an
   entry spread over adjacent string literals;
   SECURITY.md lists the forms that can remain), so excerpts that showed
   them change, and so does a prose word after `default password`, or after

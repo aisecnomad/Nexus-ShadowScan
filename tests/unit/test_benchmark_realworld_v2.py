@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -100,6 +101,12 @@ def test_timeout_kills_helpers_the_tool_started(tmp_path: Path) -> None:
     assert code == 124, "a timeout is an error code, never a negative"
     assert "timeout" in err
     helper = int(pidfile.read_text(encoding="utf-8"))
+    # SIGKILL to the group is delivered at once but takes effect when the helper is
+    # next scheduled; on a loaded runner that can trail the parent's reaping by a
+    # moment, so the check waits a bounded time for the helper to be gone.
+    deadline = time.monotonic() + 5.0
+    while _alive(helper) and time.monotonic() < deadline:
+        time.sleep(0.05)
     assert not _alive(helper), "the helper outlived its timed-out parent"
 
 

@@ -164,13 +164,15 @@ shadowscan jwt --file tokens.txt --jwks-url https://login.example.com/.well-know
 
 `agent-card.yaml`, `examples/` and the sample exports under `tests/fixtures/`
 come from a repository checkout; the wheel does not ship them. Scanning the
-ShadowScan checkout itself reports an incomplete scan (exit 3): a few
-redaction test files are built to exceed the sanitizer's own safety limits,
-and a finding the sanitizer cannot bound is withheld rather than published
-unredacted — that is unbounded, so no budget applies to it. Its handful of
-unreadable entries, by contrast, stay within the coverage budget. In a
-checkout, `shadowscan code tests/fixtures/sample_repo --inventory agent-card.yaml`
-completes in seconds.
+ShadowScan checkout itself with `shadowscan code .` reports an incomplete scan
+(exit 3): a few redaction test files are built to exceed the sanitizer's own
+safety limits, and a finding the sanitizer cannot bound is withheld rather than
+published unredacted — that is unbounded, so no budget applies to it. Its handful
+of unreadable entries, by contrast, stay within the coverage budget. In a
+checkout, `make self-scan` runs `examples/shadowscan.self-scan.yaml`, which
+excludes those paths, each with a documented reason, and completes with exit 0;
+`shadowscan code tests/fixtures/sample_repo --inventory agent-card.yaml`
+scans the bundled sample repository in seconds.
 
 See the [quick start guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/getting-started/quickstart.md)
 for walkthroughs of each surface and the
@@ -656,7 +658,7 @@ directory of the revision you run is the source of truth.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 make install          # hash-locked runtime, cloud, dev and docs toolchain
-make check            # lint, format, types, signatures, mappings, secrets, audit, coverage, connector floor, evaluation
+make check            # lint, format, types, complexity, signatures, mappings, secrets, self-scan, audit, coverage, connector floor, evaluation
 ```
 
 <details>
@@ -669,6 +671,7 @@ make check            # lint, format, types, signatures, mappings, secrets, audi
 | `make lint` | Run ruff linter |
 | `make format` | Run ruff formatter |
 | `make typecheck` | Run mypy type checker |
+| `make complexity` | Fail when a function or module grows past `tools/complexity_baseline.json` |
 | `make test` | Test suite with coverage (80% floor) |
 | `make test-fast` | Tests without coverage, stop at first failure |
 | `make test-parallel` | Tests in parallel with pytest-xdist |
@@ -676,6 +679,7 @@ make check            # lint, format, types, signatures, mappings, secrets, audi
 | `make signatures` | Validate all signature schemas |
 | `make mappings` | Validate mapping catalogs |
 | `make secrets` | Hardcoded credential gate |
+| `make self-scan` | Scan this checkout with ShadowScan itself; an incomplete scan fails |
 | `make audit` | pip-audit on environment and all lock files |
 | `make evaluate` | Run bundled regression corpora |
 | `make check` | All quality gates combined |

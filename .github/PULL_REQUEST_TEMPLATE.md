@@ -15,11 +15,12 @@
 
 ### Required for all changes
 
-Shortcut: `make check` runs the lint, format, type, test, coverage, evaluation,
-audit, validator and secrets gates below in one command.
+Shortcut: `make check` runs the lint, format, type, complexity, test, coverage, evaluation,
+audit, validator, secrets and self-scan gates below in one command.
 
 - [ ] `make lint` and `make format-check` pass
 - [ ] `make typecheck` passes
+- [ ] `make complexity` passes (split a function or module that grew; commit a lower baseline with `--update` after an improvement; explain any `--rebaseline`)
 - [ ] `make test` passes (full suite, 80% aggregate coverage)
 - [ ] `make coverage-gate` passes after that coverage run (per-connector floor)
 - [ ] `make evaluate` passes (all bundled corpora; explain any intended corpus change)
@@ -27,6 +28,7 @@ audit, validator and secrets gates below in one command.
 - [ ] `python -m shadowscan.signatures.validate` passes
 - [ ] `python -m shadowscan.mappings.validate` passes
 - [ ] `make secrets` finds no hardcoded credentials
+- [ ] `make self-scan` completes (add a documented exclusion to `examples/shadowscan.self-scan.yaml` only for a file that must trip a scanner limit)
 - [ ] `make policy` passes (when `.github/`, a top-level document or a docs page changed)
 - [ ] `make docs` passes (when `docs/`, `mkdocs.yml` or a document the site includes changed)
 - [ ] Every commit carries a `Signed-off-by` trailer (`git commit -s`; see the DCO in `CONTRIBUTING.md`)

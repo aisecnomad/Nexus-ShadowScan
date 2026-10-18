@@ -126,6 +126,31 @@ def test_record_prefix_queries_do_linear_character_work(operation, unit):
     assert large <= small * 5, (small, large)
 
 
+@pytest.mark.parametrize(
+    "unit",
+    [
+        # Every password entry of a long line is read, nested in the one before
+        # it, beside it or after an unmatched closer; each entry once.
+        "password: f('abcdefgh', ",
+        "{ password: 'abcdefgh', ",
+        "password: g({ fallback: 'abcdefgh' }, ",
+        ") password: 'abcdefgh' ",
+        "x = { apiKey: 'a', password: f('b'",
+    ],
+)
+def test_the_password_values_of_a_long_line_are_read_in_linear_time(unit):
+    def best(source: str) -> float:
+        fastest = float("inf")
+        for _ in range(3):
+            started = time.perf_counter()
+            redaction._redact_line_tails(source)
+            fastest = min(fastest, time.perf_counter() - started)
+        return fastest
+
+    small, large = best(unit * 1000), best(unit * 4000)
+    assert large < max(small, 0.02) * 10, (small, large)
+
+
 # The pattern that decided whether an unquoted value was made of words.
 _WORDY = re.compile(r"(?:[A-Z][a-z]+|[a-z]{3,}|[A-Z]{2,}|[0-9]+|_)+")
 

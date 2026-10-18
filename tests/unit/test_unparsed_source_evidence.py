@@ -9,7 +9,7 @@ import pytest
 from click.testing import CliRunner
 
 from shadowscan.cli import main
-from shadowscan.connectors.code import filesystem
+from shadowscan.connectors.code import file_scan
 from shadowscan.connectors.code.source_semantics import SourceBudgetExceeded, SourceNotParsed
 from shadowscan.models import Kind
 
@@ -69,7 +69,7 @@ def test_parser_failure_cannot_restore_semantics_through_another_pass(
     def unavailable(*args, **kwargs):
         raise SourceNotParsed("source did not parse")
 
-    monkeypatch.setattr(filesystem, "bound_source_matches", unavailable)
+    monkeypatch.setattr(file_scan, "bound_source_matches", unavailable)
     (tmp_path / "app.py").write_text(source)
     findings, ctx = run_connector(
         "code.filesystem", path=str(tmp_path), use_git=False, agent_granularity=granularity
@@ -134,7 +134,7 @@ def test_notebook_parse_gap_survives_a_later_budget_failure(
     def exhausted(*args, **kwargs):
         raise SourceBudgetExceeded("source binding AST limit exceeded")
 
-    monkeypatch.setattr(filesystem, "bound_source_matches", exhausted)
+    monkeypatch.setattr(file_scan, "bound_source_matches", exhausted)
     (tmp_path / directory).mkdir()
     (tmp_path / directory / "test_agent.ipynb").write_text(_notebook('print "legacy"\n', AGENT))
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, **options)

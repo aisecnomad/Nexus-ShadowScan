@@ -14,6 +14,7 @@ These run in CI and in `make check`; see
 | Module | What it does | Run it with |
 |---|---|---|
 | [`check_secrets.py`](check_secrets.py) | Fails on credential-shaped values in tracked files; narrow exceptions live in [`secret_allowlist.json`](secret_allowlist.json), each bound to a path and a value digest | `make secrets` |
+| [`complexity_gate.py`](complexity_gate.py) | Fails when a function above ruff's `C901` limit of 20 or a `shadowscan` module above 2,000 lines grows past [`complexity_baseline.json`](complexity_baseline.json), or when that baseline allows more than the code has; `--update` lowers it, `--rebaseline` records a reviewed rise | `make complexity` |
 | [`coverage_gate.py`](coverage_gate.py) | Fails when aggregate coverage hides a built-in connector module below its own floor | `make coverage-gate` |
 | [`complexity_gate.py`](complexity_gate.py) | Fails when a function is new above cyclomatic complexity 15 or above its allowance in [`complexity_baseline.json`](complexity_baseline.json), keyed by file and qualified name; `--update` records only decreases unless `--allow-increase` is passed too | `make complexity` |
 | [`test_annotations.py`](test_annotations.py) | Run by CI after a failed test step: turns the pytest JUnit reports into one error annotation per failing test (node id, file, line, exception type and the redacted first line of the message), so the checks API names each failing test | `python -m tools.test_annotations "$RUNNER_TEMP"/junit-*.xml` |
@@ -22,6 +23,17 @@ These run in CI and in `make check`; see
 | [`readme_visuals.py`](readme_visuals.py) | Renders the README banner and the architecture diagrams under [`docs/assets/`](../docs/assets/) as SVG from the surfaces, connectors and report formats | `make readme-visuals` |
 | [`mapping_reference.py`](mapping_reference.py) | Renders [`docs/concepts/mappings-reference.md`](../docs/concepts/mappings-reference.md) from the mapping catalogs | `make mapping-reference` |
 | [`evaluation/`](evaluation/) | The labeled detection regression corpora and their scorer | `make evaluate`; see [docs/evaluation.md](../docs/evaluation.md) |
+
+## Fuzzing
+
+Assurance tooling that runs on a schedule and on demand, not as a merge gate. It looks for inputs that
+break a stated guarantee; a clean run does not show that none exist. See
+[docs/operations/fuzzing.md](../docs/operations/fuzzing.md) for what each target checks and what it
+leaves out.
+
+| Package | What it does | Run it with |
+|---|---|---|
+| [`fuzz/`](fuzz/) | Atheris targets for the redaction and source-lexing code, the seed corpora they start from (built in code, so no credential-shaped file is stored) and the checks that Hypothesis tests in the ordinary suite share | `make fuzz`, or `python -m tools.fuzz TARGET`; needs [`requirements-fuzz.lock`](../requirements-fuzz.lock) |
 
 ## Benchmarks
 

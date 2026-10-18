@@ -20,6 +20,7 @@ import pytest
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.base import ConnectorError
 from shadowscan.connectors.code.filesystem import FilesystemConnector
+from shadowscan.connectors.code.project_findings import ProjectFindings
 from shadowscan.models import Finding, Kind
 from shadowscan.signatures import SignatureIndex
 
@@ -63,7 +64,7 @@ def test_connector_error_from_secret_finding_ends_the_scan(
     # Regression: the credential emit loop caught every Exception, so a
     # cancellation raised while building a secret finding became a per-file
     # "credential analysis incomplete" error and the scan looked finished.
-    monkeypatch.setattr(FilesystemConnector, "_secret_finding", _raiser(ConnectorError(CANCELLED)))
+    monkeypatch.setattr(ProjectFindings, "_secret_finding", _raiser(ConnectorError(CANCELLED)))
     _, ctx = _run(index, fixtures / "sample_repo")
     assert ctx.stats.skipped and ctx.stats.skip_reason == CANCELLED
     assert ctx.stats.incomplete
@@ -81,7 +82,7 @@ def test_emit_phase_connector_error_propagates(
     fixtures: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(FilesystemConnector, method, _raiser(ConnectorError(CANCELLED)))
+    monkeypatch.setattr(ProjectFindings, method, _raiser(ConnectorError(CANCELLED)))
     _, ctx = _run(index, fixtures / "sample_repo")
     assert ctx.stats.skipped and ctx.stats.skip_reason == CANCELLED
     assert ctx.stats.errors == [CANCELLED]
@@ -96,7 +97,7 @@ def test_emit_phase_failure_is_isolated(
 ) -> None:
     resource_types, message = EMITTERS[method]
     baseline, _ = _run(index, fixtures / "sample_repo")
-    monkeypatch.setattr(FilesystemConnector, method, _raiser(RuntimeError("synthetic")))
+    monkeypatch.setattr(ProjectFindings, method, _raiser(RuntimeError("synthetic")))
     findings, ctx = _run(index, fixtures / "sample_repo")
     assert not ctx.stats.skipped and ctx.stats.incomplete
     failed = [error for error in ctx.stats.errors if message in error]
@@ -146,7 +147,7 @@ def test_cancellation_stops_the_tree_walk(tmp_path, index):
     ctx = ConnectorContext(config={"path": str(tmp_path)}, index=index, cancelled=cancelled)
     connector = FilesystemConnector(ctx)
     walked = 0
-    original = connector._iter_entries
+    original = connector.walker._iter_entries
 
     def counting(root):
         nonlocal walked
@@ -156,7 +157,7 @@ def test_cancellation_stops_the_tree_walk(tmp_path, index):
                 cancelled.set()
             yield item
 
-    connector._iter_entries = counting  # type: ignore[method-assign]
+    connector.walker._iter_entries = counting  # type: ignore[method-assign]
     assert connector.run() == []
     assert walked == 10 and ctx.stats is not None and ctx.stats.skipped
     assert len(ctx.stats.errors) == 1 and "deadline" in ctx.stats.errors[0]
@@ -202,7 +203,7 @@ def test_emit_phase_failures_are_isolated_per_finding(tmp_path, index, monkeypat
     def boom(self, *args, **kwargs):
         raise RuntimeError("synthetic")
 
-    monkeypatch.setattr(FilesystemConnector, "_secret_finding", boom)
+    monkeypatch.setattr(ProjectFindings, "_secret_finding", boom)
     findings, ctx = _run_configured(index, tmp_path)
     assert any("framework.crewai" in f.frameworks for f in findings)
     assert any("credential analysis incomplete (RuntimeError)" in error for error in ctx.stats.errors)
@@ -215,7 +216,7 @@ def test_project_isolation_error_names_the_project(tmp_path, index, monkeypatch)
         raise RuntimeError("synthetic")
         yield  # pragma: no cover - generator shape
 
-    monkeypatch.setattr(FilesystemConnector, "_emit_project", boom)
+    monkeypatch.setattr(ProjectFindings, "_emit_project", boom)
     findings, ctx = _run_configured(index, tmp_path)
     assert findings == []
     assert any("project analysis incomplete (RuntimeError)" in error for error in ctx.stats.errors)
@@ -224,23 +225,23 @@ def test_project_isolation_error_names_the_project(tmp_path, index, monkeypatch)
 def test_the_scan_root_descriptor_is_closed_after_emit_even_when_emit_fails(tmp_path, index, monkeypatch):
     import os
 
-    from shadowscan.connectors.code import filesystem as filesystem_module
+    from shadowscan.connectors.code import walk as walk_module
 
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
     opened: list[int] = []
-    original = filesystem_module.open_confined_directory
+    original = walk_module.open_confined_directory
 
     def recording(base):
         opened.append(fd := original(base))
         return fd
 
-    monkeypatch.setattr(filesystem_module, "open_confined_directory", recording)
+    monkeypatch.setattr(walk_module, "open_confined_directory", recording)
 
     def boom(self, *args, **kwargs):
         raise RuntimeError("synthetic")
         yield  # pragma: no cover - generator shape
 
-    monkeypatch.setattr(FilesystemConnector, "_emit_project", boom)
+    monkeypatch.setattr(ProjectFindings, "_emit_project", boom)
     _run_configured(index, tmp_path)
     assert len(opened) == 1
     with pytest.raises(OSError):
