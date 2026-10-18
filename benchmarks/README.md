@@ -22,6 +22,13 @@ evidence and for the bundled regression corpora that `make evaluate` runs.
 [`shadowbench/`](shadowbench/README.md) explains how ShadowBench's two tracks
 differ.
 
+The separate [ShadowBench-450 archive](shadowbench-450/README.md) preserves
+**unverified author-supplied adapter counts**. Its claimed 450 fixtures,
+labels, adapter source and per-case predictions were not supplied. It is not
+a runnable benchmark or evidence of product performance. Rankings, grades
+and recommendations have been withdrawn; only arithmetic and document
+consistency can be checked. Do not compare it with the benchmark results above.
+
 Only the code-surface discovery benchmark runs in automation: the weekly
 [`benchmark.yml`](../.github/workflows/benchmark.yml) workflow runs ShadowScan
 alone on the pinned corpus and fails on a regression against the newest
