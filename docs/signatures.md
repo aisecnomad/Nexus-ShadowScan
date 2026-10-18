@@ -149,10 +149,12 @@ own signal; every signature with one must also declare an import, dependency or
 specific code signal.
 
 `ambiguous: true` on a `name` signal marks product names that also describe
-unrelated applications. The Google Gemini identity signature uses this rule:
-its name matches remain possible-product hints until a non-name signal for the
-same product corroborates them. A second name, publisher or description is not
-independent evidence. Uncorroborated hints do not establish the signature's
+unrelated applications. The Google Gemini identity signature uses this rule.
+Identity and SaaS application assessments apply the same rule to every name
+signal, including custom packs: mutable names, publishers and descriptions cannot
+establish a vendor by themselves. A non-name signal for the same product must
+corroborate it. A second name, publisher or description is not independent
+evidence. Uncorroborated hints do not establish the signature's
 vendor, tags, capabilities or agent indicator. Their evidence shares a confidence
 group, and ordinary inventory or permission evidence cannot promote an otherwise
 unattributed hint above possible confidence. Keep candidate signatures in

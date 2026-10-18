@@ -88,6 +88,104 @@ def agent_configs(findings) -> list[str]:
     return sorted(f.frameworks[0] for f in findings if f.kind == Kind.AGENT_CONFIG)
 
 
+@pytest.mark.parametrize("name", ["compose.yaml", "Dockerfile", "container.yaml", ".gitlab-ci.yml"])
+def test_container_products_do_not_establish_kubernetes(run_connector, tmp_path, name):
+    if name == "Dockerfile":
+        text = "FROM n8nio/n8n:1.0.0\n"
+    elif name == ".gitlab-ci.yml":
+        text = "image: n8nio/n8n:1.0.0\njob:\n  script: ['echo inert-fixture']\n"
+    else:
+        text = "services:\n  workflow:\n    image: n8nio/n8n:1.0.0\n"
+    write(tmp_path, name, text)
+    findings, stats = scan(run_connector, tmp_path)
+    assert not stats.incomplete and not stats.errors
+    assert not any("cloud.kubernetes-agent-workloads" in finding.frameworks for finding in findings)
+    if name != ".gitlab-ci.yml":
+        assert any(
+            finding.kind == Kind.INFRA and "platform.n8n" in finding.frameworks for finding in findings
+        )
+    else:
+        assert not any(finding.kind == Kind.INFRA for finding in findings)
+
+
+@pytest.mark.parametrize("fixture_name", ["compose.yaml", "deployment.yaml"])
+def test_container_fixture_retains_product_and_only_valid_orchestrator(
+    run_connector, tmp_path, fixtures, fixture_name
+):
+    text = (fixtures / "container_attribution" / fixture_name).read_text(encoding="utf-8")
+    write(tmp_path, fixture_name, text)
+    findings, stats = scan(run_connector, tmp_path)
+    assert not stats.incomplete and not stats.errors
+    infra = [finding for finding in findings if finding.kind == Kind.INFRA]
+    assert len(infra) == 1 and "platform.n8n" in infra[0].frameworks
+    assert ("cloud.kubernetes-agent-workloads" in infra[0].frameworks) == (fixture_name == "deployment.yaml")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "description: |\n  apiVersion: v1\n  kind: Pod\n  spec:\n    containers:\n      - image: n8nio/n8n:1\n",
+        "# apiVersion: v1\n# kind: Pod\n# image: n8nio/n8n:1\n",
+        "apiVersion: v1\nkind: Pod\nmetadata:\n  image: n8nio/n8n:1\nspec:\n  containers:\n    - image: nginx:1\n",
+        "apiVersion: v1\nkind: Pod\nspec:\n  containers:\n    - image: nginx:1\n---\nimage: n8nio/n8n:1\n",
+    ],
+)
+def test_unbound_yaml_images_cannot_create_kubernetes_attribution(run_connector, tmp_path, text):
+    write(tmp_path, "container.yaml", text)
+    findings, stats = scan(run_connector, tmp_path)
+    assert not stats.incomplete and not stats.errors
+    assert not any("cloud.kubernetes-agent-workloads" in finding.frameworks for finding in findings)
+
+
+@needs_symlinks
+def test_kubernetes_context_does_not_follow_manifest_symlinks(run_connector, tmp_path, fixtures):
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "deployment.yaml"
+    outside.write_text(
+        (fixtures / "container_attribution" / "deployment.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (root / "deployment.yaml").symlink_to(outside)
+    findings, stats = scan(run_connector, root)
+    assert stats.incomplete
+    assert not any("cloud.kubernetes-agent-workloads" in finding.frameworks for finding in findings)
+
+
+def test_inherited_image_overridden_by_plain_container_does_not_establish_kubernetes(run_connector, tmp_path):
+    write(
+        tmp_path,
+        "container.yaml",
+        "apiVersion: v1\nkind: Pod\nmetadata:\n  name: benign\n  annotations: &defaults\n"
+        "    image: n8nio/n8n:1\nspec:\n  containers:\n    - <<: *defaults\n"
+        "      name: benign\n      image: nginx:1\n",
+    )
+    findings, stats = scan(run_connector, tmp_path)
+    assert not stats.incomplete and not stats.errors
+    assert not any("cloud.kubernetes-agent-workloads" in finding.frameworks for finding in findings)
+
+
+@pytest.mark.parametrize("separate_document", [False, True])
+def test_quoted_template_annotations_preserve_kubernetes_attribution(
+    run_connector, tmp_path, separate_document
+):
+    annotation = "metadata:\n  annotations:\n    example.test/example: '{{ username }}'\n"
+    if separate_document:
+        annotation = "---\napiVersion: v1\nkind: ConfigMap\n" + annotation
+    write(
+        tmp_path,
+        "workload.yaml",
+        "apiVersion: v1\nkind: Pod\nspec:\n  containers:\n    - name: inference\n"
+        "      image: nvcr.io/nvidia/tritonserver:24.10-py3\n" + annotation,
+    )
+    findings, stats = scan(run_connector, tmp_path)
+    assert not stats.incomplete and not stats.errors
+    assert any(
+        finding.kind == Kind.INFRA and "cloud.kubernetes-agent-workloads" in finding.frameworks
+        for finding in findings
+    )
+
+
 # ---------------------------------------------------------------- instruction aliases
 @needs_symlinks
 @pytest.mark.parametrize("strict", [False, True])

@@ -30,7 +30,7 @@ from shadowscan.connectors.common import (
     max_pages_limit,
     name_matches,
 )
-from shadowscan.connectors.identity.common import assess_app
+from shadowscan.connectors.identity.common import app_product_or_hint, assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.redaction import sanitize_text_excerpt
@@ -530,7 +530,7 @@ class SalesforceConnector(BaseConnector):
             last_seen=(agg or {}).get("last") or app.get("LastModifiedDate"),
         )
         assess_app(self.index, f, name=name)
-        if not f.frameworks:
+        if not app_product_or_hint(f):
             return None
         users = (agg or {}).get("users") or set()
         f.add_evidence(

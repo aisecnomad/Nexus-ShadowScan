@@ -31,7 +31,7 @@ from shadowscan.connectors.common import (
     max_pages_limit,
     name_matches,
 )
-from shadowscan.connectors.identity.common import assess_app
+from shadowscan.connectors.identity.common import app_product_or_hint, assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -650,7 +650,7 @@ class ServiceNowConnector(BaseConnector):
             self._oauth_matching_limited = True
             self.ctx.warn("lowcode.servicenow: OAuth signature matching timed out; coverage incomplete")
             return None
-        if not f.frameworks:
+        if not app_product_or_hint(f):
             return None
         f.add_evidence(
             Evidence(

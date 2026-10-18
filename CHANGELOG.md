@@ -17,6 +17,7 @@ Notion bots, gateway routes, Kubernetes serving images, n8n HTTP model calls
 and ServiceNow flow names were adjusted), so a later ShadowScan run on that
 estate is in-sample.
 
+- App-name attribution requires corroboration; provider tool loops, local executable JavaScript tools and structural Kubernetes image attribution corrected (October 18)
 - SARIF notifications name their connector once; the docs show how one scan gives both the JSON ledger and SARIF (October 18)
 - The credential oracle's slow rows run with a budget that coverage tracing cannot exhaust (October 18)
 - Filesystem connector split into walk, file-scan and findings collaborators (ADR-005 steps 2-5; #259; October 18)

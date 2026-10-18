@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from shadowscan.connectors.code import provider_loops
@@ -407,3 +410,166 @@ def test_local_agents_sources_do_not_claim_the_external_sdk(tmp_path, run_connec
     assert not ctx.stats.incomplete, ctx.stats.errors
     assert not any(finding.kind == Kind.AGENT for finding in findings)
     assert not any("framework.openai-agents-sdk" in finding.frameworks for finding in findings)
+
+
+DISPATCH_LOOP = (
+    LOOP.replace("import json\n", "import json\nfrom worker.tools import dispatch, TOOL_SPECS\n")
+    .replace('tools=[{"type": "function", "function": {"name": "resolve_ticket"}}]', "tools=TOOL_SPECS")
+    .replace(
+        "resolve_ticket(**json.loads(call.function.arguments))",
+        "dispatch(call.function.name, json.loads(call.function.arguments))",
+    )
+)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        DISPATCH_LOOP,
+        DISPATCH_LOOP.replace(
+            "from worker.tools import dispatch, TOOL_SPECS",
+            "from worker.tools import run_tool as dispatch, TOOL_SPECS",
+        ),
+        DISPATCH_LOOP.replace(
+            "    message = response.choices[0].message",
+            "    choice = response.choices[0]\n    message = choice.message",
+        ),
+        DISPATCH_LOOP.replace(
+            "    message = response.choices[0].message", "    choice = response.choices[0]"
+        ).replace("message.tool_calls", "choice.message.tool_calls"),
+        DISPATCH_LOOP.replace(
+            "        result = dispatch(call.function.name, json.loads(call.function.arguments))",
+            "        name = call.function.name\n        args = json.loads(call.function.arguments)\n"
+            "        result = dispatch(name, args)",
+        ),
+    ],
+)
+def test_imported_selected_dispatcher_with_feedback_establishes_an_agent(tmp_path, run_connector, source):
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    agents = [finding for finding in findings if finding.kind == Kind.AGENT]
+    assert len(agents) == 1
+    assert {"tool-use", "autonomous"} <= set(agents[0].capabilities)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        DISPATCH_LOOP.replace("from worker.tools import dispatch, TOOL_SPECS\n", ""),
+        DISPATCH_LOOP.replace("while True:", "dispatch = unrelated\nwhile True:"),
+        DISPATCH_LOOP.replace(
+            "        result = dispatch(", "        dispatch = unrelated\n        result = dispatch("
+        ),
+        DISPATCH_LOOP.replace("dispatch(call.function.name,", "dispatch('fixed',"),
+        DISPATCH_LOOP.replace("dispatch(call.function.name,", "dispatch(unrelated.name,"),
+        DISPATCH_LOOP.replace("json.loads(call.function.arguments))", "{'fixed': 'arguments'})"),
+        DISPATCH_LOOP.replace(
+            "dispatch(call.function.name, json.loads(call.function.arguments))",
+            "dispatch(json.loads(call.function.arguments))",
+        ),
+        DISPATCH_LOOP.replace('"content": json.dumps(result)', '"content": "static result"'),
+        DISPATCH_LOOP.replace('"tool_call_id": call.id', '"tool_call_id": unrelated.id'),
+        DISPATCH_LOOP.replace("        messages.append({", "        unrelated.append({"),
+        DISPATCH_LOOP.replace(
+            "from worker.tools import dispatch, TOOL_SPECS",
+            "from logging import info as dispatch\nfrom worker.tools import TOOL_SPECS",
+        ),
+        DISPATCH_LOOP.replace(
+            "    message = response.choices[0].message", "    choice = canned.choices[0]"
+        ).replace("message.tool_calls", "choice.message.tool_calls"),
+        DISPATCH_LOOP.replace(
+            "    message = response.choices[0].message", "    choice = response.choices[1]"
+        ).replace("message.tool_calls", "choice.message.tool_calls"),
+        DISPATCH_LOOP.replace("while True:", "while False:"),
+    ],
+)
+def test_unbound_or_disconnected_dispatcher_cannot_establish_an_agent(tmp_path, run_connector, source):
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert not any(finding.kind == Kind.AGENT for finding in findings)
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "from worker.tools import TOOL_SPECS\nif False:\n    from worker.tools import dispatch\n",
+        "from worker.tools import TOOL_SPECS\nif True:\n    from worker.tools import dispatch\n",
+        "from worker.tools import TOOL_SPECS\ndef unrelated():\n    from worker.tools import dispatch\n",
+        "from worker.tools import TOOL_SPECS\n"
+        "from worker.tools import dispatch\nif enabled:\n    from elsewhere import *\n",
+        "from worker.tools import TOOL_SPECS\nfrom worker.tools import dispatch\nfrom elsewhere import *\n",
+    ],
+)
+def test_dispatcher_imports_need_unconditional_module_provenance(tmp_path, run_connector, replacement):
+    source = DISPATCH_LOOP.replace("from worker.tools import dispatch, TOOL_SPECS\n", replacement)
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert not any(finding.kind == Kind.AGENT for finding in findings)
+
+
+def test_dispatcher_import_within_the_loop_function_stays_unproven(tmp_path, run_connector):
+    source = DISPATCH_LOOP.replace("from worker.tools import dispatch, TOOL_SPECS\n", "")
+    source = (
+        "def run():\n    from worker.tools import dispatch, TOOL_SPECS\n"
+        + "".join(f"    {line}\n" for line in source.splitlines())
+        + "run()\n"
+    )
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert not any(finding.kind == Kind.AGENT for finding in findings)
+
+
+def test_dispatcher_import_after_the_call_stays_unproven(tmp_path, run_connector):
+    source = (
+        DISPATCH_LOOP.replace(
+            "from worker.tools import dispatch, TOOL_SPECS\n", "from worker.tools import TOOL_SPECS\n"
+        )
+        + "from worker.tools import dispatch\n"
+    )
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert not any(finding.kind == Kind.AGENT for finding in findings)
+
+
+def test_one_shot_dispatch_and_feedback_is_not_a_provider_loop(tmp_path, run_connector):
+    # The selected result never returns to another model request.
+    source = DISPATCH_LOOP.replace("while True:\n", "").replace(
+        "    if not message.tool_calls:\n        break\n", ""
+    )
+    lines = source.splitlines()
+    start = next(number for number, line in enumerate(lines) if line.startswith("    response ="))
+    source = "\n".join([*lines[:start], *(line[4:] for line in lines[start:])]) + "\n"
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert not any(finding.kind == Kind.AGENT for finding in findings)
+
+
+def test_provider_dispatch_in_test_source_is_discounted(tmp_path, run_connector):
+    path = tmp_path / "tests"
+    path.mkdir()
+    (path / "test_example.py").write_text(DISPATCH_LOOP)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert not any(finding.kind == Kind.AGENT for finding in findings)
+
+
+@pytest.mark.parametrize(
+    ("case_id", "signature"),
+    [
+        ("python-openai-tool-loop-script", "protocol.openai-function-calling"),
+        ("litellm-proxy-docker-worker", "platform.litellm"),
+    ],
+)
+def test_modular_provider_loop_corpus_regressions(tmp_path, run_connector, case_id, signature):
+    # These authored cases are inert source inputs: no project module is imported
+    # and neither the tool implementations nor container commands are executed.
+    corpus = Path(__file__).resolve().parents[2] / "tools/evaluation/realistic_corpus.json"
+    cases = json.loads(corpus.read_text(encoding="utf-8"))["cases"]
+    case = next(case for case in cases if case["id"] == case_id)
+    for name, content in case["files"].items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert any(finding.kind == Kind.AGENT and signature in finding.frameworks for finding in findings)

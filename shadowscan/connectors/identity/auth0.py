@@ -15,7 +15,12 @@ from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import failure_summary, finalize, max_pages_limit
-from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
+from shadowscan.connectors.identity.common import (
+    app_product_or_hint,
+    assess_app,
+    identity_kind_for,
+    summarize_scopes,
+)
 from shadowscan.models import Evidence, Finding, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
@@ -258,11 +263,14 @@ class Auth0Connector(BaseConnector):
             from shadowscan.connectors.common import apply_matches, name_matches
 
             apply_matches(
-                f, name_matches(self.index, " ".join(f"{k}={v}" for k, v in meta.items())), weight_scale=0.6
+                f,
+                name_matches(self.index, " ".join(f"{k}={v}" for k, v in meta.items())),
+                weight_scale=0.6,
+                unverified_names=True,
             )
         # A client attributed only by a model provider (an API audience or
         # origin on a provider's host, say) is AI evidence too.
-        if not f.frameworks and not f.model_providers and not machine:
+        if not app_product_or_hint(f) and not machine:
             return None
         f.add_evidence(
             Evidence(

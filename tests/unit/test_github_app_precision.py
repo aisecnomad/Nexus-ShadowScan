@@ -111,7 +111,9 @@ def _installations(index, tmp_path, slugs):
 
 
 @pytest.mark.parametrize("slug", ["amazon-q-developer", "ellipsis-dev", "mentatbot", "factory-droid"])
-def test_ai_coding_agents_are_recognised_by_their_app_slug(index, tmp_path, slug):
+def test_ai_coding_agent_slugs_are_provisional_product_hints(index, tmp_path, slug):
     found = _installations(index, tmp_path, [slug, "renovate"])
     assert set(found) == {slug}
-    assert found[slug].frameworks and "unrecognized-app" not in found[slug].tags
+    assert found[slug].frameworks == [] and "unrecognized-app" not in found[slug].tags
+    assert found[slug].metadata["potential_frameworks"]
+    assert found[slug].confidence <= 0.35

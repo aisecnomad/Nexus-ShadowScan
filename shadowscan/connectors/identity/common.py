@@ -31,6 +31,42 @@ MACHINE_GRANT_TYPES = {
 }
 
 
+def app_product_or_hint(finding: Finding) -> bool:
+    """Whether inventory should retain an established product or a provisional product name.
+
+    This is a retention decision, never attribution: only established products
+    enter frameworks/providers, and name-only observations remain correlated.
+    The generic AI-name signature alone identifies no product.
+    """
+    return bool(
+        finding.frameworks
+        or finding.model_providers
+        or finding.metadata.get("potential_frameworks")
+        or finding.metadata.get("potential_providers")
+    )
+
+
+def merge_conflicting_app_attribution(target: Finding, observed: Finding) -> None:
+    """Keep product observations and provisional names without selecting one app snapshot.
+
+    Resource identity, ownership and enabled state remain unresolved. In
+    particular, one snapshot's disabled flag cannot describe all observations.
+    """
+    for framework in observed.frameworks:
+        target.add_framework(framework)
+    for provider in observed.model_providers:
+        target.add_model_provider(provider)
+    for capability in observed.capabilities:
+        target.add_capability(capability)
+    for key in ("potential_frameworks", "potential_providers"):
+        values = sorted(set(target.metadata.get(key, [])) | set(observed.metadata.get(key, [])))
+        if values:
+            target.metadata[key] = values
+    for tag in observed.tags:
+        if tag != "disabled":
+            target.add_tag(tag)
+
+
 def assess_app(
     index: SignatureIndex,
     finding: Finding,
@@ -48,14 +84,17 @@ def assess_app(
     """Apply name / domain / scope / client-id signatures to an OAuth app finding.
 
     ``aliases`` are other spellings of the name, such as an app slug with its
-    hyphens read as spaces; each signature still counts once.
+    hyphens read as spaces; each signature still counts once. Names,
+    publishers and descriptions are mutable metadata, never independent
+    product attribution. A same-product domain, client id or scope can
+    establish the product before its name is recorded as corroborated evidence.
     """
     finding.metadata["_app_assessment"] = True
     apply_matches(finding, domain_matches(index, *_url_hosts(urls)), weight_scale=0.8)
     if client_id:
         apply_matches(finding, index.match_client_id(client_id))
-    apply_matches(finding, name_matches(index, name, *aliases, publisher, description))
     classify_permissions(index, finding, scopes)
+    apply_matches(finding, name_matches(index, name, *aliases, publisher, description), unverified_names=True)
     gts = {str(g).lower() for g in grant_types if g}
     if gts & MACHINE_GRANT_TYPES:
         finding.add_tag("machine-identity")
@@ -78,7 +117,7 @@ def assess_app(
         finding.metadata["token_endpoint_auth_method"] = auth_method
 
 
-def _url_hosts(urls: Iterable[str | None]) -> list[str]:
+def _url_hosts(urls: Iterable[str | None], *, split_lists: bool = True) -> list[str]:
     """The hostnames of the http(s) URLs in ``urls``, in order.
 
     OAuth reply/homepage URLs establish only their own hostname. A product
@@ -86,12 +125,14 @@ def _url_hosts(urls: Iterable[str | None]) -> list[str]:
     not corroboration of the app's product identity. A token with userinfo or
     a parser-differential character is skipped: a reply URL never carries
     credentials, and its host is not reliably the one a browser would use.
+    With ``split_lists`` false each field is one URI (JWT issuer/audience),
+    so embedded delimiters never create another endpoint to corroborate.
     """
     hosts: list[str] = []
     for url in urls:
         if not isinstance(url, str) or not url:
             continue
-        for token in _url_tokens(url):
+        for token in _url_tokens(url) if split_lists else [url]:
             if not token or _PARSER_DIFFERENTIAL.search(token):
                 continue
             try:

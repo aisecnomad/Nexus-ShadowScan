@@ -1,4 +1,4 @@
-"""Ambiguous app names do not establish an AI product or independent evidence."""
+"""Mutable app names do not establish an AI product or independent evidence."""
 
 from __future__ import annotations
 
@@ -34,9 +34,12 @@ def _finding() -> Finding:
 def test_offline_ambiguous_names_require_product_evidence(run_connector, fixtures):
     findings, ctx = run_connector("saas.generic", input=str(fixtures / "saas/ambiguous_name_apps.json"))
     assert not ctx.stats.incomplete
-    assert [finding.resource for finding in findings] == ["saas:app:gemini-official-domain"]
-    assert GEMINI in findings[0].frameworks
-    assert findings[0].metadata["agent_indicators"] == 1
+    assert len(findings) == 5
+    (bound,) = [finding for finding in findings if finding.frameworks]
+    assert bound.resource == "saas:app:gemini-official-domain"
+    assert GEMINI in bound.frameworks
+    assert bound.metadata["agent_indicators"] == 1
+    assert all(f.confidence <= 0.35 for f in findings if not f.frameworks)
 
 
 def test_keep_all_preserves_weak_hints_without_vendor_claims(run_connector, fixtures):
@@ -235,9 +238,8 @@ def test_unattributed_app_bound_is_monotonic_in_name_evidence(index):
     product_named = _machine_app(index, "Gemini reconcile worker")
     hinted = _machine_app(index, "triage-agent")
     assert plain.confidence == product_named.confidence == UNATTRIBUTED_APP_MAX_WEIGHT
-    # A generic AI-name hint is separate evidence: a hint never lowers the score.
-    assert hinted.confidence > plain.confidence
-    assert hinted.confidence == pytest.approx(0.577, abs=0.001)
+    # A mutable generic name is the same app observation, not corroboration.
+    assert hinted.confidence == plain.confidence
     for finding in (plain, product_named, hinted):
         assert finding.frameworks == [] and finding.model_providers == []
         assert all(
@@ -394,3 +396,276 @@ def test_an_unestablished_generic_ai_name_is_not_a_potential_product(index):
 def test_app_assessment_marker_never_reaches_a_report(index):
     finding = _machine_app(index, "nightly-reconcile-worker")
     assert "_app_assessment" not in finding.metadata
+
+
+def test_mutable_product_names_are_not_vendor_attribution(run_connector, fixtures):
+    source = str(fixtures / "saas/mutable_name_apps.json")
+    findings, ctx = run_connector("saas.generic", input=source)
+    assert not ctx.stats.incomplete
+    assert {f.resource for f in findings if f.frameworks} == {
+        "saas:app:claude-domain",
+        "saas:app:fb8d773d-7ef8-4ec0-a117-179f88add510",
+    }
+    assert all(f.confidence >= 0.7 for f in findings if f.frameworks)
+    assert all(f.confidence <= 0.35 for f in findings if not f.frameworks)
+
+    retained, ctx = run_connector("saas.generic", input=source, keep_all=True)
+    assert not ctx.stats.incomplete
+    by_id = {f.resource.rsplit(":", 1)[-1]: f for f in retained}
+    for app_id in ("expense-portal", "hr-portal", "payroll-sso", "several-name-hints"):
+        finding = by_id[app_id]
+        assert finding.confidence <= UNATTRIBUTED_APP_MAX_WEIGHT
+        assert not finding.frameworks and not finding.model_providers and not finding.capabilities
+        assert finding.metadata["agent_indicators"] == 0
+        assert not finding.metadata["technologies"]
+    assert "identity-app.anthropic-claude" in by_id["expense-portal"].metadata["potential_frameworks"]
+    assert "identity-app.openai-chatgpt" in by_id["hr-portal"].metadata["potential_frameworks"]
+
+
+def test_entra_oidc_app_names_remain_provisional(run_connector, fixtures, tmp_path):
+    cases = json.loads((fixtures / "saas/mutable_name_apps.json").read_text())[:4]
+    records = []
+    for case in cases:
+        records.extend(
+            [
+                {
+                    "_kind": "servicePrincipal",
+                    "id": case["id"],
+                    "appId": "app-" + case["id"],
+                    "displayName": case["name"],
+                    "publisherName": case.get("publisher"),
+                    "description": case.get("description"),
+                    "servicePrincipalType": "Application",
+                },
+                {
+                    "_kind": "oauth2PermissionGrant",
+                    "clientId": case["id"],
+                    "consentType": "AllPrincipals",
+                    "scope": "openid profile email",
+                },
+            ]
+        )
+    source = tmp_path / "entra-mutable-names.json"
+    source.write_text(json.dumps(records))
+    findings, ctx = run_connector("identity.entra", input=str(source), tenant_id="name-assurance-test")
+    assert not ctx.stats.incomplete
+    assert {f.resource for f in findings} == {
+        "entra:sp:expense-portal",
+        "entra:sp:hr-portal",
+        "entra:sp:several-name-hints",
+    }
+    assert all(f.confidence <= UNATTRIBUTED_APP_MAX_WEIGHT for f in findings)
+    assert all(not f.frameworks and not f.model_providers and not f.capabilities for f in findings)
+    assert all(f.metadata["agent_indicators"] == 0 for f in findings)
+
+
+@pytest.mark.parametrize("field", ["name", "publisher", "description"])
+@pytest.mark.parametrize("name", ["Claude Martin Expense Portal", "Sora HR Portal", "Microsoft Copilot"])
+def test_each_mutable_app_field_requires_non_name_corroboration(index, field, name):
+    finding = _finding()
+    fields = {"name": "Payroll SSO", field: name}
+    assess_app(index, finding, **fields, grant_types=["client_credentials"])
+    finding.add_evidence(Evidence(signal="test:consent", description="App consented", weight=0.9))
+    finalize(finding, index)
+    assert finding.confidence == UNATTRIBUTED_APP_MAX_WEIGHT
+    assert not finding.frameworks and not finding.model_providers and not finding.capabilities
+    assert finding.metadata["agent_indicators"] == 0
+
+
+@pytest.mark.parametrize("signal_type", ["domain", "client_id", "scope"])
+def test_custom_name_signatures_need_same_product_corroboration(signal_type):
+    signature = signature_from_dict(
+        {
+            "id": "identity-app.mutable-review",
+            "name": "Review",
+            "category": "identity-app",
+            "agent_indicator": True,
+            "capabilities": ["tool-use"],
+            "signals": [
+                {"type": "name", "patterns": ["Review"], "weight": 0.95},
+                {
+                    "type": signal_type,
+                    "names" if signal_type == "client_id" else "values": ["review.example"],
+                    "weight": 0.9,
+                },
+            ],
+        }
+    )
+    index = SignatureIndex([signature])
+    hint = _finding()
+    assess_app(index, hint, name="Review", publisher="Review", description="Review", aliases=["Review"])
+    finalize(hint, index)
+    assert hint.confidence <= 0.2 and hint.frameworks == []
+    assert hint.capabilities == [] and hint.metadata["agent_indicators"] == 0
+
+    corroborated = _finding()
+    kwargs = {
+        "domain": {"urls": ["https://review.example/callback"]},
+        "client_id": {"client_id": "review.example"},
+        "scope": {"scopes": ["review.example"]},
+    }[signal_type]
+    assess_app(index, corroborated, name="Review", **kwargs)
+    finalize(corroborated, index)
+    assert corroborated.frameworks == [signature.id] and "tool-use" in corroborated.capabilities
+    assert corroborated.metadata["agent_indicators"] == 1
+    assert corroborated.confidence > 0.8
+
+
+def test_unrelated_domain_never_corroborates_claude_name(index):
+    finding = _finding()
+    assess_app(index, finding, name="Claude Martin Expense Portal", urls=["https://chatgpt.com/"])
+    finalize(finding, index)
+    assert "identity-app.openai-chatgpt" in finding.frameworks
+    assert "identity-app.anthropic-claude" not in finding.frameworks
+    assert "identity-app.anthropic-claude" in finding.metadata["potential_frameworks"]
+    hint = next(ev for ev in finding.evidence if ev.signal == "name:identity-app.anthropic-claude")
+    assert hint.weight <= 0.2 and hint.attributes["ambiguous_name"] is True
+
+
+def test_auth0_client_metadata_names_do_not_bypass_app_assurance(run_connector, tmp_path):
+    source = tmp_path / "auth0-metadata.json"
+    source.write_text(
+        json.dumps(
+            [
+                {
+                    "client_id": "payroll-client",
+                    "name": "Payroll SSO",
+                    "app_type": "non_interactive",
+                    "grant_types": ["client_credentials"],
+                    "client_metadata": {"owner": "Claude Martin", "description": "Sora HR Portal"},
+                }
+            ]
+        )
+    )
+    (finding,), ctx = run_connector("identity.auth0", input=str(source))
+    assert not ctx.stats.incomplete
+    assert finding.confidence <= UNATTRIBUTED_APP_MAX_WEIGHT
+    assert not finding.frameworks and not finding.model_providers and not finding.capabilities
+    assert finding.metadata["agent_indicators"] == 0
+
+
+@pytest.mark.parametrize("name", ["Insurance Agent Desk", "Jira Bot", "Payroll Assistant"])
+def test_generic_names_do_not_expand_scope_free_app_inventory(run_connector, tmp_path, name):
+    for connector, records in (
+        (
+            "identity.auth0",
+            [
+                {
+                    "client_id": "ordinary-app",
+                    "name": name,
+                    "app_type": "spa",
+                    "grant_types": ["authorization_code"],
+                }
+            ],
+        ),
+        (
+            "identity.entra",
+            [{"_kind": "application", "id": "ordinary-app", "appId": "ordinary-client", "displayName": name}],
+        ),
+        (
+            "saas.slack",
+            [
+                {"_kind": "team", "id": "T1", "name": "Example"},
+                {"_kind": "approved_app", "app": {"id": "A1", "name": name}},
+            ],
+        ),
+    ):
+        source = tmp_path / (connector + ".json")
+        source.write_text(json.dumps(records))
+        findings, ctx = run_connector(connector, input=str(source))
+        assert not ctx.stats.incomplete
+        assert findings == []
+
+
+def test_jwt_mutable_names_do_not_claim_an_ai_vendor(index):
+    import jwt
+
+    from shadowscan.connectors.base import ConnectorContext
+    from shadowscan.connectors.identity.jwt import JwtConnector
+
+    connector = JwtConnector(ConnectorContext(index=index))
+    token = jwt.encode(
+        {"iss": "https://tenant.okta.com", "sub": "client", "client_name": "Claude"},
+        key=None,
+        algorithm="none",
+    )
+    finding = connector.analyze_token(token)
+    assert finding is not None
+    assert "identity-app.anthropic-claude" not in finding.frameworks
+    assert "identity-app.anthropic-claude" in finding.metadata["potential_frameworks"]
+    assert finding.metadata["agent_indicators"] == 0
+    assert finding.metadata["identity_type"] == "human"
+    assert finding.confidence < 0.6
+
+
+@pytest.mark.parametrize("field", ["client_name", "app_displayname", "azp_name"])
+@pytest.mark.parametrize("delegated", [False, True])
+def test_jwt_naming_hints_do_not_promote_identity_type(index, field, delegated):
+    import jwt
+
+    from shadowscan.connectors.base import ConnectorContext
+    from shadowscan.connectors.identity.jwt import JwtConnector
+
+    claims = {
+        "iss": "https://tenant.okta.com",
+        "sub": "human-user",
+        "email": "human@example.org",
+        field: "Claude Martin Expense Portal",
+    }
+    if delegated:
+        claims["act"] = {"sub": "human-manager"}
+    connector = JwtConnector(ConnectorContext(index=index))
+    finding = connector.analyze_token(jwt.encode(claims, key=None, algorithm="none"))
+    assert finding is not None
+    assert finding.metadata["identity_type"] == ("delegated" if delegated else "human")
+    assert finding.confidence < 0.6
+    assert not any(ev.signal in {"jwt:agent", "jwt:delegated-agent"} for ev in finding.evidence)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://portal.example/?next=x,https://claude.ai",
+        "https://portal.example/#x;https://claude.ai",
+        "https://portal.example/?next=https://claude.ai",
+    ],
+)
+def test_generic_saas_preserves_url_boundaries_before_corroboration(run_connector, tmp_path, url):
+    source = tmp_path / "url-mentions.json"
+    source.write_text(
+        json.dumps([{"id": "expense-portal", "name": "Claude Martin Expense Portal", "url": url}])
+    )
+    (finding,), ctx = run_connector("saas.generic", input=str(source))
+    assert not ctx.stats.incomplete
+    assert finding.frameworks == [] and finding.confidence <= 0.35
+    assert finding.metadata["potential_frameworks"] == ["identity-app.anthropic-claude"]
+
+
+@pytest.mark.parametrize("field", ["iss", "aud"])
+def test_jwt_domain_mentions_do_not_establish_the_named_vendor(index, field):
+    import jwt
+
+    from shadowscan.connectors.base import ConnectorContext
+    from shadowscan.connectors.identity.jwt import JwtConnector
+
+    claims = {"iss": "https://tenant.okta.com", "sub": "human-user", "client_name": "Claude"}
+    claims[field] = "https://portal.example/?app=https://claude.ai"
+    finding = JwtConnector(ConnectorContext(index=index)).analyze_token(
+        jwt.encode(claims, key=None, algorithm="none")
+    )
+    assert finding is not None
+    assert finding.frameworks == [] and finding.model_providers == []
+    assert finding.metadata["identity_type"] == "human"
+
+
+@pytest.mark.parametrize("surface", [Surface.CODE, Surface.ENDPOINT])
+def test_app_name_policy_does_not_mutate_other_collection_contexts(index, surface):
+    app = _finding()
+    assess_app(index, app, name="Claude")
+    assert app.frameworks == []
+    installed = _finding()
+    installed.surface = surface
+    apply_matches(installed, name_matches(index, "Claude"))
+    finalize(installed, index)
+    assert "identity-app.anthropic-claude" in installed.frameworks
+    assert installed.metadata["agent_indicators"] > 0

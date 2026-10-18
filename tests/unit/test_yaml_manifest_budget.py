@@ -15,6 +15,23 @@ from shadowscan.signatures.matcher import MatchTimeoutError, _run_regex
 pytestmark = pytest.mark.production_budgets
 
 
+def test_structural_context_parsing_keeps_the_regex_deadline_separate(monkeypatch):
+    now = 0.0
+
+    def parse_context(text):
+        nonlocal now
+        now += 2.0
+        return set()
+
+    monkeypatch.setattr(manifests, "monotonic", lambda: now)
+    monkeypatch.setattr(manifests, "kubernetes_images", parse_context)
+    result = parse_manifest("compose.yaml", "services:\n  agent:\n    image: example/agent:1\n")
+    assert result is not None and not result.errors
+    assert [(artifact.kind, artifact.value) for artifact in result.artifacts] == [
+        ("image", "example/agent:1")
+    ]
+
+
 def test_yaml_manifest_collection_has_its_own_bounded_pattern_budget(monkeypatch):
     """A covered YAML pass may exceed the signature matcher's 100 ms CPU cap."""
     original = manifests._YAML_REPO

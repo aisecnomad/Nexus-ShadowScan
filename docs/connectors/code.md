@@ -102,6 +102,42 @@ bindings under the existing conservative whole-file policy. Property keys and
 initializer references do not declare names. Unsupported binding syntax retains
 usage evidence without proving an imported constructor; analysis limits make
 coverage incomplete. Scanned source is never executed.
+
+Provider-bound Python tool loops can establish an agent without an agent-framework
+dependency. The supported proof connects a constructed SDK client, its model
+response, a model-selected dispatch, and that dispatch's result and matching call
+identifier in the same message history. An imported dispatcher can qualify when
+both the selected name and arguments reach it and its result is fed back; its
+implementation and external effects remain unobserved. Dispatcher provenance is
+limited to unshadowed, unconditional module imports preceding the dispatch; an
+import in another function or conditional branch cannot establish it. A local helper's annotated
+SDK parameter is usable only when its observed direct call sites pass agreeing,
+constructed SDK clients. An annotation, a generic loop, argument parsing or an
+unrelated callback is insufficient.
+
+JavaScript/TypeScript model calls can use executable tools imported from the same
+manifest project. The bounded static resolver follows supported named exports
+with a proven `ai` tool factory and an executable callback, including named
+re-exports. It reads only source snapshots already admitted by the confined
+scanner. Relative imports and explicit root `tsconfig.json` / `jsconfig.json`
+path mappings are supported; package imports, inherited configurations and an
+assumed `@/` convention are not. Ambiguous or unresolved targets retain SDK
+usage evidence. Default/namespace tool imports and exporter modules without
+complete semicolon-terminated statements remain unresolved. The resolver retains
+at most 4,096 module summaries, 64 KiB per module, 256 exports or path mappings,
+and 16 re-export links; pending source uses the existing 4,096-file / 16 MiB queue.
+Resolution limits mark coverage incomplete; no sampled source, configuration or
+module is executed.
+
+Container images retain product-specific infrastructure evidence in Compose and
+Dockerfiles. The Kubernetes workload image signature additionally requires the
+image to occur in a recognized built-in Kubernetes workload's container,
+init-container or ephemeral-container declaration. An image in another YAML
+document, a comment, descriptive scalar or CI job cannot establish that
+relationship. Unparsed templates and custom controllers do not provide that
+structural proof. A static workload manifest does not prove the container is
+deployed or running.
+
 Confidence groups cap repeated observations of the same technology. Python also
 resolves absolute `from local_shim import Alias` imports through already-read
 `.py` files at the same manifest project root (or scan root without a manifest).

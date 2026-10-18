@@ -34,7 +34,7 @@ def _ai_name_hint(finding: Finding) -> bool:
     if "ai-name-hint" not in finding.tags:
         return False
     return any(
-        ev.attributes.get("ambiguous_name") is True
+        (ev.attributes.get("ambiguous_name") is True and ev.signature != _GENERIC_AI_NAME)
         or (ev.signature == _GENERIC_AI_NAME and str(ev.attributes.get("value", "")).strip().lower() != "bot")
         for ev in finding.evidence
     )

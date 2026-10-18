@@ -160,6 +160,199 @@ def test_dockerfile_compose_and_terraform_artifacts():
     assert iac[0].value == "aws_bedrockagent_agent" and iac[0].extra["display_name"] == "ops-provisioning-04"
 
 
+@pytest.mark.parametrize(
+    ("api_version", "kind", "path"),
+    [
+        ("v1", "Pod", ("spec",)),
+        ("v1", "ReplicationController", ("spec", "template", "spec")),
+        *[
+            ("apps/v1", kind, ("spec", "template", "spec"))
+            for kind in ("Deployment", "StatefulSet", "DaemonSet", "ReplicaSet")
+        ],
+        ("batch/v1", "Job", ("spec", "template", "spec")),
+        ("batch/v1", "CronJob", ("spec", "jobTemplate", "spec", "template", "spec")),
+    ],
+)
+@pytest.mark.parametrize("container_kind", ["containers", "initContainers", "ephemeralContainers"])
+def test_kubernetes_image_context_is_bound_to_workload_podspec(api_version, kind, path, container_kind):
+    import yaml
+
+    document = {"apiVersion": api_version, "kind": kind}
+    cursor = document
+    for component in path:
+        cursor[component] = {}
+        cursor = cursor[component]
+    cursor[container_kind] = [{"name": "workflow", "image": "n8nio/n8n:1"}]
+    _, result = _deps("workload.yaml", yaml.safe_dump(document))
+    images = [artifact for artifact in result.artifacts if artifact.kind == "image"]
+    assert len(images) == 1 and images[0].extra == {"kubernetes_workload": True}
+    assert not result.errors
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "services:\n  workflow:\n    image: n8nio/n8n:1\n",
+        "kind: Deployment\nimage: n8nio/n8n:1\n",
+        "apiVersion: example.test/v1\nkind: Deployment\nspec:\n  image: n8nio/n8n:1\n",
+        "description: |\n  apiVersion: v1\n  kind: Pod\n  spec:\n    containers:\n      - image: n8nio/n8n:1\n",
+        "# apiVersion: v1\n# kind: Pod\n# image: n8nio/n8n:1\n",
+        "apiVersion: v1\nkind: Pod\nspec:\n  containers:\n    - image: {{ .Values.image }}\n",
+        "apiVersion: v1\nkind: Pod\nmetadata:\n  image: n8nio/n8n:1\nspec:\n  containers:\n    - image: nginx:1\n",
+        "apiVersion: v1\nkind: Pod\nspec:\n  containers:\n    - image: nginx:1\n---\nimage: n8nio/n8n:1\n",
+    ],
+)
+def test_nonworkload_images_cannot_inherit_kubernetes_context(text):
+    _, result = _deps("container.yaml", text)
+    assert not result.errors
+    assert not any(
+        artifact.value == "n8nio/n8n:1" and artifact.extra.get("kubernetes_workload")
+        for artifact in result.artifacts
+    )
+
+
+def test_identical_image_in_another_document_cannot_borrow_workload_context():
+    _, result = _deps(
+        "workload.yaml",
+        "apiVersion: v1\nkind: Pod\nspec:\n  containers:\n    - image: n8nio/n8n:1\n"
+        "---\nmetadata:\n  image: n8nio/n8n:1\n",
+    )
+    images = [artifact for artifact in result.artifacts if artifact.kind == "image"]
+    assert [(image.line, image.extra.get("kubernetes_workload", False)) for image in images] == [
+        (5, True),
+        (8, False),
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "defaults: &defaults\n  apiVersion: v1\n  kind: Pod\n  spec:\n    containers:\n      - image: n8nio/n8n:1\n"
+        "<<: *defaults\napiVersion: example.test/v1\n",
+        "defaults: &defaults\n  apiVersion: v1\n  kind: Pod\n  spec:\n    containers:\n      - image: n8nio/n8n:1\n"
+        "<<: *defaults\nkind: ConfigMap\n",
+        "defaults: &defaults\n  apiVersion: v1\n  kind: Pod\n  spec:\n    containers:\n      - image: n8nio/n8n:1\n"
+        "<<: *defaults\nspec:\n  containers:\n    - image: nginx:1\n",
+        "apiVersion: v1\nkind: Pod\nmetadata:\n  annotations: &defaults\n    image: n8nio/n8n:1\n"
+        "spec:\n  containers:\n    - <<: *defaults\n      name: workflow\n      image: nginx:1\n",
+        "apiVersion: v1\nkind: Pod\nmetadata:\n  annotations: &defaults\n"
+        "    containers:\n      - image: n8nio/n8n:1\nspec:\n  <<: *defaults\n"
+        "  containers:\n    - image: nginx:1\n",
+    ],
+)
+def test_kubernetes_merge_overrides_do_not_attribute_inherited_images(text):
+    _, result = _deps("workload.yaml", text)
+    assert not result.errors
+    assert not any(
+        artifact.value == "n8nio/n8n:1" and artifact.extra.get("kubernetes_workload")
+        for artifact in result.artifacts
+    )
+
+
+def test_explicit_image_override_retains_its_own_kubernetes_context():
+    _, result = _deps(
+        "workload.yaml",
+        "apiVersion: v1\nkind: Pod\nmetadata:\n  annotations: &defaults\n    image: nginx:1\n"
+        "spec:\n  containers:\n    - <<: *defaults\n      image: n8nio/n8n:1\n",
+    )
+    images = [artifact for artifact in result.artifacts if artifact.extra.get("kubernetes_workload")]
+    assert not result.errors
+    assert [(artifact.value, artifact.line) for artifact in images] == [("n8nio/n8n:1", 9)]
+
+
+def test_escaped_api_version_key_keeps_kubernetes_context():
+    _, result = _deps(
+        "workload.yaml",
+        '"api\\u0056ersion": v1\nkind: Pod\nspec:\n  containers:\n    - image: n8nio/n8n:1\n',
+    )
+    assert not result.errors
+    images = [artifact for artifact in result.artifacts if artifact.extra.get("kubernetes_workload")]
+    assert [(artifact.value, artifact.line) for artifact in images] == [("n8nio/n8n:1", 5)]
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "metadata:\n  annotations:\n    example.test/example: '{{ username }}'\n",
+        "---\napiVersion: v1\nkind: ConfigMap\ndata:\n  example: '{{ username }}'\n",
+        "---\nspec:\n  containers:\n    - image: {{ .Values.image }}\n",
+        '---\nspec:\n  logLevel: "{{ .Values.logLevel }}"\n  logLevel: info\n',
+    ],
+)
+def test_unrelated_template_text_cannot_suppress_parsed_kubernetes_images(suffix):
+    _, result = _deps(
+        "workload.yaml",
+        "apiVersion: v1\nkind: Pod\nspec:\n  containers:\n    - image: n8nio/n8n:1\n" + suffix,
+    )
+    assert not result.errors
+    images = [artifact for artifact in result.artifacts if artifact.extra.get("kubernetes_workload")]
+    assert [(artifact.value, artifact.line) for artifact in images] == [("n8nio/n8n:1", 5)]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "apiVersion: v1\nkind: Pod\nkind: ConfigMap\nmetadata:\n  example: '{{ username }}'\n",
+        "apiVersion: v1\nkind: Pod\nmetadata:\n  example: '{{ username }}'\nspec:\n"
+        "  containers:\n    - image: nginx:1\n      image: n8nio/n8n:1\n",
+        'apiVersion: v1\nkind: Pod\nkind: ConfigMap\nlogLevel: "{{ .Values.logLevel }}"\nlogLevel: info\n',
+        "apiVersion: v1\n? {key: value}\n: ordinary\nmetadata:\n  example: '{{ username }}'\n",
+    ],
+)
+def test_unrelated_template_markers_do_not_excuse_duplicate_kubernetes_fields(text):
+    _, result = _deps("workload.yaml", text)
+    assert result.errors == ["manifest parsing failed (YAMLIntegrityError)"]
+    assert not result.artifacts
+
+
+def test_kubernetes_list_and_flow_images_preserve_their_source_lines():
+    text = (
+        "apiVersion: v1\nkind: List\nitems:\n"
+        "  - {apiVersion: v1, kind: Pod, spec: {containers: [{name: workflow, image: n8nio/n8n:1}]}}\n"
+        "  - {apiVersion: v1, kind: ConfigMap, data: {image: flowiseai/flowise:1}}\n"
+    )
+    _, result = _deps("workload.yaml", text)
+    assert not result.errors
+    images = [artifact for artifact in result.artifacts if artifact.extra.get("kubernetes_workload")]
+    assert [(artifact.value, artifact.line) for artifact in images] == [("n8nio/n8n:1", 4)]
+
+
+@pytest.mark.parametrize("field", ["kind", "image"])
+def test_ambiguous_kubernetes_context_reports_a_manifest_parse_failure(field):
+    if field == "kind":
+        text = "apiVersion: v1\nkind: Pod\nkind: ConfigMap\nimage: n8nio/n8n:1\n"
+    else:
+        text = "apiVersion: v1\nkind: Pod\nspec:\n  containers:\n    - image: nginx:1\n      image: n8nio/n8n:1\n"
+    _, result = _deps("workload.yaml", text)
+    assert result.errors == ["manifest parsing failed (YAMLIntegrityError)"]
+    assert not result.artifacts
+
+
+@pytest.mark.parametrize("suffix", ["", "metadata:\n  example: '{{ username }}'\n"])
+def test_kubernetes_context_keeps_yaml_resource_limits(monkeypatch, suffix):
+    from shadowscan.connectors.code.container_context import StrictBoundedConfigLoader
+
+    monkeypatch.setattr(StrictBoundedConfigLoader, "MAX_NODES", 10)
+    _, result = _deps(
+        "workload.yaml",
+        "apiVersion: v1\nkind: Pod\nspec:\n  containers:\n    - image: n8nio/n8n:1\n" + suffix,
+    )
+    assert result.errors == ["manifest parsing failed (YAMLResourceLimitError)"]
+    assert not result.artifacts
+
+
+def test_kubernetes_context_never_constructs_python_objects(monkeypatch):
+    from shadowscan.connectors.code.container_context import kubernetes_images
+
+    def forbidden_execution(*args, **kwargs):
+        pytest.fail("untrusted YAML invoked a system command")
+
+    monkeypatch.setattr("os.system", forbidden_execution)
+    assert not kubernetes_images(
+        "apiVersion: v1\ncommand: !!python/object/apply:os.system ['inert-fixture-command']"
+    )
+
+
 def test_env_file_and_cloudformation():
     _, res = _deps(".env", "OPENAI_API_KEY=sk-live\n# comment\nexport GEMINI_API_KEY='x'\n")
     names = {a.value for a in res.artifacts}

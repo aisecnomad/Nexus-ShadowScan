@@ -49,13 +49,14 @@ def test_notion_inventories_only_bots_with_ai_evidence_or_an_ai_name_hint(tmp_pa
     assert not ctx.stats.incomplete
     by_resource = {finding.resource: finding for finding in findings}
     assert set(by_resource) == {"notion:bot:bot-1", "notion:bot:bot-4"}
-    assert "identity-app.anthropic-claude" in by_resource["notion:bot:bot-1"].frameworks
-    # An ambiguous product name is a hint: kept, never attributed, bounded at possible.
-    gemini = by_resource["notion:bot:bot-4"]
-    assert gemini.frameworks == [] and gemini.metadata["potential_frameworks"] == [
-        "identity-app.google-gemini"
-    ]
-    assert "ai-name-hint" in gemini.tags and gemini.confidence <= 0.35
+    # Every mutable product name is a hint, regardless of its spelling.
+    for resource, product in (
+        ("notion:bot:bot-1", "identity-app.anthropic-claude"),
+        ("notion:bot:bot-4", "identity-app.google-gemini"),
+    ):
+        finding = by_resource[resource]
+        assert finding.frameworks == [] and finding.metadata["potential_frameworks"] == [product]
+        assert "ai-name-hint" in finding.tags and finding.confidence <= 0.35
 
 
 @pytest.mark.parametrize(
@@ -70,8 +71,7 @@ def test_notion_keeps_bots_with_a_generic_ai_name(tmp_path, run_connector, name)
     finding = findings[0]
     assert finding.kind == Kind.BOT_APP and finding.frameworks == [] and finding.model_providers == []
     assert "ai-name-hint" in finding.tags
-    # The name hint is a separate weak signal; the bot's own observation is bounded.
-    assert 0.35 < finding.confidence < 0.7
+    assert finding.confidence <= 0.35
 
 
 @pytest.mark.parametrize("homepage", ["https://www.wudpecker.io", "https://tactiq.io/install"])
@@ -83,10 +83,12 @@ def test_slack_meeting_note_takers_are_recognised_by_domain(tmp_path, run_connec
 
 
 @pytest.mark.parametrize("name", ["Wudpecker", "Tactiq"])
-def test_meeting_note_taker_names_are_recognised(tmp_path, run_connector, name):
+def test_meeting_note_taker_names_are_only_provisional_hints(tmp_path, run_connector, name):
     app = {"_kind": "approved_app", "app": {"id": "A8", "name": name}}
     findings, _ = run_connector("saas.slack", input=_write(tmp_path, [_TEAM, app]))
-    assert MEETING_NOTES in findings[0].frameworks
+    assert findings[0].frameworks == []
+    assert MEETING_NOTES in findings[0].metadata["potential_frameworks"]
+    assert findings[0].confidence <= 0.35
 
 
 def test_slack_app_id_binds_a_rule_pack_client_id(tmp_path):
@@ -124,7 +126,7 @@ def _auth0_client(client_id, name, **fields):
     }
 
 
-def test_auth0_keeps_clients_attributed_by_provider_or_product(tmp_path, run_connector):
+def test_auth0_keeps_provider_bound_and_product_name_hint_clients(tmp_path, run_connector):
     records = [
         _auth0_client("c-provider", "Ticket drafts", allowed_origins=["https://api.cohere.com"]),
         _auth0_client(
@@ -139,5 +141,9 @@ def test_auth0_keeps_clients_attributed_by_provider_or_product(tmp_path, run_con
     assert set(by_resource) == {"auth0:client:c-provider", "auth0:client:c-product"}
     assert by_resource["auth0:client:c-provider"].frameworks == []
     assert "provider.cohere" in by_resource["auth0:client:c-provider"].model_providers
-    assert "identity-app.openai-chatgpt" in by_resource["auth0:client:c-product"].frameworks
-    assert by_resource["auth0:client:c-product"].confidence > 0.9
+    # The product description is retained as a hint without a product binding.
+    product = by_resource["auth0:client:c-product"]
+    assert (
+        product.frameworks == [] and "identity-app.openai-chatgpt" in product.metadata["potential_frameworks"]
+    )
+    assert product.confidence <= 0.35

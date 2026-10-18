@@ -1,0 +1,4 @@
+# Inert scanner fixture: Compose deploys n8n without establishing Kubernetes.
+services:
+  workflow:
+    image: n8nio/n8n:1.0.0

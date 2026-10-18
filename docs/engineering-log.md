@@ -13,6 +13,53 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### App-name corroboration, executable-tool provenance and Kubernetes image attribution (October 18)
+
+- Identity and SaaS app assessments treat every display-name, publisher and
+  description match as provisional, including custom signature packs. Same-product
+  non-name evidence must establish a vendor before the name can corroborate it.
+  Ordinary scopes and installation or machine-grant records cannot promote an
+  unattributed app above possible confidence. Auth0 metadata and JWT hints follow
+  the same name-attribution rule; independent token and permission evidence remains.
+  The regression controls include unrelated Claude and Sora application names,
+  genuine domains/client identifiers/scopes, repeated aliases, custom packs and an
+  unrelated vendor's domain. Source and endpoint matching retain their own policy.
+- Python provider-loop analysis follows first-choice aliases and imported
+  model-selected dispatch interfaces when their returned results and matching
+  call identifiers feed the same history. Closed local helper parameters can
+  retain SDK provenance from agreeing constructed-client call sites; annotations
+  alone cannot create that provenance. Static dispatch recognition does not observe
+  the imported callback's implementation, external effects or runtime execution.
+- JavaScript executable tools can resolve through supported local named exports
+  and re-exports in the same project, using relative imports or explicit root
+  TypeScript/JavaScript path mappings. The resolver consumes confined, already-read
+  source snapshots with fixed limits. Unknown packages, missing alias configuration,
+  ambiguous resolution, shadowed names and tools without an executable callback
+  cannot establish executable-tool provenance. Budget failures remain incomplete.
+  Rejected or ambiguous compiler mappings cannot erase a possible override of
+  the SDK itself; configured base directories and observed local package/source
+  collisions are checked for both consumers and tool definitions.
+- Kubernetes image attribution requires a recognized workload structure at the
+  image's own declaration. Compose and Dockerfile images keep their product-specific
+  infrastructure evidence. The authored n8n attribution case now explicitly expects
+  that valid `platform.n8n` infrastructure finding as well as its agent, while
+  continuing to forbid `cloud.kubernetes-agent-workloads`; no source or target
+  label was changed to hide the Kubernetes error.
+  Explicit YAML fields override inherited merge defaults. Quoted template text
+  does not disable valid workload context, and only an actually unparsed template
+  is withheld; unrelated integrity defects and resource limits remain incomplete.
+- Three authored current-idiom controls add relative and explicitly configured
+  imported tools plus an imported schema with no executable callback. The existing
+  sample with an unconfigured `@/` alias retains its input and positive target; it
+  stays a documented unresolved-provenance gap. The realistic tutorial credential
+  remains reported: prose calling a realistic credential an example is not evidence
+  that it is harmless. Existing public and independent corpus labels are unchanged.
+  These are regression checks, not independent field-accuracy or live-tenant
+  acceptance evidence.
+- The README's offline-demo table is refreshed from the unchanged demo inputs.
+  Name-only app hints no longer inherit vendor capabilities, so its risk-level
+  totals and highest-risk rows change while the finding count stays unchanged.
+
 ### SARIF notifications name their connector once; the docs show how one scan gives both the JSON ledger and SARIF (October 18)
 
 - A SARIF run's `toolExecutionNotifications` prefixed each diagnostic with its

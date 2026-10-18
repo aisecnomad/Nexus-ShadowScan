@@ -258,25 +258,26 @@ def test_finding_selector_schema_rejects_invalid_or_contradictory_labels(
         load_corpus(_sample(tmp_path, assertions))
 
 
-def test_bundled_authored_attribution_gaps_are_visible_without_relabeling_independent_corpus() -> None:
+def test_bundled_authored_attribution_passes_without_relabeling_independent_corpus() -> None:
     authored = evaluate(DEFAULT_CORPUS.with_name("attribution_corpus.json"))
     assert authored["passed"]
     assert authored["metrics"]["all"] | {"tp": 14, "fp": 0, "fn": 0, "tn": 10} == authored["metrics"]["all"]
     assert authored["finding_assertions"]["provider_signature"]["checks"] >= 4
     assert authored["finding_assertions"]["forbidden_findings"] == {
         "checks": 13,
-        "passed": 12,
-        "failed": 1,
+        "passed": 13,
+        "failed": 0,
     }
     assert authored["finding_assertions"]["exact_finding_sets"] == {
         "checks": 24,
-        "passed": 23,
-        "failed": 1,
+        "passed": 24,
+        "failed": 0,
     }
     assert authored["finding_assertions"]["capabilities"] == {"checks": 20, "passed": 20, "failed": 0}
-    # The one remaining gap is waived by the corpus's bounded policy; a passing
-    # flagged case fails the run so the waiver cannot outlive the defect.
-    assert set(authored["known_gaps"]["failing"]) == {"n8n-compose-workflow"}
+    # The Compose case keeps its product-specific infrastructure observation
+    # without inventing a Kubernetes workload; no waiver outlives that defect.
+    assert authored["known_gaps"]["count"] == 0
+    assert authored["known_gaps"]["failing"] == []
     assert authored["known_gaps"]["passing"] == []
     assert all(not case.assertions.get("expected_findings") for case in load_corpus(DEFAULT_CORPUS)[1])
     assert all(

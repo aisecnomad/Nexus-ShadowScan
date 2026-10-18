@@ -338,13 +338,14 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
 │ 132 findings  •  128 shadow (inventory: 4 registered agents)               │
-│ critical 16  high 62  medium 54  •  cloud 30 identity 19 endpoint 18 …     │
+│ critical 16  high 51  medium 64  low 1                                     │
+│ cloud 30 identity 19 endpoint 18 …                                         │
 ╰────────────────────────────────────────────────────────────────────────────╯
- CRITICAL 100  SHADOW  code      agent-config Claude Code configured in repository root
- CRITICAL 100  SHADOW  code      mcp-server   MCP configuration: .mcp.json
- CRITICAL 100  SHADOW  saas      bot-app      GitHub App installed: claude
- CRITICAL  94  SHADOW  lowcode   agent        ServiceNow AI agent: Incident Triage Agent
- CRITICAL  91  SHADOW  endpoint  agent-config OpenClaw configured on dev-laptop-07 (~dana)
+ CRITICAL 100  SHADOW  code     agent-config Claude Code configured in repository root
+ CRITICAL 100  SHADOW  code     mcp-server   MCP configuration: .mcp.json
+ CRITICAL  94  SHADOW  lowcode  agent        ServiceNow AI agent: Incident Triage Agent
+ CRITICAL  91  SHADOW  endpoint agent-config OpenClaw configured on dev-laptop-07 (~dana)
+ CRITICAL  90  SHADOW  code     agent        Agent in services/research-agent: LangGraph, LangChain, Model Context Protocol (MCP)
 ```
 
 <details>

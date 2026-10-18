@@ -17,6 +17,17 @@ page stays the rollout guide.
 
 ## Review before deployment
 
+Application metadata and static tool attribution changed after the October 18
+review. Identity and SaaS name-only matches now remain provisional even for
+familiar brand names; compare the underlying non-name evidence before interpreting
+a removed vendor tag or lower confidence as a removed integration. Provider-bound
+Python tool loops and supported local JavaScript executable-tool imports can now
+produce agent findings where earlier revisions reported SDK usage. Compose and
+Dockerfile product evidence remains available without claiming a Kubernetes
+workload. Review the changed findings and establish a fresh comparison baseline
+for the pinned revision. These static checks do not establish runtime execution
+or replace the scoped tenant acceptance below.
+
 The model-identifier pass leaves coverage incomplete (exit 3) when a file
 exceeds its 400-literal analysis limit. Only literals that carry a vendor stem
 (model-id candidates) count; ordinary strings never reach the limit. Findings

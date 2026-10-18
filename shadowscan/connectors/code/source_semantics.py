@@ -5,6 +5,8 @@ JavaScript uses a bounded lexical resolver for imports and direct calls. A
 filesystem-supplied resolver can bind Python imports through already-read,
 import-only project-root shims. Other dynamic imports, re-exports and uncertain
 bindings remain supporting framework evidence. No scanned code is imported or executed.
+Provider SDK instances may cross an unescaped module helper parameter only
+when every direct call supplies the same constructed, annotation-resolved SDK type.
 
 Python AST work and JavaScript literal-branch tokens are capped at 50,000 per
 file; JavaScript statement nesting is bounded to 128 levels and source calls to
@@ -27,13 +29,13 @@ import weakref
 from bisect import bisect_left, bisect_right
 from collections import ChainMap
 from collections.abc import Callable, Collection, Mapping, MutableMapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 import regex
 
 from shadowscan.connectors.code.genkit_semantics import genkit_call_capabilities, genkit_tool_registration
-from shadowscan.connectors.code.javascript_dispatch import javascript_responses_dispatch_lines
+from shadowscan.connectors.code.javascript_imports import JavascriptToolResolver, ToolExport
 from shadowscan.connectors.code.javascript_reachability import (
     _TOKEN,
     JavascriptReachabilityLimit,
@@ -48,15 +50,17 @@ from shadowscan.connectors.code.javascript_tool_attribution import (
     javascript_tool_regions,
 )
 from shadowscan.connectors.code.langgraph_semantics import langgraph_agent_lines
-from shadowscan.connectors.code.provider_loops import provider_tool_loop_lines
+from shadowscan.connectors.code.provider_evidence import (
+    ProviderHelperBindings,
+    _LoopRequests,
+    protocol_evidence,
+)
 from shadowscan.connectors.code.provider_tools import (
     ProviderLiteralCache,
     has_provider_tools,
-    provider_tools_disabled,
     python_provider_tool_literals,
 )
 from shadowscan.connectors.code.python_reexports import ImportResolver
-from shadowscan.connectors.code.responses_loops import responses_dispatch_lines, responses_tool_loop_lines
 from shadowscan.connectors.code.source_capabilities import (
     CONFIGURED_FRAMEWORKS,
     CallCapabilities,
@@ -65,7 +69,11 @@ from shadowscan.connectors.code.source_capabilities import (
 )
 from shadowscan.connectors.code.source_ranges import _LookaheadBudget, _type_arguments_end
 from shadowscan.connectors.code.tool_attribution import python_tool_regions
-from shadowscan.connectors.code.vercel_tools import has_executable_vercel_tools, has_vercel_tool_loop
+from shadowscan.connectors.code.vercel_tools import (
+    executable_vercel_tool,
+    has_executable_vercel_tools,
+    has_vercel_tool_loop,
+)
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal, Signature
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout, required_literals
@@ -151,6 +159,7 @@ class _Call:
     structural_arguments: str = ""
     node: ast.Call | None = None
     tool_factories: tuple[str, ...] = ()
+    imported_tools: tuple[str, ...] = ()
     start: int = 0
     end: int = 0
     decorator: bool = False
@@ -233,40 +242,6 @@ _TOOL_REQUEST_METHODS = re.compile(
 _TOOL_ARGUMENTS = re.compile(
     r"(?<![\w$])(?:tools|toolConfig|functions|function_declarations|functionDeclarations)\s*[=:]"
 )
-# Import-bound request calls whose response shape the loop recognizer understands.
-_LOOP_REQUESTS: dict[str, tuple[str, frozenset[str]]] = {
-    # Plain, raw-response (``.parse()`` returns the message) and streaming
-    # (``get_final_message()`` / ``get_final_completion()``) request forms.
-    "openai": (
-        "provider.openai",
-        frozenset(
-            {
-                f"{client}.{api}chat.completions.{method}"
-                for client in ("OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI")
-                for api in ("", "beta.")
-                for method in ("create", "with_raw_response.create", "stream")
-            }
-        ),
-    ),
-    "anthropic": (
-        "provider.anthropic",
-        frozenset(
-            {
-                f"{client}.{api}messages.{method}"
-                for client in (
-                    "Anthropic",
-                    "AsyncAnthropic",
-                    "AnthropicBedrock",
-                    "AsyncAnthropicBedrock",
-                    "AnthropicVertex",
-                    "AsyncAnthropicVertex",
-                )
-                for api in ("", "beta.")
-                for method in ("create", "with_raw_response.create", "stream")
-            }
-        ),
-    ),
-}
 # Keyword arguments that evidence a specific capability of a bound construction.
 _KEYWORD_CAPABILITIES: dict[str, tuple[tuple[str, str], ...]] = {
     "framework.openai-agents-sdk": (("handoffs", "multi-agent"),),
@@ -347,6 +322,7 @@ class _PythonBindings(ast.NodeVisitor):
         resolve_import: ImportResolver | None = None,
         equivalent: Callable[[_Binding, _Binding], bool] | None = None,
         cells: Sequence[tuple[int, int]] = (),
+        helper_parameters: Mapping[int, Mapping[str, _Binding]] | None = None,
     ):
         self.text = text
         self.resolve_import = resolve_import
@@ -373,6 +349,11 @@ class _PythonBindings(ast.NodeVisitor):
         # A star import may bind any name; None means no module was visited.
         self._binding_sites: dict[str, list[tuple[int, int]]] | None = None
         self._star_import = True
+        # A second pass may follow SDK instances into a closed local helper.
+        # An annotation alone never establishes an instance: the first pass
+        # must resolve the argument supplied by every direct call site.
+        self.helper_parameters = helper_parameters or {}
+        self.provider_helpers = ProviderHelperBindings(pattern_timeout)
 
     def visit(self, node: ast.AST) -> Any:
         self._visited += 1
@@ -515,6 +496,8 @@ class _PythonBindings(ast.NodeVisitor):
             for name in names:
                 sites.setdefault(name, []).append((item.lineno, item.col_offset))  # type: ignore[attr-defined]
         self._binding_sites, self._star_import = sites, star
+        if not self.helper_parameters and not star:
+            self.provider_helpers.collect(node, sites)
         if not self.cell_starts:
             self.generic_visit(node)
             return
@@ -693,6 +676,7 @@ class _PythonBindings(ast.NodeVisitor):
                 self.imports.append((binding, node.lineno))
 
     def visit_Call(self, node: ast.Call) -> None:
+        self.provider_helpers.record_call(node, self._resolve)
         binding = self._resolve(node.func)
         if binding and (self.relevant is None or self.relevant(binding)):
             if len(self.calls) >= MAX_BOUND_CALLS:
@@ -723,7 +707,9 @@ class _PythonBindings(ast.NodeVisitor):
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         if node.value:
             self.visit(node.value)
-        self._store(node.target, self._resolve(node.value) if node.value else None)
+            self._store(node.target, self._resolve(node.value))
+        # A value-free annotation does not assign to an existing binding.
+        # Function-local annotations still shadow outer names via _function.
 
     def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
         self.visit(node.value)
@@ -777,6 +763,7 @@ class _PythonBindings(ast.NodeVisitor):
             for decorator in node.decorator_list:
                 self._decorator(decorator)
             self.scopes[-1][node.name] = None
+            self.provider_helpers.record_annotations(node, self._resolve)
         locals_: dict[str, _Binding | None] = {
             arg.arg: None for arg in [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
         }
@@ -811,6 +798,7 @@ class _PythonBindings(ast.NodeVisitor):
                 for alias in item.names:
                     locals_[alias.asname or alias.name.split(".")[0]] = None
             pending.extend(ast.iter_child_nodes(item))
+        locals_.update(self.helper_parameters.get(id(node), {}))
         self.scopes.append(locals_)
         self.scope_kinds.append("function")
         self._visit_block(body)
@@ -1461,6 +1449,9 @@ def _python_bindings(
             raise SourceBudgetExceeded("source binding AST limit exceeded")
     visitor = _PythonBindings(text, relevant, resolve_import, equivalent, cells)
     visitor.visit(tree)
+    if parameters := visitor.provider_helpers.inferred_parameters():
+        visitor = _PythonBindings(text, relevant, resolve_import, equivalent, cells, parameters)
+        visitor.visit(tree)
     return visitor.calls, visitor.imports, tree
 
 
@@ -1468,6 +1459,7 @@ def _javascript_bindings(
     text: str,
     ignored: list[tuple[int, int]],
     relevant: Callable[[_Binding], bool] | None = None,
+    resolve_tool: JavascriptToolResolver | None = None,
 ) -> tuple[list[_Call], list[tuple[_Binding, int]]]:
     starts = [start for start, _ in ignored]
 
@@ -1578,10 +1570,138 @@ def _javascript_bindings(
         masked = "".join(pieces)
     _drop_uncertain_bindings(bindings, shadow_masked, declaration_spans)
     calls = _javascript_calls(text, masked, bindings)
+    calls = _with_imported_tools(calls, text, shadow_masked, masked, declaration_spans, resolve_tool)
     calls.extend(_javascript_genkit_calls(text, masked, calls))
     if len(calls) > MAX_BOUND_CALLS:
         raise SourceBudgetExceeded("source binding call limit exceeded")
     return calls, imports
+
+
+def _with_imported_tools(
+    calls: list[_Call],
+    text: str,
+    masked: str,
+    live_masked: str,
+    declaration_spans: list[tuple[int, int]],
+    resolve: JavascriptToolResolver | None,
+) -> list[_Call]:
+    if resolve is None:
+        return calls
+    tools = tuple(_javascript_tool_bindings(text, masked, live_masked, declaration_spans, resolve))
+    return [replace(call, imported_tools=tools) for call in calls]
+
+
+def _javascript_tool_bindings(
+    text: str,
+    masked: str,
+    live_masked: str,
+    declaration_spans: list[tuple[int, int]],
+    resolve: JavascriptToolResolver,
+) -> dict[str, _Binding]:
+    """Named ES imports surviving the same conservative shadow checks as SDK imports."""
+    bindings: dict[str, _Binding] = {}
+    for start, end in declaration_spans:
+        if not live_masked[start:end].lstrip().startswith("import"):
+            continue
+        statement = text[start:end]
+        match = re.fullmatch(r"import\s*\{([^}]+)\}\s+from\s*(['\"])([^'\"]+)\2", statement)
+        if match is None:
+            continue
+        for spec in match[1].split(","):
+            named = re.fullmatch(r"\s*([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?\s*", spec)
+            if named is not None:
+                bindings[named[2] or named[1]] = _Binding(match[3], named[1])
+    bindings = {
+        name: binding for name, binding in bindings.items() if resolve(binding.module, binding.symbol)
+    }
+    _drop_uncertain_bindings(bindings, masked, declaration_spans)
+    return bindings
+
+
+def _javascript_mask(text: str, ignored: list[tuple[int, int]]) -> str:
+    pieces: list[str] = []
+    previous = 0
+    for start, end in ignored:
+        pieces.extend((text[previous:start], re.sub(r"[^\r\n]", " ", text[start:end])))
+        previous = end
+    pieces.append(text[previous:])
+    return "".join(pieces)
+
+
+def _javascript_module_statements(masked: str) -> list[tuple[int, int]]:
+    """Complete top-level statements only; brackets never acquire module scope."""
+    spans: list[tuple[int, int]] = []
+    stack: list[str] = []
+    start = 0
+    for count, token in enumerate(_TOKEN.finditer(masked)):
+        if count >= MAX_DECLARATION_TOKENS:
+            raise SourceBudgetExceeded("JavaScript imported-tool token budget exceeded")
+        if not count % 256:
+            pattern_timeout()
+        char = token.group()
+        if char in {"(", "[", "{"}:
+            stack.append({"(": ")", "[": "]", "{": "}"}[char])
+        elif char in {")", "]", "}"}:
+            if not stack or stack.pop() != char:
+                return []
+        elif char == ";" and not stack:
+            spans.append((start, token.start()))
+            start = token.end()
+    if not stack and masked[start:].strip():
+        spans.append((start, len(masked)))
+    return spans
+
+
+def javascript_tool_exports(text: str, ignored: list[tuple[int, int]]) -> dict[str, ToolExport]:
+    """Named module exports with a directly proven executable callback or a static re-export.
+
+    Only complete ``export const`` initializers and named ES re-exports qualify;
+    mutable exports, default/star exports and arbitrary expressions stay unknown.
+    """
+    if not re.search(r"\bexport\s*(?:const\b|\{)", text):
+        return {}
+    calls, _ = _javascript_bindings(text, ignored, lambda binding: binding.module == "ai")
+    factories = {call.start: call for call in calls if call.binding.symbol == "tool" and not call.partial}
+    masked = _javascript_mask(text, ignored)
+    exports: dict[str, ToolExport] = {}
+    for start, end in _javascript_module_statements(masked):
+        declaration = re.match(r"\s*export\s+const\s+([A-Za-z_$][\w$]*)\s*=\s*", masked[start:end])
+        if declaration is not None:
+            name = declaration[1]
+            expression = start + declaration.end()
+            call = factories.get(expression)
+            helpers = call.tool_factories if call is not None and not masked[call.end : end].strip() else ()
+            valid = executable_vercel_tool(text[expression:end], masked[expression:end], helpers)
+            # Ordinary literals cannot establish executable provenance. Do not
+            # rescan the entire module for their shadowing: generated bundles
+            # routinely export hundreds of these values.
+            exports[name] = (
+                valid and name not in exports and _javascript_export_unshadowed(name, masked, start, end)
+            )
+        else:
+            _javascript_reexports(text, masked, start, end, exports)
+    return exports
+
+
+def _javascript_export_unshadowed(name: str, masked: str, start: int, end: int) -> bool:
+    binding = {name: _Binding("", "")}
+    _drop_uncertain_bindings(binding, masked, [(start, end)])
+    return name in binding
+
+
+def _javascript_reexports(
+    text: str, masked: str, start: int, end: int, exports: dict[str, ToolExport]
+) -> None:
+    if not re.match(r"\s*export\s*\{", masked[start:end]):
+        return
+    statement = re.fullmatch(r"\s*export\s*\{([^}]+)\}\s+from\s*(['\"])([^'\"\r\n]+)\2\s*", text[start:end])
+    if statement is None:
+        return
+    for spec in statement[1].split(","):
+        named = re.fullmatch(r"\s*([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?\s*", spec)
+        if named is not None:
+            name = named[2] or named[1]
+            exports[name] = (statement[3], named[1]) if name not in exports else False
 
 
 def _javascript_assignment(masked: str, call: _Call) -> tuple[str, tuple[int, int]] | None:
@@ -2260,61 +2380,6 @@ class _ModuleMatches:
         return matches
 
 
-_JAVASCRIPT_OPENAI_CONSTRUCTORS = frozenset(
-    {
-        "default",
-        "OpenAI",
-        "AsyncOpenAI",
-        "AzureOpenAI",
-        "AsyncAzureOpenAI",
-    }
-)
-_RESPONSES_CREATE = frozenset(
-    {
-        "OpenAI.responses.create",
-        "AsyncOpenAI.responses.create",
-        "AzureOpenAI.responses.create",
-        "AsyncAzureOpenAI.responses.create",
-    }
-)
-
-
-@dataclass
-class _LoopRequests:
-    """Import-bound request calls that the tool loop and dispatch recognizers follow."""
-
-    provider: set[int] = field(default_factory=set)
-    responses: set[int] = field(default_factory=set)
-    javascript_constructors: set[int] = field(default_factory=set)
-
-    def record(self, language: str, call: _Call, signatures: dict[str, Signature], parsed: bool) -> None:
-        """Remember ``call`` if a recognizer follows it; ``parsed`` says a Python tree exists."""
-        if (
-            language == "javascript"
-            and "provider.openai" in signatures
-            and call.binding.module == "openai"
-            and call.binding.symbol in _JAVASCRIPT_OPENAI_CONSTRUCTORS
-        ):
-            self.javascript_constructors.add(call.line)
-        if not parsed or call.node is None:
-            return
-        if provider_tools_disabled(call.node):
-            return
-        loop_request = _LOOP_REQUESTS.get(call.binding.module)
-        if (
-            loop_request is not None
-            and loop_request[0] in signatures
-            and call.binding.symbol in loop_request[1]
-        ):
-            self.provider.add(id(call.node))
-        if (
-            "provider.openai" in signatures
-            and call.binding.module == "openai"
-            and call.binding.symbol in _RESPONSES_CREATE
-        ):
-            self.responses.add(id(call.node))
-
-
 def bound_source_matches(
     index: SignatureIndex,
     text: str,
@@ -2325,6 +2390,7 @@ def bound_source_matches(
     max_ast_nodes: int | None = None,
     truncated: list[int] | None = None,
     resolve_import: ImportResolver | None = None,
+    resolve_javascript_tool: JavascriptToolResolver | None = None,
     cells: Sequence[tuple[int, int]] = (),
 ) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
@@ -2363,7 +2429,9 @@ def bound_source_matches(
                 cells=cells,
             )
         else:
-            calls, imports = _javascript_bindings(text, ignored, module_matches.relevant)
+            calls, imports = _javascript_bindings(
+                text, ignored, module_matches.relevant, resolve_javascript_tool
+            )
     except RecursionError as exc:
         raise SourceBudgetExceeded("source binding recursion limit exceeded") from exc
     except (SyntaxError, ValueError) as exc:
@@ -2464,7 +2532,7 @@ def bound_source_matches(
         ):
             registrations.append((call.node, call.line, call.decorator))
     dispatch_calls: set[int] = set()
-    found.extend(_protocol_evidence(index, tree, text, ignored, requests, dispatch_calls))
+    found.extend(protocol_evidence(index, tree, text, ignored, requests, dispatch_calls))
     if found:
         if tree is not None:
             regions = python_tool_regions(
@@ -2581,9 +2649,9 @@ def _call_evidence(
             # A schema alone does not dispatch tools, and toolChoice/activeTools
             # can explicitly disable them. Preserve SDK usage on unknown shapes.
             verified = has_executable_vercel_tools(
-                call.arguments, call.structural_arguments, call.tool_factories
+                call.arguments, call.structural_arguments, call.tool_factories, call.imported_tools
             )
-            if not verified and has_vercel_tool_loop(call.arguments, call.structural_arguments):
+            if has_vercel_tool_loop(call.arguments, call.structural_arguments):
                 # Tool results go back to the model until the stop condition:
                 # an agent loop even when the tools are imported definitions.
                 verified, construction = True, "import-bound multi-step tool loop"
@@ -2736,80 +2804,4 @@ def _call_evidence(
             )
     for match in found:
         match.extra["bound_call_span"] = (call.start, call.end)
-    return found
-
-
-def _protocol_evidence(
-    index: SignatureIndex,
-    tree: ast.AST | None,
-    text: str,
-    ignored: list[tuple[int, int]],
-    requests: _LoopRequests,
-    dispatch_calls: set[int],
-) -> list[Match]:
-    """Return tool-calling protocol evidence from the loops and dispatch around bound requests."""
-    protocol = index.get("protocol.openai-function-calling")
-    if protocol is None:
-        return []
-    found: list[Match] = []
-    if tree is not None:
-        # Autonomy: approval-bypass evidence. The loop runs each tool the model selects and feeds
-        # the result back without a person approving the call.
-        for line in provider_tool_loop_lines(tree, requests.provider, dispatch_calls=dispatch_calls):
-            found.append(
-                Match(
-                    protocol,
-                    Signal(
-                        type="code",
-                        weight=0.9,
-                        agent_indicator=True,
-                        capabilities=["tool-use", "autonomous"],
-                        description="import-bound model-selected tool dispatch with conversation feedback",
-                    ),
-                    "provider tool-selection/dispatch/feedback loop",
-                    0.9,
-                    line=line,
-                    extra={"verified_agent": True},
-                )
-            )
-        for line in responses_tool_loop_lines(tree, requests.responses, dispatch_calls=dispatch_calls):
-            found.append(
-                Match(
-                    protocol,
-                    Signal(
-                        type="code",
-                        weight=0.9,
-                        agent_indicator=True,
-                        capabilities=["tool-use", "autonomous"],
-                        description="import-bound Responses function dispatch with ordered "
-                        "conversation feedback",
-                    ),
-                    "OpenAI Responses tool-selection/dispatch/feedback loop",
-                    0.9,
-                    line=line,
-                    extra={"verified_agent": True},
-                )
-            )
-    dispatch_lines = (
-        responses_dispatch_lines(tree, requests.responses, dispatch_calls=dispatch_calls)
-        if tree is not None
-        else javascript_responses_dispatch_lines(text, ignored, requests.javascript_constructors)
-    )
-    for line in dispatch_lines:
-        found.append(
-            Match(
-                protocol,
-                Signal(
-                    type="code",
-                    weight=0.85,
-                    agent_indicator=True,
-                    capabilities=["tool-use"],
-                    description="import-bound Responses selected-action dispatch",
-                ),
-                "OpenAI Responses selected-action dispatch",
-                0.85,
-                line=line,
-                extra={"verified_agent": True, "agent_classification": "openai-responses-tool-dispatch"},
-            )
-        )
     return found

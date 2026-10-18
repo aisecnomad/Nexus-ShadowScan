@@ -21,6 +21,7 @@ from typing import Any
 import regex as re
 import yaml
 
+from shadowscan.connectors.code.container_context import kubernetes_images
 from shadowscan.connectors.code.lockfiles import LOCKFILE_NAMES, LockfileError, LockInventory, parse_lockfile
 from shadowscan.signatures.matcher import _run_regex, pattern_timeout
 from shadowscan.utils.safe_json import strict_json_loads
@@ -977,10 +978,18 @@ def _yaml_line_matches(pattern: re.Pattern[str], text: str, deadline: float) -> 
 def parse_compose_or_k8s(text: str) -> ManifestResult:
     """docker-compose, Kubernetes manifests, Helm values, CI configs: images + env keys."""
     res = ManifestResult()
-    deadline = monotonic() + _pattern_timeout()
     lines = _LineIndex(text)
+    workload_images = kubernetes_images(text)
+    deadline = monotonic() + _pattern_timeout()
     for m in _yaml_line_matches(_YAML_IMAGE, text, deadline):
-        res.artifacts.append(Artifact("image", m.group(1), lines.at(m.start())))
+        value, line = m.group(1), lines.at(m.start())
+        extra = {"kubernetes_workload": True} if (value, line) in workload_images else {}
+        res.artifacts.append(Artifact("image", value, line, extra))
+        workload_images.discard((value, line))
+    # Flow mappings and alias-backed images have valid structural context even
+    # when the line-oriented generic image extractor cannot observe them.
+    for value, line in sorted(workload_images, key=lambda image: (image[1], image[0])):
+        res.artifacts.append(Artifact("image", value, line, {"kubernetes_workload": True}))
     for m in _yaml_line_matches(_YAML_REPO, text, deadline):
         val = m.group(1)
         if "/" in val and not val.startswith(("http", "git@")):

@@ -27,7 +27,7 @@ def test_current_idiom_cases_are_authored_and_labeled_with_explicit_selectors() 
 def test_current_idiom_corpus_passes_with_only_its_documented_gap() -> None:
     report = evaluate(CORPUS)
     assert report["passed"]
-    assert report["metrics"]["all"] | {"tp": 18, "fp": 0, "fn": 1, "tn": 12} == report["metrics"]["all"]
+    assert report["metrics"]["all"] | {"tp": 20, "fp": 0, "fn": 1, "tn": 13} == report["metrics"]["all"]
     # Realtime agents are agents in both SDK languages; a project class that only
     # shares the name, with no SDK import, is not.
     realtime = {

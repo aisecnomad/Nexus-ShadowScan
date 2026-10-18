@@ -330,7 +330,8 @@ def test_generic_saas_preserves_record_credential_context_in_all_reports(fixture
     assert result.complete and len(result.findings) == 1
     finding = result.findings[0]
     assert finding.resource == "saas:app:app-1"
-    assert finding.frameworks and "files:read" in finding.permissions
+    assert finding.frameworks == [] and "files:read" in finding.permissions
+    assert "identity-app.anthropic-claude" in finding.metadata["potential_frameworks"]
     assert REDACTED in finding.title and "Claude" in finding.title
     if fmt == "table":
         output = io.StringIO()

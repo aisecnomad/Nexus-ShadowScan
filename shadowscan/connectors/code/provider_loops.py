@@ -16,13 +16,19 @@ with the history passed through a parameter. Recognition otherwise stays within
 direct statements of one loop, its tool-call iteration and the ``if``
 branches inside them; other interprocedural flows, the Responses API and
 other languages remain supporting evidence until they have their own reviewed
-recognizers.
+recognizers. A dispatcher imported by an unconditional module-level statement
+before the call, and never shadowed, may also receive the exact selected
+function name and its arguments as two positional arguments. Nested and
+conditional dispatcher imports remain unproven. This
+proves a static dispatcher interface and result feedback, not the dispatcher's
+implementation, side effects or observed runtime execution.
 """
 
 from __future__ import annotations
 
 import ast
 from collections.abc import Iterator
+from dataclasses import dataclass
 
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
 
@@ -79,6 +85,14 @@ class _Budget:
             pending.extend(ast.iter_child_nodes(item))
 
 
+@dataclass(frozen=True)
+class _Imports:
+    symbols: dict[str, str]
+    # Textual order is deliberately conservative for calls in function bodies:
+    # a later import may execute first, but this pass does not simulate that.
+    dispatcher_lines: dict[str, int]
+
+
 def _unwrap(node: ast.AST) -> ast.AST:
     return node.value if isinstance(node, ast.Await) else node
 
@@ -87,6 +101,19 @@ def _root(node: ast.AST) -> str | None:
     while isinstance(node, (ast.Attribute, ast.Subscript)):
         node = node.value
     return node.id if isinstance(node, ast.Name) else None
+
+
+def _openai_choice(node: ast.AST, values: dict[str, str]) -> bool:
+    """The first choice of this provider response, not a similarly shaped object."""
+    return (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.slice, ast.Constant)
+        and type(node.slice.value) is int
+        and node.slice.value == 0
+        and isinstance(node.value, ast.Attribute)
+        and node.value.attr == "choices"
+        and _value(node.value.value, values) == "response"
+    )
 
 
 def _value(node: ast.AST, values: dict[str, str]) -> str | None:
@@ -102,19 +129,13 @@ def _value(node: ast.AST, values: dict[str, str]) -> str | None:
         return "response"  # raw_response.parse() is the provider message
     if isinstance(node, ast.Name):
         return values.get(node.id)
+    if _openai_choice(node, values):
+        return "choice"
     if isinstance(node, ast.Attribute):
         base = node.value
-        if node.attr == "message" and isinstance(base, ast.Subscript):
-            if (
-                isinstance(base.slice, ast.Constant)
-                and type(base.slice.value) is int
-                and base.slice.value == 0
-                and isinstance(base.value, ast.Attribute)
-                and base.value.attr == "choices"
-                and _value(base.value.value, values) == "response"
-            ):
-                return "message"
         parent = _value(base, values)
+        if node.attr == "message" and parent == "choice":
+            return "message"
         if node.attr == "tool_calls" and parent == "message":
             return "calls"
         if node.attr == "content" and parent == "response":
@@ -158,7 +179,25 @@ def _pairs(node: ast.AST) -> dict[str, ast.expr] | None:
     return pairs
 
 
-def _imports(tree: ast.AST, budget: _Budget) -> dict[str, str]:
+def _module_dispatchers(tree: ast.AST, symbols: dict[str, str], *, has_wildcard: bool) -> dict[str, int]:
+    """Only direct module imports establish dispatcher bindings in this pass."""
+    dispatchers: dict[str, int] = {}
+    if not isinstance(tree, ast.Module) or has_wildcard:
+        # Even a conditional wildcard may replace an earlier callable.
+        return dispatchers
+    for statement in tree.body:
+        if not isinstance(statement, (ast.Import, ast.ImportFrom)):
+            continue
+        for alias in statement.names:
+            name = alias.asname or (
+                alias.name.split(".", 1)[0] if isinstance(statement, ast.Import) else alias.name
+            )
+            if name in symbols:
+                dispatchers[name] = statement.lineno
+    return dispatchers
+
+
+def _imports(tree: ast.AST, budget: _Budget) -> _Imports:
     """Map imports that cannot be shadowed to their dotted targets.
 
     The provider request binder already rejects shadowed SDK clients. Sink
@@ -201,15 +240,15 @@ def _imports(tree: ast.AST, budget: _Budget) -> dict[str, str]:
             names.pop(name, None)
         if name in {"exec", "eval"} and name not in names:
             names[name] = ""  # a local binding shadows the builtin sink
-    return names
+    return _Imports(names, _module_dispatchers(tree, names, has_wildcard="*" in bindings))
 
 
-def _execution_sink(func: ast.expr, imports: dict[str, str]) -> bool:
+def _execution_sink(func: ast.expr, imports: _Imports) -> bool:
     if isinstance(func, ast.Name):
-        target = imports.get(func.id, f"builtins.{func.id}" if func.id in {"exec", "eval"} else "")
+        target = imports.symbols.get(func.id, f"builtins.{func.id}" if func.id in {"exec", "eval"} else "")
         return target in EXECUTION_SINKS
     if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
-        return f"{imports.get(func.value.id, '')}.{func.attr}" in EXECUTION_SINKS
+        return f"{imports.symbols.get(func.value.id, '')}.{func.attr}" in EXECUTION_SINKS
     return False
 
 
@@ -254,6 +293,25 @@ def _invalidate(statement: ast.AST, values: dict[str, str], budget: _Budget) -> 
             values.pop(item.name, None)
 
 
+def _selected_dispatcher(call: ast.Call, values: dict[str, str], imports: _Imports, budget: _Budget) -> bool:
+    """An unshadowed imported callable consumes this selection's name and arguments.
+
+    Names alone, argument-only transforms, fixed tool names and keyword bags
+    establish no dispatch. Known serialization/logging interfaces are not tool
+    dispatchers even when their arguments mention a selected call.
+    """
+    if not isinstance(call.func, ast.Name) or len(call.args) != 2 or call.keywords:
+        return False
+    if imports.dispatcher_lines.get(call.func.id, call.lineno) >= call.lineno:
+        return False
+    target = imports.symbols.get(call.func.id, "")
+    if not target or target.split(".", 1)[0] in {"builtins", "json", "logging", "pprint", "warnings"}:
+        return False
+    return _value(call.args[0], values) == "function-name" and _depends(
+        call.args[1], values, "arguments", budget
+    )
+
+
 def _assign(
     statement: ast.stmt,
     values: dict[str, str],
@@ -261,7 +319,7 @@ def _assign(
     *,
     dispatch: bool,
     declared_tools: set[str],
-    imports: dict[str, str],
+    imports: _Imports,
     dispatch_calls: set[int] | None = None,
 ) -> None:
     targets, expression = _assignment(statement)
@@ -284,6 +342,7 @@ def _assign(
                 and call.func.id in declared_tools
                 or _value(call.func, values) == "dispatcher"
                 or _execution_sink(call.func, imports)
+                or _selected_dispatcher(call, values, imports, budget)
             )
             if dispatch and target_is_tool:
                 kind = "result"
@@ -440,7 +499,7 @@ def _tool_iteration(
     history: str,
     budget: _Budget,
     declared_tools: set[str],
-    imports: dict[str, str],
+    imports: _Imports,
     collected: set[str],
     dispatch_calls: set[int],
 ) -> bool:
@@ -505,7 +564,7 @@ def _statements(
     history: str,
     budget: _Budget,
     declared_tools: set[str],
-    imports: dict[str, str],
+    imports: _Imports,
     dispatch_calls: set[int],
 ) -> bool:
     for number, statement in enumerate(statements):
@@ -563,7 +622,7 @@ def _request_loop(
     history: str,
     budget: _Budget,
     declared_tools: set[str],
-    imports: dict[str, str],
+    imports: _Imports,
     dispatch_calls: set[int],
 ) -> bool:
     values = {response: kind}

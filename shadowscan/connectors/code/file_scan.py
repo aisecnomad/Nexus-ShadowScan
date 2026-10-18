@@ -16,7 +16,7 @@ import time
 from bisect import bisect_right
 from collections.abc import Callable, Iterable, Sequence
 from collections.abc import Set as AbstractSet
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -25,6 +25,7 @@ import regex
 import yaml
 
 from shadowscan.connectors.base import ConnectorContext, incomplete_reason
+from shadowscan.connectors.code import javascript_imports
 from shadowscan.connectors.code.catalogs import (
     LOADER_EXTENSIONS,
     HostLineFilter,
@@ -37,6 +38,11 @@ from shadowscan.connectors.code.go_semantics import langchaingo_agent_matches
 from shadowscan.connectors.code.instruction_content import MAX_TEXT_BYTES as MAX_INSTRUCTION_TEXT_BYTES
 from shadowscan.connectors.code.instruction_content import inspect_instruction_text
 from shadowscan.connectors.code.java_semantics import spring_tool_registration_matches
+from shadowscan.connectors.code.javascript_imports import (
+    JavascriptImportLimit,
+    JavascriptToolResolver,
+    has_javascript_tool_import,
+)
 from shadowscan.connectors.code.lockfiles import LOCKFILE_NAMES, LockInventory
 from shadowscan.connectors.code.manifests import (
     Artifact,
@@ -80,12 +86,16 @@ from shadowscan.connectors.code.scan_records import (
     FindingBase,
     _bundled_signature,
     _document_declares_mcp,
+    _env_values_file,
     _local_module_predicate,
     _MatchedSource,
+    _names_mcp_key,
     _Project,
     _read_issue_reason,
     _SourceFile,
+    _UndecodableFile,
 )
+from shadowscan.connectors.code.scan_records import _ENV_TEMPLATE_WORDS as _ENV_TEMPLATE_WORDS
 from shadowscan.connectors.code.semantic_config import (
     agent_manifest_kind,
     is_agent_config_path,
@@ -101,6 +111,7 @@ from shadowscan.connectors.code.source_semantics import (
     SourceBudgetExceeded,
     SourceNotParsed,
     bound_source_matches,
+    javascript_tool_exports,
 )
 from shadowscan.connectors.code.source_text import (
     _FRONTMATTER,
@@ -1025,6 +1036,7 @@ class FileScanner:
 
     def _scan_content(self, scan: _ScanState, file: _SourceFile) -> None:
         """Match source code and configuration content; prose is matched by file name only."""
+        self._javascript_path_config(scan, file)
         # Match prose documentation by its dedicated filenames only.
         # Invocations in a README, even in fenced examples, do not
         # establish executable agent code in this repository.
@@ -1086,8 +1098,10 @@ class FileScanner:
         self.file_errors(file.rel, catalog_limits)
 
     def _defer_reexport_source(self, scan: _ScanState, source: _MatchedSource) -> bool:
-        """Keep only eligible root-level Python consumers, within a fixed memory budget."""
+        """Snapshot eligible exports and queue project-import consumers within fixed budgets."""
         file = source.file
+        if file.lang == "javascript":
+            return self._defer_javascript_tools(scan, source)
         if file.ext != ".py" or len(project_path(file.proj_root, file.rel).parts) != 1:
             return False
         scan.reexports.add(file.proj_root, file.rel, file.text)
@@ -1098,6 +1112,44 @@ class FileScanner:
         if len(scan.reexport_files) >= MAX_PENDING_FILES or scan.reexport_bytes + size > MAX_PENDING_BYTES:
             self.ctx.error(
                 f"code.filesystem: {file.rel}: Python re-export source budget exceeded",
+                reason="analysis-limit",
+            )
+            return False
+        scan.reexport_files.append(source)
+        scan.reexport_bytes += size
+        file.reexport_pending = True
+        return True
+
+    def _javascript_path_config(self, scan: _ScanState, file: _SourceFile) -> None:
+        if file.name == "package.json":
+            scan.javascript_tools.note_package(file.rel)
+        if file.name not in {"tsconfig.json", "jsconfig.json"}:
+            return
+        try:
+            scan.javascript_tools.add_config(file.proj_root, file.rel, file.text)
+        except (ValueError, RecursionError, JavascriptImportLimit):
+            self.ctx.error(
+                f"code.filesystem: {file.rel}: JavaScript path configuration analysis incomplete",
+                reason="unparsed-input",
+            )
+
+    def _defer_javascript_tools(self, scan: _ScanState, source: _MatchedSource) -> bool:
+        file = source.file
+        scan.javascript_tools.note_source(file.rel)
+        if not self.include_tests and _is_test_path(file.rel):
+            return False
+        size = len(file.text.encode("utf-8"))
+        limited = size > javascript_imports.MAX_MODULE_BYTES
+        try:
+            exports = {} if limited else javascript_tool_exports(source.text, source.ignored)
+        except SourceBudgetExceeded:
+            exports, limited = {}, True
+        scan.javascript_tools.add(file.proj_root, file.rel, exports, limited=limited)
+        if not has_javascript_tool_import(source.text):
+            return False
+        if len(scan.reexport_files) >= MAX_PENDING_FILES or scan.reexport_bytes + size > MAX_PENDING_BYTES:
+            self.ctx.error(
+                f"code.filesystem: {file.rel}: JavaScript imported-tool source budget exceeded",
                 reason="analysis-limit",
             )
             return False
@@ -1145,10 +1197,21 @@ class FileScanner:
         code_matches = self.index.match_code(content_text, lang, ignore_spans=ignored, scan=literals)
         return _MatchedSource(file, content_text, ignored, is_local_module, imports, code_matches)
 
-    def _bind_source(self, source: _MatchedSource, *, resolve_import: ImportResolver | None = None) -> None:
+    def _bind_source(
+        self,
+        source: _MatchedSource,
+        *,
+        resolve_import: ImportResolver | None = None,
+        resolve_javascript_tool: JavascriptToolResolver | None = None,
+    ) -> None:
         """Add the import-bound calls of a matched source file and record its code evidence."""
         bound, unbound = self._bound_matches(
-            source.file, source.text, source.ignored, source.is_local_module, resolve_import=resolve_import
+            source.file,
+            source.text,
+            source.ignored,
+            source.is_local_module,
+            resolve_import=resolve_import,
+            resolve_javascript_tool=resolve_javascript_tool,
         )
         file, content_text = source.file, source.text
         if self.agent_granularity == "source" and file.lang == "python" and file.ext == ".py" and not unbound:
@@ -1324,6 +1387,7 @@ class FileScanner:
         is_local_module: Callable[[str], bool],
         *,
         resolve_import: ImportResolver | None = None,
+        resolve_javascript_tool: JavascriptToolResolver | None = None,
     ) -> tuple[list[Match], list[tuple[int, int]]]:
         """Return bound evidence, including narrow Java, Go and C# proofs.
 
@@ -1374,6 +1438,7 @@ class FileScanner:
                 max_ast_nodes=self.max_ast_nodes,
                 truncated=truncated,
                 resolve_import=resolve_import,
+                resolve_javascript_tool=resolve_javascript_tool,
                 cells=file.cells,
             )
         except SourceBudgetExceeded as exc:
@@ -1745,6 +1810,9 @@ class FileScanner:
         deadline = self.ctx.deadline
         for position, source in enumerate(scan.reexport_files):
             file = source.file
+            analysis = {"python": "Python re-export", "javascript": "JavaScript imported-tool"}[
+                file.lang or "python"
+            ]
             size = len(file.text.encode("utf-8"))
             budget = scan_timeout_for_size(self.scan_timeout, size)
             wall_cap = budget * WALL_BUDGET_FACTOR
@@ -1755,7 +1823,7 @@ class FileScanner:
                 if remaining < budget + scan.margin:
                     if remaining > scan.margin + self.scan_timeout:
                         self.ctx.error(
-                            f"code.filesystem: {file.rel}: Python re-export analysis skipped; the remaining "
+                            f"code.filesystem: {file.rel}: {analysis} analysis skipped; the remaining "
                             f"connector deadline cannot cover its {budget:.0f}s matching budget; "
                             "lexical evidence retained",
                         )
@@ -1764,19 +1832,24 @@ class FileScanner:
                     others = len(scan.reexport_files) - position - 1
                     queued = f" and {others} other queued files" if others else ""
                     self.ctx.error(
-                        "code.filesystem: connector deadline reached before Python re-export analysis of "
+                        f"code.filesystem: connector deadline reached before {analysis} analysis of "
                         f"{file.rel}{queued}; results incomplete",
                     )
                     self._retain_lexical_evidence(scan.reexport_files[position:], deadline - scan.margin / 2)
                     break
             resolver = scan.reexports.resolver(file.proj_root, source.is_local_module)
+            javascript_resolver = scan.javascript_tools.resolver(file.proj_root, file.rel)
             with (
-                isolated(self.walker, file.rel, "Python re-export analysis"),
+                isolated(self.walker, file.rel, f"{analysis} analysis"),
                 self.index.scan_budget(seconds=budget, chars=size, wall_seconds=wall_cap),
             ):
                 try:
-                    self._bind_source(source, resolve_import=resolver)
-                except ReexportLimitError as exc:
+                    self._bind_source(
+                        source,
+                        resolve_import=resolver if file.lang == "python" else None,
+                        resolve_javascript_tool=javascript_resolver if file.lang == "javascript" else None,
+                    )
+                except (ReexportLimitError, JavascriptImportLimit) as exc:
                     self.ctx.error(
                         f"code.filesystem: {file.rel}: {exc}; analysis incomplete", reason="analysis-limit"
                     )
@@ -1859,7 +1932,7 @@ class FileScanner:
         """
         infra_names = infra_names if infra_names is not None else {}
         if art.kind == "image":
-            for m in self.index.match_image(art.value):
+            for m in self._image_matches(art):
                 m.line = art.line
                 if image_scale < 1.0:
                     m.weight = m.weight * image_scale
@@ -1912,6 +1985,15 @@ class FileScanner:
             for m in self.index.match_domains_in_text(art.value):
                 m.line = art.line
                 self._record(proj, m, rel, f"module: {art.value}")
+
+    def _image_matches(self, art: Artifact) -> list[Match]:
+        """An image identifies Kubernetes only inside a parsed workload PodSpec."""
+        return [
+            match
+            for match in self.index.match_image(art.value)
+            if match.signature_id != "cloud.kubernetes-agent-workloads"
+            or art.extra.get("kubernetes_workload") is True
+        ]
 
     @staticmethod
     def _looks_like_mcp_config(rel: str, name: str, text: str, document: Any = None) -> bool:
@@ -2198,26 +2280,6 @@ class FileScanner:
         return _may_declare_mcp(text.encode("latin-1", "replace").lower()), None
 
 
-# Words that make an env file's name a template's (.env.example, .env.sample,
-# config/.env.template, .env.dist): its values are samples to replace.
-_ENV_TEMPLATE_WORDS = frozenset({"example", "sample", "template", "tmpl", "dist", "default", "defaults"})
-
-
-def _env_values_file(name: str) -> bool:
-    """Whether a file holds environment or tool credential values themselves, not a template of them.
-
-    A ``.env`` file (``.env``, ``.env.local``, ``prod.env``) other than a
-    template, or a tool credential file (``CREDENTIAL_FILE_NAMES``). Only
-    there is a PASSWORD value never the name of another setting.
-    """
-    lower = name.lower()
-    if lower in CREDENTIAL_FILE_NAMES:
-        return True
-    if not (lower.startswith(".env") or lower.endswith(".env")):
-        return False
-    return _ENV_TEMPLATE_WORDS.isdisjoint(re.split(r"[._-]", lower))
-
-
 _WORKFLOW_FILE = re.compile(r"(?:^|/)\.github/workflows/[^/]+\.ya?ml$")
 
 
@@ -2297,93 +2359,3 @@ def _content_declares_mcp(rel: str, text: str, document: Any) -> bool:
 def _text_may_declare_mcp(text: str) -> bool:
     """``_may_declare_mcp`` of decoded text: its bytes lower-cased, without NUL characters."""
     return _may_declare_mcp(text.replace("\x00", "").encode("utf-8", "replace").lower())
-
-
-def _escaped_key(key: str) -> str:
-    """A pattern for ``key`` with any of its characters written as a JSON or TOML ``\\u`` escape."""
-    parts = []
-    for character in key:
-        digits = "".join(f"[{d.lower()}{d.upper()}]" if d.isalpha() else d for d in f"{ord(character):02x}")
-        parts.append(f"(?:{re.escape(character)}|\\\\(?:u00|U000000){digits})")
-    return "".join(parts)
-
-
-_TABLE_KEYS = f"(?:{_escaped_key('mcpServers')}|{_escaped_key('mcp_servers')})"
-
-
-# A key, not text: an unescaped double quote opens it (inside a JSON string every
-# quote is escaped) and a colon follows its closing quote.
-_JSON_TABLE_KEY = re.compile(rf'(?<!\\)"{_TABLE_KEYS}"\s*:')
-
-
-_JSON_MCP_KEY = re.compile(rf'(?<!\\)"{_escaped_key("mcp")}"\s*:')
-
-
-_JSON_SERVERS_KEY = re.compile(rf'(?<!\\)"{_escaped_key("servers")}"\s*:')
-
-
-# A TOML key at the start of a line or after an inline table's brace or comma: a
-# table header (``[mcp_servers.e]``, ``[tool.mcp_servers]``), a dotted key
-# (``mcp_servers.e.command =``) or an inline table (``mcp_servers = {``), bare or quoted.
-_TOML_TABLE_KEY = re.compile(
-    # A dotted prefix starts with a key character, so it cannot also take the
-    # blanks before it: one way to read each line, linear in its length.
-    r"(?:^|[{,])[ \t]*(?:\[\[?[ \t]*)?(?:[^\n=#\[\]{},\s][^\n=#\[\]{},]*\.[ \t]*)?"
-    rf"[\"']?{_TABLE_KEYS}[\"']?[ \t]*[.=\]]",
-    re.MULTILINE,
-)
-
-
-_YAML_SCAN_LOADER: Any = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
-
-
-def _yaml_names_mcp_key(text: str) -> bool:
-    """Whether a YAML mapping key in ``text`` names a server table, however the key is quoted or escaped.
-
-    Read from the scanner's tokens, which undo quoting and escapes as the
-    loader does, so a key is told from text in a string value (a heredoc, an
-    OpenAPI description quoting a client's configuration). Text the scanner
-    cannot read is taken to name one.
-    """
-    keys: set[str] = set()
-    key = False
-    try:
-        for token in yaml.scan(text, Loader=_YAML_SCAN_LOADER):
-            if key and isinstance(token, yaml.ScalarToken):
-                if token.value in ("mcpServers", "mcp_servers"):
-                    return True
-                keys.add(token.value)
-            key = isinstance(token, yaml.KeyToken)
-    except yaml.YAMLError:
-        return True
-    return {"mcp", "servers"} <= keys
-
-
-def _names_mcp_key(rel: str, text: str) -> bool:
-    """Whether ``text`` spells a server table key as a key, not as text in a string value.
-
-    The check of a document whose parse the walk's bounds cut
-    (``mcp_server_holders``): a JSON key opened by an unescaped quote and
-    followed by a colon, a YAML mapping key (``_yaml_names_mcp_key``), a TOML
-    key, any of them with its characters written as escapes. A key past the
-    bounds keeps the file MCP configuration, so its unread table is recorded;
-    an issue export or an OpenAPI document that quotes a client's
-    configuration in a string is not.
-    """
-    if rel.endswith(_YAML_SUFFIXES):
-        return _yaml_names_mcp_key(text)
-    if rel.endswith(".toml"):
-        return _TOML_TABLE_KEY.search(text) is not None
-    return _JSON_TABLE_KEY.search(text) is not None or (
-        _JSON_MCP_KEY.search(text) is not None and _JSON_SERVERS_KEY.search(text) is not None
-    )
-
-
-@dataclass(frozen=True)
-class _UndecodableFile:
-    """A binary or undecodable file whose gap is discounted or declared, read for credentials only.
-
-    ``on_disk`` is its name below the open scan root, as ``_read_source`` read it.
-    """
-
-    on_disk: PurePosixPath

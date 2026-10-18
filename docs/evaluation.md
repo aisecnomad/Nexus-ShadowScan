@@ -198,15 +198,15 @@ promotes to an agent through C# code patterns for `Kernel.CreateBuilder()`,
 `Plugins.AddFromType<>()`, `[KernelFunction("...")]` and automatic tool
 invocation, and a Flask view defined as `def create_agent():` no longer matches
 the LangChain `create_agent(` call pattern. At the time of writing the scanner
-scores 15 TP, 1 FP, 2 FN and 15 TN on it (precision 0.94, recall 0.88,
-specificity 0.94). Three failures of the binary target carry `known_gap: true` and explain the
-cause in their description: the runbook's illustrative provider-shaped value is
-reported as a hardcoded credential because it is well formed and high entropy,
-a finding a secret scanner cannot rule out from the surrounding prose; and the
-OpenAI tool-calling script and the LiteLLM proxy worker are reported as LLM
-usage rather than agents because generic loops and subprocess idioms cannot
-confirm an agent without corroborating framework evidence, a deliberate
-precision rule documented in docs/scanning.md. Binary-correct cases can still
+scored 15 TP, 1 FP, 2 FN and 15 TN on it (precision 0.94, recall 0.88,
+specificity 0.94). The October 18 fixes connect the OpenAI script's and LiteLLM
+worker's provider-bound tool requests, model-selected dispatches and matching
+result feedback, yielding 17 TP, 1 FP, 0 FN and 15 TN on the same sources and
+binary targets. Only the runbook retains `known_gap: true`: its illustrative
+provider-shaped value is reported as a hardcoded credential because it is well
+formed and high entropy, which a secret scanner cannot rule out from surrounding
+prose. The fixes do not promote a generic loop or subprocess idiom by itself.
+Binary-correct cases can still
 contain off-target findings or vendor attribution. The separate authored
 attribution suite below checks those aspects. Like the other corpora, this one
 is author-written: the authors chose the frameworks, the file layouts and the
@@ -222,9 +222,13 @@ checks expected and forbidden findings and declares an `exact_findings` list
 to compare the full emitted finding multiset. On the October 2 implementation,
 the binary target scores 14 TP and 10 TN, while one binary-correct case fails attribution
 checks: Docker Compose beside an n8n workflow is also credited to Kubernetes
-agent workloads. That case has explicit `known_gap: true` under the corpus's
-bounded `known_gap_policy`, remains in the case and assertion counts, and is
-listed as a failing gap. Twenty-three of 24 exact finding sets pass. These are
+agent workloads. That case carried explicit `known_gap: true` under the corpus's
+bounded `known_gap_policy`, remained in the case and assertion counts, and was
+listed as a failing gap. Twenty-three of 24 exact finding sets passed then.
+The October 18 fix requires structural Kubernetes context for the image
+signature. The n8n case now explicitly expects its valid Compose `platform.n8n`
+infrastructure finding alongside the agent and still forbids the Kubernetes
+signature; its source files and binary target are unchanged. These are
 intentionally selected development fixtures; their scores do not measure field
 error rates or human-labeled vendor accuracy.
 `field_review_corpus.json` holds eight synthetic cases written after a field
@@ -255,9 +259,9 @@ annotation ledger remain frozen; adding regression cases does not refresh their
 independence. The [acceptance verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md) requires
 separate declared human-reviewed holdout evidence for deployment decisions.
 
-`tools/evaluation/current_idioms_corpus.json` holds 28 short synthetic cases
-(17 positives, 11 negatives) written from scratch, with AI assistance, in the
-shape current SDK documentation uses. The positives are an AI SDK 7 chat route
+`tools/evaluation/current_idioms_corpus.json` holds 34 short synthetic cases
+(21 positives, 13 negatives) written from scratch, with AI assistance, in the
+shape current SDK documentation uses. The positives include an AI SDK 7 chat route
 whose `streamText` call loops over imported tools with `stopWhen:
 isStepCount(5)`, an AI SDK 6 `ToolLoopAgent`, OpenAI Agents SDK agents in
 Python (`Runner.run`) and TypeScript (`run`), Claude Agent SDK `query()` in
@@ -278,9 +282,14 @@ the name `Server`, which must produce no finding, and an MCP client next to
 `aiohttp` and `socket.io` servers constructed as `Server(`, which must keep
 `tool-use` alone and no `mcp-server`. The positives also assert an
 agent finding attributed to the expected product or provider. One case is a
-`known_gap`: a single-step `generateText` call with an imported executable tool is model-selected dispatch, but without a
-stop condition the scanner only recognizes inline `tool({ execute })`
-definitions, so it reports SDK usage. Its first run, against the scanner before
+`known_gap`: a single-step `generateText` sample imports an executable tool through
+`@/` without declaring that alias in a TypeScript or JavaScript configuration.
+It retains its original source and positive target, but the scanner leaves the
+tool's provenance unresolved. Three October 18 controls explicitly declare a
+configured alias or relative path, and distinguish executable tools from an
+imported schema without an execution callback. The identical expanded inputs
+were evaluated before and after implementation; they are authored regressions,
+not a fresh holdout. Its first run, against the scanner before
 the October fixes, failed two cases: the AI SDK 7 tool loop was missed and the
 rule repository was reported as LLM usage. Like the other authored suites, its
 scores describe these cases only, not field precision or recall.

@@ -20,7 +20,7 @@ from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
 from shadowscan.connectors.common import apply_matches, config_boolean, failure_summary, finalize
-from shadowscan.connectors.identity.common import assess_app, summarize_scopes
+from shadowscan.connectors.identity.common import app_product_or_hint, assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
@@ -421,7 +421,7 @@ class TeamsConnector(BaseConnector):
         for bot_id in bot_ids:
             apply_matches(f, self.index.match_client_id(bot_id))
         is_custom = app.get("distributionMethod") == "organization"
-        if not f.frameworks and not bot_ids and not is_custom:
+        if not app_product_or_hint(f) and not bot_ids and not is_custom:
             return None
         listed_versions = ", ".join(versions[:_DEFINITION_SAMPLE]) or "unknown"
         if len(versions) > _DEFINITION_SAMPLE:

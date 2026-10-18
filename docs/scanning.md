@@ -1098,6 +1098,16 @@ that connection. Configured opaque tools can establish `tool-use`, while an
 unresolved implementation cannot establish its execution capability.
 Registration is source evidence, not proof that a deployed workload ran it.
 
+Provider-bound Python request/dispatch/result loops can establish agent behavior
+without an agent framework. The supported flow ties the model-selected tool name
+and arguments to execution and matching result feedback in the same history;
+closed, typed helpers can preserve a client's provenance from agreeing constructed
+arguments at direct call sites. JavaScript executable tools can resolve through
+supported relative imports and explicit root path mappings within the same
+manifest project. Unknown aliases, packages and unproven callbacks retain usage
+evidence. These are bounded static proofs, not observed execution; see
+[code connector boundaries](connectors/code.md).
+
 JavaScript/TypeScript binding skips only provably constant-dead literal
 `if`/`else` and `while` branches, including supported parentheses and negation,
 and preserves executed alternatives. Hoisted-name shadow uncertainty remains
