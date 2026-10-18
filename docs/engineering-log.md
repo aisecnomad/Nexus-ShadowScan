@@ -13,6 +13,17 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### A file's source-binding time budget is counted as `timeout`, as the docs define it (October 18)
+
+- `code.filesystem` counted every budget the import-bound source binder
+  raised (`SourceBudgetExceeded`) as `analysis-limit`. `docs/scanning.md`
+  defines `timeout` as including "a file's matching budget", and the
+  binder's time budget is one, so `incomplete_reasons` named the wrong
+  category for it. The reason is now read from the binder's own message: a
+  time budget is `timeout`, and an AST, call, nesting or recursion limit
+  stays `analysis-limit`. Only the category changes; the file is still
+  incomplete and keeps its lexical evidence.
+
 ### Under the ci profile a project whose manifest repeats a key is a project, as npm and Composer read it; a template at the repository root is documented as not declared (October 18)
 
 - The ci profile declares the gaps in documentation and example paths unless

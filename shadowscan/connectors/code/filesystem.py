@@ -4452,10 +4452,12 @@ class FilesystemConnector(BaseConnector):
                 f"code.filesystem: {file.rel}: import-bound analysis skipped ({exc}); "
                 "lexical evidence retained"
             )
+            # A time budget is a timeout; an AST, call, nesting or recursion limit is not.
+            reason = incomplete_reason(str(exc))
             if not self.include_tests and _is_test_path(file.rel):
-                self._strict_gap_warning(message, reason="analysis-limit")
+                self._strict_gap_warning(message, reason=reason)
             else:
-                self.ctx.error(message, reason="analysis-limit")
+                self.ctx.error(message, reason=reason)
             return [], whole
         except SourceNotParsed as exc:
             # Newer syntax than the interpreter knows, or invalid source: no
