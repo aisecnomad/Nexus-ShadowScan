@@ -631,6 +631,10 @@ def _run_plugin_process(
         inventory=[],
         plugin_execution="thread",
         dump_records=str(dump_directory) if dump_directory else None,
+        # The supervisor enforces the deadline it set here. A worker that raised its own
+        # for a large input (estimate_timeout_seconds) would pace itself past it and be
+        # stopped with nothing reported; as a chosen deadline, it is honoured unchanged.
+        connector_timeout_seconds=float(runner._config.connector_timeout_seconds),
     )
     parent, child = socket.socketpair()
     try:

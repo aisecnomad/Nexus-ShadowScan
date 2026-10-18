@@ -13,6 +13,40 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Code after a block comment that closes on its line is read as code for redaction; a process-mode plugin keeps the deadline its supervisor enforces (October 18)
+
+A sibling session's agent review of the integrated branch reported four
+findings. Two were reproduced and are fixed here; the other two are not
+changed.
+
+- **Leak shared with main, fixed.** The line-tail pass of `sanitize_text`
+  took a line's first comment as the rest of the line. After a block comment
+  that closed on the line (`/* note */ dbPassword: process.env.P?.trim() ||
+  "<pw>",`), the code that followed was read as comment, where only
+  key-shaped tokens are withheld. A password fallback, a keyword default or
+  a later literal after a credential's name therefore stayed in evidence;
+  main leaks every such shape. A carried comment that closed mid-line handed
+  the whole line on, so an apostrophe in its text (`don't */`) opened a
+  phantom literal. The pass now reads the code after a closed `/*...*/` or
+  `<!--...-->` as a line of its own, at most 16 comments a line so that a
+  line of many comments stays linear. After a carried comment's closer it
+  reads only what follows the closer.
+- **Regression against main, fixed.** In process mode the supervisor
+  enforces the deadline it starts a worker with. The worker received the
+  unset default, though, so a plugin that proposes a longer deadline for a
+  large input (`estimate_timeout_seconds`, which FilesystemConnector
+  implements and a subclass inherits) raised the worker's own deadline. The
+  worker then paced itself past the deadline it was held to and was stopped
+  with nothing reported, where it would have reported a bounded subset. The
+  worker now receives the deadline as a chosen one, which is never raised;
+  `docs/api/engine.md` says so.
+- **Not changed.** The over-quota probe of the credential matcher does run
+  the judge on one more match, but the placeholder samples and repeated
+  locations it can add are bounded on their own (five each), and repeats
+  only list again a credential already counted, so nothing past the quota is
+  reported. `ScanResult.summary()` merging incomplete-reason counts by hand
+  where `engine._combine` uses `Counter` is a refactor and is left for one.
+
 ### Credential review fixes, round 6: sentence passwords with a weak verb, camelCase password names and UUID defaults withheld, catalog and ConfigParser defaults, CR-only text in linear time (October 18)
 
 An adversarial review of the round-5 credential rules reproduced these, and an

@@ -1081,6 +1081,33 @@ def test_spawned_plugin_scrubs_identity_key_from_worker_environment(installed_pr
     _assert_reaped(installed_probe)
 
 
+def test_a_worker_keeps_the_deadline_its_supervisor_enforces(monkeypatch):
+    """Regression: the worker received the unset default deadline, so a plugin that proposes a
+    longer one for a large input (estimate_timeout_seconds, as FilesystemConnector does) raised
+    the worker's deadline while the supervisor still stopped it at the original one: the worker
+    paced itself to a deadline it never had and was stopped with nothing reported."""
+    from shadowscan import plugin_process
+    from shadowscan.config import connector_timeout_is_default
+
+    seen = []
+
+    class Refused(Exception):
+        pass
+
+    def capture(*args, **kwargs):
+        seen.append(kwargs["args"][1])
+        raise Refused
+
+    monkeypatch.setattr(plugin_process, "_WorkerProcess", capture)
+    engine = _engine()
+    assert connector_timeout_is_default(engine.config.connector_timeout_seconds)
+    result = engine.run()
+    assert not result.complete
+    (config,) = seen
+    assert not connector_timeout_is_default(config.connector_timeout_seconds)
+    assert config.connector_timeout_seconds == engine.config.connector_timeout_seconds
+
+
 def _worker_ledger(gaps: int) -> dict:
     ledger = CoverageLedger()
     ledger.add_examined(40)

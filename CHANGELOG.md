@@ -21,6 +21,7 @@ estate is in-sample.
 - A CPython 3.12 tokenizer fault is an unreadable source, not an exception; JavaScript string spans stay inside the text (#259; October 18)
 - go.mod require blocks read in linear time; no dependency named "(" (October 18)
 - CLI package, reporter protocol, condensed README, identity sign-in clients and API page narratives (#252, #253; October 17)
+- Code after a block comment that closes on its line is read as code for redaction; a process-mode plugin keeps the deadline its supervisor enforces (October 18)
 - Credential review fixes, round 6: sentence passwords with a weak verb, camelCase password names and UUID defaults withheld, catalog and ConfigParser defaults, CR-only text in linear time (October 18)
 - Credential review fixes, round 5: every password entry, closed label vocabularies, settings defaults, password fallbacks, repeated lines and netrc paths (October 17)
 - Credential review fixes: env-file passwords, typed reads, pasted names, repeated credentials, labels and cut-read evidence (October 17)
