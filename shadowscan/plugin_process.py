@@ -60,17 +60,22 @@ _MAX_DESCRIPTOR_LIMIT = 1 << 20
 # token or connection string whose name ends in a host or connection name:
 # Terraform's ``TF_TOKEN_<host>``, npm's ``npm_config__auth*``, .NET's
 # ``ConnectionStrings__<name>``, Azure App Service's ``<type>CONNSTR_<name>``),
+# is npm's per-registry ``npm_config_//<registry>/:_auth``, names a .NET
+# connection string anywhere in its configuration path (``App_ConnectionStrings__Db``,
+# ``Azure__Storage__ConnectionString``),
 # is a Bundler host credential (``BUNDLE_<HOST>__COM``: any ``BUNDLE_`` name
 # with ``__``, which also takes the gem-scoped ``BUNDLE_BUILD__<gem>`` and
 # ``BUNDLE_LOCAL__<gem>``), or is one of the CI and cloud SDK variables that
 # carry a credential, the file holding one or a session without such a word at
 # the end of their names. A ``*_URL``, ``*_URI`` or ``*_DSN`` variable is
 # withheld when its value carries a user or password
-# (``redis://:password@host``, ``https://token@host``); a webhook URL
-# (``*_WEBHOOK``, ``*_WEBHOOK_URL``) carries its secret in the path and is
-# always withheld. Configuration selectors (``AWS_PROFILE``, ``KUBECONFIG``,
-# ``CLOUDSDK_CONFIG``, ``DOCKER_CONFIG``, ``BUNDLE_GEMFILE``) and endpoints
-# (``IDENTITY_ENDPOINT``, ``NPM_CONFIG_REGISTRY``) stay, as does everything
+# (``redis://:password@host``, ``https://token@host``) or is a webhook of a
+# chat service that carries its secret in the path (``hooks.slack.com``); a
+# webhook URL by name (``*_WEBHOOK``, ``*_WEBHOOK_URL``, ``*_WEBHOOK_URI``,
+# ``*_WEBHOOK_URLS``, ``*_WEBHOOKURL``) is always withheld. Configuration
+# selectors (``AWS_PROFILE``, ``KUBECONFIG``, ``CLOUDSDK_CONFIG``,
+# ``DOCKER_CONFIG``, ``BUNDLE_GEMFILE``) and endpoints (``IDENTITY_ENDPOINT``,
+# ``NPM_CONFIG_REGISTRY``) stay, as does everything
 # else a program needs: PATH, HOME, locale, temporary directory, proxy and CA
 # settings. ``SESSION`` is not a suffix: it would also take the desktop's
 # DESKTOP_SESSION.
@@ -91,6 +96,9 @@ CREDENTIAL_NAME_SUFFIXES: tuple[str, ...] = (
     "AUTHTOKEN",
     "WEBHOOK",
     "WEBHOOK_URL",
+    "WEBHOOK_URI",
+    "WEBHOOK_URLS",
+    "WEBHOOKURL",
 )
 CREDENTIAL_NAME_PREFIXES: tuple[str, ...] = (
     "OP_SESSION_",
@@ -130,12 +138,24 @@ CREDENTIAL_NAMES: frozenset[str] = frozenset(
         "OCI_CLI_SECURITY_TOKEN_FILE",
         "DATABASE_URL",
         "DATABASE_DSN",
+        "YARN_NPM_AUTH_IDENT",
     }
 )
 CREDENTIAL_URL_SUFFIXES: tuple[str, ...] = ("URL", "URI", "DSN")
 _NAME_VERSION = re.compile(r"_V[0-9]+$")
 # Bundler reads a host's credentials from BUNDLE_ and the host, ``.`` written ``__``.
 _BUNDLER_HOST = re.compile(r"BUNDLE_.+__")
+# npm's per-registry basic credential: ``npm_config_//<registry>/:_auth``.
+_NPM_REGISTRY_AUTH = re.compile(r"NPM_CONFIG_//.*[:_]_AUTH")
+# .NET reads ``ConnectionStrings:<name>`` and ``<section>:ConnectionString`` from any
+# configuration path, ``:`` written ``__``, after an AddEnvironmentVariables prefix.
+_DOTNET_CONNECTION_STRING = re.compile(r"(?:^|_)CONNECTIONSTRINGS?(?:__|$)")
+# Chat-service webhooks: the URL is the credential, with no user information in it.
+_WEBHOOK_URL = re.compile(
+    r"://(?:hooks\.slack\.com/|discord(?:app)?\.com/api/webhooks/|[^/]*\.webhook\.office\.com/"
+    r"|outlook\.office(?:365)?\.com/webhook|chat\.googleapis\.com/v1/spaces/)",
+    re.IGNORECASE,
+)
 
 
 def _ends_in(upper: str, suffixes: tuple[str, ...]) -> bool:
@@ -147,6 +167,8 @@ def is_credential_name(name: str) -> bool:
     upper = name.upper()
     if upper in CREDENTIAL_NAMES or upper.startswith(CREDENTIAL_NAME_PREFIXES) or _BUNDLER_HOST.match(upper):
         return True
+    if _NPM_REGISTRY_AUTH.fullmatch(upper) or _DOTNET_CONNECTION_STRING.search(upper):
+        return True
     return _ends_in(_NAME_VERSION.sub("", upper), CREDENTIAL_NAME_SUFFIXES)
 
 
@@ -156,12 +178,15 @@ def is_credential_variable(name: str, value: str) -> bool:
     The names :func:`is_credential_name` withholds, and a ``*_URL``, ``*_URI`` or ``*_DSN``
     whose value has an ``@`` after ``://``: a user and password, or a token, as the URL's
     user information. Any ``@`` after the scheme counts, so a password that leaves ``/``,
-    ``?`` or ``#`` unescaped is withheld too.
+    ``?`` or ``#`` unescaped is withheld too. So is such a variable holding a chat service's
+    webhook (``SLACK_HOOK_URL=https://hooks.slack.com/services/...``), whose path is the secret.
     """
     if is_credential_name(name):
         return True
+    if not _ends_in(name.upper(), CREDENTIAL_URL_SUFFIXES):
+        return False
     _, separator, rest = value.partition("://")
-    return bool(separator) and "@" in rest and _ends_in(name.upper(), CREDENTIAL_URL_SUFFIXES)
+    return bool(separator) and ("@" in rest or _WEBHOOK_URL.search(value) is not None)
 
 
 def _withheld_names(environ: Mapping[str, str], keep: Iterable[str]) -> list[str]:

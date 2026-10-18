@@ -271,8 +271,8 @@ Process mode is lifecycle isolation, not a security sandbox. Workers inherit the
 scanner's privileges. They are started without the credential-shaped environment
 variables the operator exported for the built-in connectors (`*_TOKEN`,
 `*_SECRET`, `*_KEY`, `*_PASSWORD`, `*_PAT`, connection strings, webhook URLs
-and URLs that carry a password, the CI, cloud SDK and package tooling
-credential variables;
+and URLs that carry a password or are a chat service's webhook, the CI, cloud
+SDK and package tooling credential variables; `docs/connectors.md` lists them;
 `options.plugin_env` names the ones a plugin keeps), but a worker runs as the
 scanner's user, so a plugin that looks for them can still read its parent's
 environment, every withheld variable and `SHADOWSCAN_IDENTITY_KEY` included,
