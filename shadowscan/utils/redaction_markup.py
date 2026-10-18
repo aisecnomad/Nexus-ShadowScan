@@ -27,8 +27,18 @@ from shadowscan.utils.redaction_rules import (
 # <apiKey>v</apiKey>) or a key/name attribute naming a credential beside a
 # value attribute or element content (<add key="OpenAIApiKey" value="v"/>,
 # <entry key="api.key">v</entry>, <setting name="ApiKey"><value>v</value>).
+#
+# The quantifiers are possessive. Name characters can belong to the tag or to
+# the attributes, so with backtracking an unterminated tag ('<a' followed by a
+# long run of letters and no '>') was retried at every split of that run:
+# quadratic, in stdlib re, which no deadline interrupts. Possessive matching
+# gives the same matches: the tag is always the longest name run, and the
+# attribute alternatives never overlap (a quote opens only a quoted string,
+# which ends at its first closing quote), so giving characters back can never
+# reach the closing '>'.
 _XML_TAG = re.compile(
-    r"<(?P<tag>[A-Za-z_][\w.:-]*)(?P<attributes>(?:[^<>\"']|\"[^\"<>\r\n]*\"|'[^'<>\r\n]*')*)>"
+    r"<(?P<tag>[A-Za-z_][\w.:-]*+)"
+    r"(?P<attributes>(?:[^<>\"']|\"[^\"<>\r\n]*+\"|'[^'<>\r\n]*+')*+)>"
 )
 _XML_ATTRIBUTE = re.compile(
     r"(?<![\w.:-])(?P<name>[A-Za-z_][\w.:-]*)[ \t\r\n]*=[ \t\r\n]*"

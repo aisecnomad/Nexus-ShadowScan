@@ -91,16 +91,31 @@ def test_unbalanced_call_at_the_end_of_the_source_is_partial(index):
     assert truncated == [2]
 
 
-def test_long_genkit_flow_keeps_the_files_bound_evidence(tmp_path, run_connector):
-    # A Genkit flow body is the argument of defineFlow: real flows pass 8 KiB.
-    steps = "".join(f"    const step{number} = await fetch(`/api/{number}`);\n" for number in range(200))
-    source = (
+def _genkit_flow(steps: int) -> str:
+    body = "".join(f"    const step{number} = await fetch(`/api/{number}`);\n" for number in range(steps))
+    return (
         'import { genkit, z } from "genkit";\nimport { googleAI } from "@genkit-ai/googleai";\n\n'
         "const ai = genkit({ plugins: [googleAI()] });\n\n"
         'export const menuFlow = ai.defineFlow({ name: "menu" }, async (input) => {\n'
-        + steps
+        + body
         + "    return input;\n});\n"
     )
+
+
+def test_a_flow_past_8_kib_is_read_in_full(tmp_path, run_connector):
+    # A Genkit flow body is the argument of defineFlow: real flows pass 8 KiB,
+    # as agents with inline instructions do. Read only that far, the call's
+    # options were unread and every such file left the scan incomplete.
+    source = _genkit_flow(200)
+    assert 8192 < len(source) < MAX_CALL_TEXT
+    (tmp_path / "flow.ts").write_text(source)
+    _, context = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    assert not context.stats.incomplete and not context.stats.errors
+
+
+def test_long_genkit_flow_keeps_the_files_bound_evidence(tmp_path, run_connector):
+    source = _genkit_flow(MAX_CALL_TEXT // 40)
+    assert source.index("defineFlow") + MAX_CALL_TEXT < len(source)
     (tmp_path / "flow.ts").write_text(source)
     findings, context = run_connector(
         "code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False

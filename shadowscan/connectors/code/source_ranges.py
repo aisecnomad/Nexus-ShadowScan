@@ -16,6 +16,7 @@ from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
+from shadowscan.utils.python_tokens import TokenizerFault, generate_tokens
 
 _RUBY_BLOCK_END = re.compile(r"(?m)^=end(?:\s|$)")
 
@@ -386,7 +387,7 @@ def _xml_data_document(text: str) -> bool:
     if "<!ENTITY" in upper or "<!ATTLIST" in upper:
         return False
     try:
-        root = ET.fromstring(text.removeprefix("\ufeff"))
+        root = ET.fromstring(text.removeprefix("\ufeff"))  # noqa: S314 - entity declarations are refused before parsing; see the guard above
     except (ET.ParseError, RecursionError, ValueError):
         return False
     return root.tag in _XML_DATA_ROOTS
@@ -439,8 +440,10 @@ def _python_ranges_from(
         for name in ("FSTRING_START", "FSTRING_MIDDLE", "FSTRING_END")
         if hasattr(tokenize, name)
     }
+    read_to = (1, 0)  # where the last token the tokenizer produced ended
     try:
-        for count, token in enumerate(tokenize.generate_tokens(reader.readline)):
+        for count, token in enumerate(generate_tokens(reader.readline)):
+            read_to = token.end
             # The C tokenizer runs without a Python check point, and on CPython 3.12.0 to
             # 3.12.3 it is quadratic in the tokens of one long logical line. Charge the
             # per-input matching budget between tokens, as the JavaScript lexer does, so a
@@ -495,19 +498,30 @@ def _python_ranges_from(
             # this error past the last line; 3.12+ reports the start of the last
             # line, which would mask code the tokenizer already read.
             return False, None
-        start = offset(position)
-        if start < len(text):  # an error reported at EOF itself masks nothing
-            spans.append((start, len(text)))
+        _mask_rest(spans, text, offset(position))  # an error reported at EOF itself masks nothing
         # An unterminated multi-line literal is masked through EOF: nothing after
         # its opening can be executable Python. Any other tokenizer error
         # (Python 3.12+ raises for mid-file lexical errors that 3.11 tolerated)
         # masks the remainder ambiguously and must mark the file incomplete.
         return not (isinstance(exc, tokenize.TokenError) and "EOF" in message), None
+    except TokenizerFault:
+        # The interpreter failed, not the text: CPython 3.12's tokenizer does for a NUL byte after an
+        # indented line (found by the fuzzing in #259; see shadowscan.utils.python_tokens),
+        # where 3.13 raises TokenError. Nothing past the last token read can be said to be code, so it
+        # is masked and the file reported incomplete, as for any other tokenizer error.
+        _mask_rest(spans, text, offset(read_to))
+        return True, None
     if fstring_starts:
         start = fstring_starts[0]
         spans[:] = [*(span for span in spans if span[1] <= start), (start, len(text))]
         return True, None
     return False, None
+
+
+def _mask_rest(spans: list[tuple[int, int]], text: str, start: int) -> None:
+    """Mask ``text`` from ``start`` to its end; a ``start`` at the end masks nothing."""
+    if start < len(text):
+        spans.append((start, len(text)))
 
 
 def _legacy_fstring_ranges(token: str, base: int, depth: int = 0) -> tuple[list[tuple[int, int]], bool]:
@@ -883,6 +897,8 @@ class _JavaScriptLexer:
                 i += 3 if text.startswith("\r\n", i + 1) else 2
             else:
                 i += 1
+        # A backslash that ends the text steps over its end, and a span may not run past it.
+        i = min(i, size)
         if i < size and text[i] == quote:
             i += 1
         self.spans.append((start, i))

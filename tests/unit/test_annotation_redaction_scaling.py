@@ -5,6 +5,9 @@ statement. When no '=' followed, the next candidate tokenized the same text
 again, so a long run of unfinished annotations cost quadratic time and could
 exhaust the redaction work budget, leaving the whole file incomplete.
 """
+# Timing guards here measure CPU time, not wall time: they bound algorithmic
+# cost, and wall time additionally measures whatever else the machine is doing,
+# which failed honest code under a parallel run. See tests/perf.py.
 
 from __future__ import annotations
 
@@ -19,12 +22,16 @@ from shadowscan.engine import Engine
 from shadowscan.utils import redaction
 from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitize_text
 
+# Slow by nature: scales annotation redaction across input sizes.
+# `make test-fast` skips these; CI runs them.
+pytestmark = pytest.mark.slow
+
 UNFINISHED = "import openai\n" + "token: (\n" * 3500  # 31 KB
 
 
 def test_unfinished_annotations_complete_quickly_in_a_full_scan(tmp_path, index):
     (tmp_path / "app.py").write_text(UNFINISHED, encoding="utf-8")
-    started = time.perf_counter()
+    started = time.process_time()
     result = Engine(
         ScanConfig(
             connectors=[
@@ -39,7 +46,7 @@ def test_unfinished_annotations_complete_quickly_in_a_full_scan(tmp_path, index)
         ),
         index,
     ).run()
-    elapsed = time.perf_counter() - started
+    elapsed = time.process_time() - started
     # Generous for slow CI runners; the quadratic scan took about 45 seconds.
     assert elapsed < 5, elapsed
     errors = [error for stats in result.stats for error in stats.errors]
@@ -60,9 +67,9 @@ def test_unfinished_annotations_complete_quickly_in_a_full_scan(tmp_path, index)
 
 
 def test_unfinished_annotations_are_withheld_without_exhausting_the_budget():
-    started = time.perf_counter()
+    started = time.process_time()
     safe = sanitize_text(UNFINISHED)
-    assert time.perf_counter() - started < 5
+    assert time.process_time() - started < 5
     assert safe.startswith("import openai\ntoken: ")
     assert REDACTED in safe
     assert safe.count("\n") == UNFINISHED.count("\n")
@@ -74,9 +81,9 @@ def test_unfinished_annotations_are_withheld_without_exhausting_the_budget():
 def _best_time(source: str, repeats: int = 3) -> float:
     best = float("inf")
     for _ in range(repeats):
-        started = time.perf_counter()
+        started = time.process_time()
         sanitize_text(source)
-        best = min(best, time.perf_counter() - started)
+        best = min(best, time.process_time() - started)
     return best
 
 

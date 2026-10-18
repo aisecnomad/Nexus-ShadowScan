@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import Protocol
 
 from shadowscan.models import ScanResult
 from shadowscan.reporters.csv_ import render_csv
@@ -14,7 +14,21 @@ from shadowscan.reporters.ocsf import render_ocsf
 from shadowscan.reporters.sarif import render_sarif
 from shadowscan.signatures import SignatureIndex
 
-RENDERERS: dict[str, Callable[[ScanResult], str]] = {
+
+class Renderer(Protocol):
+    """The contract every entry of :data:`RENDERERS` satisfies.
+
+    A renderer turns a :class:`~shadowscan.models.ScanResult` into the text of
+    one output format (JSON, SARIF, CSV, Markdown, HTML, CycloneDX, OCSF). The
+    result is its only required argument, passed positionally, so a renderer
+    may name it as it likes; CycloneDX's optional signature index, which names
+    custom-pack signatures in the BOM, is passed only by :func:`render`.
+    """
+
+    def __call__(self, result: ScanResult, /) -> str: ...
+
+
+RENDERERS: dict[str, Renderer] = {
     "json": render_json,
     "sarif": render_sarif,
     "csv": render_csv,
@@ -38,4 +52,4 @@ def render(result: ScanResult, fmt: str, index: SignatureIndex | None = None) ->
         raise ValueError(f"unknown format {fmt!r}; choose from {', '.join(FORMATS)}") from exc
 
 
-__all__ = ["RENDERERS", "FORMATS", "render"]
+__all__ = ["Renderer", "RENDERERS", "FORMATS", "render"]

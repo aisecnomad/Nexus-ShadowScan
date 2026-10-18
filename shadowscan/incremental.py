@@ -35,6 +35,7 @@ from shadowscan.connectors.code.filesystem import (
     _holds_file,
     _WalkBudget,
 )
+from shadowscan.coverage import MAX_DECLARED_PATHS, validate_coverage_summary
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.digest import scanner_source_digest
@@ -57,7 +58,7 @@ except ImportError:  # pragma: no cover - absent only where the confined reader 
 
 
 log = logging.getLogger("shadowscan.incremental")
-_FORMAT = 4  # keyed credential identities: older entries require a full rescan
+_FORMAT = 6  # the coverage ledger, declared omissions and their paths: older entries require a full rescan
 _MAX_CACHE_BYTES = 64 * 1024 * 1024
 _MAX_CACHE_TOTAL_BYTES = 512 * 1024 * 1024
 _MAX_CACHE_ENTRIES = 256
@@ -83,6 +84,15 @@ _OWNERSHIP_DIRECTORIES = {".github", ".gitlab", "docs"}
 
 class _CacheMaintenanceDeadlineExceeded(RuntimeError):
     """Raised when startup cache housekeeping exceeds its fixed budget."""
+
+
+def _declared_paths(value: Any, declared: int) -> list[str] | None:
+    """A cache entry's declared-omission paths, or None when the scanner could not have stored them."""
+    if not isinstance(value, list) or len(value) > min(declared, MAX_DECLARED_PATHS):
+        return None
+    if not all(isinstance(path, str) and path for path in value):
+        return None
+    return list(value)
 
 
 def _json(value: Any) -> bytes:
@@ -796,6 +806,10 @@ class IncrementalCache:
                         "connector": spec.name,
                         "id": spec.id,
                         "config": spec.config,
+                        # The scan-wide gap budget decides whether a tolerated
+                        # gap leaves the result complete, so a stricter run
+                        # must not replay a verdict a looser budget reached.
+                        "max_coverage_gap": self.config.max_coverage_gap,
                         "inputs": inputs,
                         "credential_key_scope": self._credential_key_scope,
                     }
@@ -897,12 +911,17 @@ class IncrementalCache:
             payload = data["payload"]
             if not hmac.compare_digest(self._payload_digest(payload, snapshot), data[self._digest_field()]):
                 return None
+            declared = payload["declared_omissions"]
             if (
                 not isinstance(payload["findings"], list)
                 or not isinstance(payload["warnings"], list)
                 or not all(isinstance(warning, str) for warning in payload["warnings"])
+                or type(declared) is not int
+                or declared < 0
+                or (declared_paths := _declared_paths(payload["declared_paths"], declared)) is None
             ):
                 return None
+            coverage = validate_coverage_summary(payload["coverage"])
             findings = []
             for record in payload["findings"]:
                 if check_deadline is not None:
@@ -920,6 +939,11 @@ class IncrementalCache:
                 objects_examined=0,
                 warnings=sanitize(payload["warnings"]),
                 cached=True,
+                # A tolerated gap or a declared omission is published on a
+                # replay as on the run that found it, never dropped.
+                coverage=sanitize(coverage),
+                declared_omissions=declared,
+                declared_paths=sanitize(declared_paths),
             )
             try:
                 os.utime(path, follow_symlinks=False)
@@ -986,7 +1010,13 @@ class IncrementalCache:
                 finding.sanitize()
             if check_deadline is not None:
                 check_deadline()
-            payload = {"findings": [f.to_dict() for f in findings], "warnings": sanitize(stats.warnings)}
+            payload = {
+                "findings": [f.to_dict() for f in findings],
+                "warnings": sanitize(stats.warnings),
+                "coverage": sanitize(stats.coverage),
+                "declared_omissions": stats.declared_omissions,
+                "declared_paths": sanitize(stats.declared_paths),
+            }
             # Scan-local pseudonyms cannot be rekeyed from a sanitized cache.
             # Leave clean scans cacheable, but rescan credential-bearing ones
             # unless the operator supplied a stable private identity key.

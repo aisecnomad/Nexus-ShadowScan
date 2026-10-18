@@ -55,6 +55,8 @@ from shadowscan.comparison import (
     _started_at,
     _summary_matches_findings,
 )
+from shadowscan.connectors.base import known_incomplete_reasons
+from shadowscan.coverage import coverage_incomplete, tolerated_gap_entries, validate_coverage_summary
 from shadowscan.governance import DECLARED_GOVERNANCE_KEY, valid_declared_governance
 from shadowscan.merge import merge
 from shadowscan.models import FINDING_IDENTITY_SCHEMA, Finding, Risk, ScanResult, ScanStats, now_iso
@@ -156,6 +158,24 @@ def _source_findings(report: dict[str, Any], name: str) -> tuple[list[Finding], 
     return findings, present
 
 
+def _summary_matches_stats(report: dict[str, Any]) -> bool:
+    """Whether the summary's ``tolerated_gaps`` is what the report's own coverage ledgers tolerated.
+
+    Optional: a report written before the field existed has none and loads as
+    before. A source that states another count describes content its stats do
+    not, so it is read as inconsistent completion evidence.
+    """
+    summary, stats = report.get("summary"), report.get("stats")
+    if not isinstance(summary, dict) or "tolerated_gaps" not in summary:
+        return True
+    if not isinstance(stats, list):
+        return False
+    tolerated = sum(
+        tolerated_gap_entries(entry.get("coverage")) for entry in stats if isinstance(entry, dict)
+    )
+    return type(summary["tolerated_gaps"]) is int and summary["tolerated_gaps"] == tolerated
+
+
 def _stats(report: dict[str, Any]) -> list[ScanStats]:
     entries = report.get("stats")
     if not isinstance(entries, list) or not entries:
@@ -167,17 +187,32 @@ def _stats(report: dict[str, Any]) -> list[ScanStats]:
         for key in ("connector", "started_at"):
             if not isinstance(entry.get(key), str) or not entry[key].strip():
                 raise ValueError("report stats identity is malformed")
-        for key in ("errors", "warnings"):
+        name = entry.get("name")
+        if name is not None and (not isinstance(name, str) or not name.strip()):
+            raise ValueError("report stats connector name is malformed")
+        for key in ("errors", "warnings", "declared_paths"):
             value = entry.get(key, [])
             if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
                 raise ValueError("report stats diagnostics must be arrays of strings")
         for key in ("skipped", "incomplete", "cached"):
             if key in entry and type(entry[key]) is not bool:
                 raise ValueError("report stats completion flags must be booleans")
-        for key in ("findings", "objects_examined"):
+        for key in ("findings", "objects_examined", "declared_omissions"):
             if key in entry and (type(entry[key]) is not int or entry[key] < 0):
                 raise ValueError("report stats counts must be nonnegative integers")
-        out.append(ScanStats(**{k: v for k, v in entry.items() if k in _STATS_FIELDS}))
+        reasons = entry.get("incomplete_reasons", {})
+        if type(reasons) is not dict or any(
+            type(reason) is not str or type(count) is not int or count < 0
+            for reason, count in reasons.items()
+        ):
+            raise ValueError("report stats incomplete reasons must map names to nonnegative integers")
+        validate_coverage_summary(entry.get("coverage"))
+        stats = ScanStats(**{k: v for k, v in entry.items() if k in _STATS_FIELDS})
+        # A source's reason keys are untrusted text bound for the banner: only the fixed categories pass.
+        stats.incomplete_reasons = known_incomplete_reasons(stats.incomplete_reasons)
+        # A ledger over budget or blinded is an incomplete run, whatever the flag says.
+        stats.incomplete = stats.incomplete or coverage_incomplete(stats.coverage)
+        out.append(stats)
     return out
 
 
@@ -314,7 +349,7 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
         report = _check(raw, name)
         scope_value = report.get("collection_scope")
         scope: dict[str, Any] = scope_value if isinstance(scope_value, dict) else {}
-        complete = _complete(report) and _summary_matches_findings(report)
+        complete = _complete(report) and _summary_matches_findings(report) and _summary_matches_stats(report)
         fingerprint = _scope_digest(report)
         if not complete:
             comparable = False
@@ -458,7 +493,7 @@ def report_result(name: str, raw: Any) -> ScanResult:
     """
     report = _check(raw, name)
     stats = _stats(report)
-    if not (_complete(report) and _summary_matches_findings(report)):
+    if not (_complete(report) and _summary_matches_findings(report) and _summary_matches_stats(report)):
         stats.append(
             ScanStats(
                 connector="engine.fleet",

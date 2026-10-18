@@ -17,6 +17,7 @@ from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.cloud.gcp import AI_SERVICES as GCP_AI_SERVICES
 from shadowscan.connectors.code.instruction_content import inspect_instruction_text
 from shadowscan.connectors.code.semantic_config import (
     a2a_card_metadata,
@@ -26,9 +27,18 @@ from shadowscan.connectors.code.semantic_config import (
     validate_agent_manifest,
 )
 from shadowscan.connectors.code.skill_audit import MAX_TEXT_BYTES, audit_skill_text
-from shadowscan.connectors.common import apply_matches, failure_summary, finalize
+from shadowscan.connectors.common import apply_matches, failure_summary, finalize, name_matches
 from shadowscan.connectors.endpoint import a2a
+from shadowscan.connectors.endpoint.catalog import (
+    AMBIGUOUS_PRODUCT_CONTEXTS,
+    AMBIGUOUS_PRODUCT_NAMES,
+    LOCAL_RUNTIME_NAMES,
+    MODEL_FILE_SUFFIXES,
+    MODEL_STORES,
+    SHELL_TOOLS,
+)
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.http import diagnostic_url
 from shadowscan.utils.jcs import CanonicalizationError
 from shadowscan.utils.jwks import fetch_jwks
@@ -51,8 +61,23 @@ _POISONING = re.compile(
 # word joiner and invisible operators, isolates, BOM and tag characters.
 _ZERO_WIDTH = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\U000e0000-\U000e007f]")
 _TOOL_REF = re.compile(r"\b(?:use|call|invoke)\s+the\s+[`\"']?([A-Za-z][\w.-]{0,63})", re.IGNORECASE)
+# A model provider API host: any OpenAI or Anthropic host, and the Google AI services
+# the GCP connector counts as AI (gcp.AI_SERVICES: Vertex AI, the Gemini API,
+# Dialogflow, Discovery Engine, Document AI, Speech, Contact Center AI, ...), which
+# include every googleapis.com host the bundled signatures name. Each is matched with
+# its regional prefix (``us-central1-aiplatform``, ``eu-documentai``) and as the
+# mutual-TLS endpoint Google client libraries use with a client certificate
+# (``aiplatform.mtls.googleapis.com``). Other googleapis.com hosts (fonts, storage,
+# www, ...) are not AI services, and Google front-end addresses carry many of them,
+# so a flow's destination names must not match them. A Google host is matched from
+# the start of its label only, so a hostile run of hyphenated words is scanned once,
+# not once per word against every service name.
+_GOOGLE_AI_SERVICES = "|".join(
+    sorted(re.escape(host.removesuffix(".googleapis.com")) for host in GCP_AI_SERVICES)
+)
 _HOST = re.compile(
-    r"(?:https?://)?[a-z0-9-]{1,63}\.(?:openai\.com|anthropic\.com|googleapis\.com)\b",
+    r"(?:https?://)?(?:[a-z0-9-]{1,63}\.(?:openai\.com|anthropic\.com)"
+    rf"|(?<![\w-])(?:[a-z0-9-]{{1,63}}-)?(?:{_GOOGLE_AI_SERVICES})(?:\.mtls)?\.googleapis\.com)\b",
     re.IGNORECASE,
 )
 
@@ -163,10 +188,17 @@ def _records(
                             warn("gateway.otel: aggregate span limit reached")
                         return
                     span_count += 1
-                    yield {"resource": resource, **span}
+                    # ``analyze`` reads ``resource["attributes"]``, the shape a raw
+                    # OTLP span record carries. Yielding the flattened mapping
+                    # directly dropped every resource attribute, so nested exports
+                    # lost ``service.name`` and distinct callers merged into
+                    # ``unknown-service``.
+                    yield {"resource": {"attributes": resource}, **span}
 
 
 class _EndpointConnector(BaseConnector):
+    # No live API: reads an endpoint inventory collected on the host.
+    live_collection: ClassVar[bool] = False
     surface: ClassVar[Surface] = Surface.ENDPOINT
     offline_formats: ClassVar[str] = "JSON / JSONL / YAML export"
     # Whether a value past the sanitizer's limits was withheld (see ``_text``).
@@ -228,11 +260,253 @@ class _EndpointConnector(BaseConnector):
         return finalize(finding, self.index)
 
 
+# Collector-declared categories that mark a host inventory row as AI-related.
+# Tokens, not substrings: "local-llm-runtime" qualifies, "email-client" and a
+# fleet-management "agent" product name do not reach this check at all.
+_AI_CATEGORY_TOKENS = frozenset(
+    {"ai", "agent", "agents", "assistant", "copilot", "genai", "llm", "mcp", "model", "models"}
+)
+_CATEGORY_TOKEN = re.compile(r"[a-z0-9]+")
+
+
+def _ai_category(category: str) -> bool:
+    return not _AI_CATEGORY_TOKENS.isdisjoint(_CATEGORY_TOKEN.findall(category.casefold()))
+
+
+# Signature categories whose products a host installs or runs: model providers
+# (Ollama, LM Studio, vLLM, llama.cpp, LocalAI), coding agents, and platforms
+# (self-hosted chat UIs such as Open WebUI and AnythingLLM, LiteLLM, Dify,
+# Flowise). A product name that is also a common word or another program's
+# name needs its own product's context, by name, not by category
+# (catalog.AMBIGUOUS_PRODUCT_CONTEXTS): "Make (Integromat)" is also GNU make.
+_HOST_PRODUCT_CATEGORIES = frozenset({"provider", "coding-agent", "platform"})
+# The products a signature groups, listed in its display name:
+# "Self-hosted chat UIs (Open WebUI, LibreChat, AnythingLLM, ...)".
+_LISTED_PRODUCTS = re.compile(r"\(([^()/]*,[^()/]*)\)")
+_APP_SUFFIX = re.compile(r"\.(?:app|exe)$", re.IGNORECASE)
+# "Ollama version 0.5.7", "LM Studio 0.3.14", "Jan v0.5.17": Windows program names
+# carry the version. A bare number is part of the name ("Codex 3", "Jan 2024"). A
+# match starts only where a whitespace run starts: tried from inside a run as well,
+# ``\s+`` rescanned the rest of the run from each of its spaces, quadratic in its length.
+_TRAILING_VERSION = re.compile(r"(?<!\s)\s+(?:version\s+v?\d|v\d|\d+\.\d)[\w.+-]*$", re.IGNORECASE)
+_NON_ALNUM = re.compile(r"[^0-9a-z]+")
+_PATH_SEPARATOR = re.compile(r"[\\/]")
+# Host inventory paths are read this far, so a long path keeps its file name. Each
+# name or path component is compared with product names only up to _MAX_LABEL
+# characters: no product name is longer, so a longer one names none.
+_MAX_HOST_PATH = 1024
+# The catalog's model stores as case-folded path components below a home directory
+# (``.ollama/models``), each with its layout.
+_MODEL_STORE_ROOTS = tuple((tuple(store.root.casefold().split("/")), store.layout) for store in MODEL_STORES)
+# A home directory as the case-folded components a path starts with, after any
+# Windows drive: ``~`` (or ``~user``), a home variable or ``/root``, one component;
+# ``/home/<user>``, ``/Users/<user>`` (``C:\Users\<user>``) and macOS's ``/var/root``, two.
+_HOME_COMPONENTS = frozenset({"$home", "${home}", "%userprofile%", "root"})
+_HOME_PARENTS = frozenset({"home", "users"})
+_WINDOWS_DRIVE = re.compile(r"[a-z]:")
+# The directories an Ollama store keeps its models in.
+_OLLAMA_STORE_DIRECTORIES = frozenset({"manifests", "blobs"})
+# The catalog's contexts for its ambiguous product names as case-folded path
+# component runs (``goose.app``, ``.config/goose``), and the lengths of those runs.
+_AMBIGUOUS_CONTEXTS = frozenset(
+    tuple(context.casefold().split("/"))
+    for contexts in AMBIGUOUS_PRODUCT_CONTEXTS.values()
+    for context in contexts
+)
+_AMBIGUOUS_CONTEXT_LENGTHS = frozenset(map(len, _AMBIGUOUS_CONTEXTS))
+_AMBIGUOUS_CONTEXT_HEADS = frozenset(run[0] for run in _AMBIGUOUS_CONTEXTS)
+
+
+def _product_key(text: str) -> str:
+    """``text`` as a product-name key: its last path component without an ``.app``/``.exe``
+    suffix or a trailing version, letters and digits only, case-folded.
+
+    ``/Applications/LM Studio.app``, ``lm-studio`` and ``LM Studio 0.3.14`` share one key.
+    A component longer than _MAX_LABEL is no product name and has the empty key.
+    """
+    base = _PATH_SEPARATOR.split(text.rstrip("\\/"))[-1]
+    if len(base) > _MAX_LABEL:
+        return ""
+    base = _TRAILING_VERSION.sub("", _APP_SUFFIX.sub("", base))
+    return _NON_ALNUM.sub("", base.casefold())
+
+
+def _signature_product_names(name: str) -> list[str]:
+    """The product names in a signature's display name: the name before any ``/``
+    alternative or parenthesis ("Gemini CLI / Jules" gives "Gemini CLI"), and each
+    product a parenthesized list names. A parenthesis that is not a comma-separated
+    list ("LiteLLM (SDK / Proxy)", "Make (Integromat)") qualifies the name and is not read.
+    """
+    names = [re.split(r"\s+/\s+|\s*\(", name)[0]]
+    listed = _LISTED_PRODUCTS.search(name)
+    if listed:
+        names += listed.group(1).split(",")
+    return names
+
+
+def _host_product_keys(index: SignatureIndex) -> frozenset[str]:
+    """Keys of the products whose whole name marks a host inventory row as AI-related.
+
+    A signature contributes its product names (see ``_signature_product_names``). The
+    endpoint catalog contributes its local model runtimes and AI command-line tools. A
+    name the catalog lists as ambiguous is left out: it counts only in context (see
+    ``_names_product``).
+    """
+    names = [
+        product
+        for signature in index.signatures.values()
+        if signature.category in _HOST_PRODUCT_CATEGORIES
+        for product in _signature_product_names(signature.name)
+    ]
+    names += [name for store in MODEL_STORES for name in (store.product, store.runtime)]
+    names += [name for command, (product, _) in SHELL_TOOLS.items() for name in (command, product)]
+    names += LOCAL_RUNTIME_NAMES
+    ambiguous = _ambiguous_product_keys()
+    return frozenset(key for key in map(_product_key, names) if key and key not in ambiguous)
+
+
+def _ambiguous_product_keys() -> frozenset[str]:
+    return frozenset(_product_key(name) for name in AMBIGUOUS_PRODUCT_NAMES)
+
+
+def _names_bundle(part: str, keys: frozenset[str]) -> bool:
+    """Whether the directory ``part`` is an application bundle or a dot-directory named
+    after a product in ``keys``: ``Ollama.app``, ``~/.lmstudio``."""
+    return bool(_APP_SUFFIX.search(part) or part.startswith(".")) and _product_key(part) in keys
+
+
+def _path_parts(text: str) -> tuple[list[str], list[str]]:
+    """The non-empty path components of ``text``, as written and case-folded."""
+    parts = [part for part in _PATH_SEPARATOR.split(text) if part]
+    return parts, [part.casefold() for part in parts]
+
+
+def _in_ambiguous_context(folded: list[str]) -> bool:
+    """Whether the case-folded path components ``folded`` hold, as a run, one of the
+    contexts the catalog lists for an ambiguous product name (``Jan.exe``, ``Goose.app``,
+    ``.continue``)."""
+    return any(
+        tuple(folded[start : start + length]) in _AMBIGUOUS_CONTEXTS
+        for start, part in enumerate(folded)
+        if part in _AMBIGUOUS_CONTEXT_HEADS
+        for length in _AMBIGUOUS_CONTEXT_LENGTHS
+    )
+
+
+def _names_product(parts: list[str], folded: list[str], keys: frozenset[str]) -> bool:
+    """Whether the name or path whose components are ``parts`` (``folded`` case-folded)
+    names a known AI product as a whole.
+
+    Its last component qualifies when it is a product name in ``keys`` (``ollama``,
+    ``LM Studio.app``, ``Ollama version 0.5.7``), and a directory on the path when it is an
+    application bundle or dot-directory named after one (``/Applications/Ollama.app/...``,
+    ``~/.lmstudio/bin/lms``). A name the catalog lists as ambiguous is not in ``keys``: it
+    qualifies only with its own product's context, a bundle, executable or directory the
+    catalog lists for that product (``Jan.exe``, ``/Applications/Goose.app/Contents/MacOS/goose``,
+    ``~/.continue``). An ``.app`` or ``.exe`` suffix or a dot-directory alone is no context
+    (``make.exe``, ``Cohere.exe``, ``~/.make``), and a plain directory such as a home
+    directory's user name or ``Cellar/goose`` names nothing.
+    """
+    if not parts:
+        return False
+    *parents, base = parts
+    return (
+        _product_key(base) in keys
+        or any(_names_bundle(part, keys) for part in dict.fromkeys(parents))
+        or _in_ambiguous_context(folded)
+    )
+
+
+def _below_home(parts: list[str]) -> list[str] | None:
+    """The case-folded path components ``parts`` below the home directory they start
+    at (see _HOME_COMPONENTS), or None when they start at none."""
+    if parts and _WINDOWS_DRIVE.fullmatch(parts[0]):
+        parts = parts[1:]
+    if not parts:
+        return None
+    if parts[0].startswith("~") or parts[0] in _HOME_COMPONENTS:
+        return parts[1:]
+    if (parts[0] in _HOME_PARENTS and len(parts) > 1) or parts[:2] == ["var", "root"]:
+        return parts[2:]
+    return None
+
+
+def _holds_store_layout(parts: list[str], root: tuple[str, ...], layout: str) -> bool:
+    """Whether the case-folded path components ``parts`` hold the model store directory
+    ``root`` with that store's own layout below it: Ollama's ``manifests`` or ``blobs``, a
+    Hugging Face hub ``models--<org>--<name>`` directory, or for any other store a model
+    file (MODEL_FILE_SUFFIXES)."""
+    length, run = len(root), list(root)
+    starts = [
+        start for start, part in enumerate(parts) if part == run[0] and parts[start : start + length] == run
+    ]
+    if not starts:
+        return False
+    if layout == "files":
+        # Whatever lies below a later run of ``root`` lies below the first one too.
+        return any(part.endswith(MODEL_FILE_SUFFIXES) for part in parts[starts[0] + length :])
+    following = {parts[start + length] for start in starts if start + length < len(parts)}
+    if layout == "ollama":
+        return not _OLLAMA_STORE_DIRECTORIES.isdisjoint(following)
+    return any(name.startswith("models--") for name in following)
+
+
+def _in_model_store(parts: list[str]) -> bool:
+    """Whether the path whose case-folded components are ``parts`` is, or lies in, one
+    of the catalog's model stores.
+
+    A store counts at the place the catalog lists it, below a home directory
+    (``~/.ollama/models``, ``/Users/u/.cache/lm-studio/models/...``,
+    ``C:\\Users\\u\\.cache\\huggingface\\hub``, ``/home/u/jan/models``). Elsewhere on a
+    path its directory counts only with the store's own layout below it
+    (``/usr/share/ollama/.ollama/models/blobs/...``, a ``.gguf`` file in a ``jan/models``
+    directory): an application's ``jan/models`` directory, or a user named jan with a
+    ``models`` directory, is not a model store.
+    """
+    below_home = _below_home(parts) or []
+    return any(
+        tuple(below_home[: len(root)]) == root or _holds_store_layout(parts, root, layout)
+        for root, layout in _MODEL_STORE_ROOTS
+    )
+
+
 class HostConnector(_EndpointConnector):
     name = "endpoint.host"
     provider = "host"
     description = "Offline host inventory of local AI agents, MCP clients, and model runtimes."
-    config_keys = {"input": "Offline host inventory JSON, JSONL, or YAML export."}
+    config_keys = {
+        "input": (
+            "Offline host inventory JSON, JSONL, or YAML export; rows are reported when the "
+            "name or path matches an AI product signature, the whole application or executable "
+            "name is a known AI product, local model runtime or self-hosted AI platform (Ollama, "
+            "LM Studio, GPT4All, llama.cpp, vLLM, LocalAI, Jan, Msty, Open WebUI, AnythingLLM, "
+            "LiteLLM, ...), the path lies in a local model store (~/.ollama/models, ...), or the "
+            "record's type/category names an AI category (ai, agent, assistant, copilot, llm, "
+            "mcp, model)."
+        )
+    }
+    # Whether rows without a recognized AI product were noted (one fixed-text note).
+    _skipped_records = False
+    # Keys of the AI products a row may name as a whole (see _host_product_keys).
+    _product_keys: frozenset[str] | None = None
+
+    def _names_ai_product(self, record: dict[str, Any]) -> bool:
+        """Whether the row's name, path or process names, as a whole, a known AI product,
+        or is a path in a local model store.
+
+        osquery ``apps``/``programs`` and MDM rows carry an application or executable
+        name (``LM Studio.app``, ``/usr/local/bin/ollama``, ``Ollama version 0.5.7``) and
+        no category, and local runtime signatures have no display-name signal. Each value
+        is read up to _MAX_HOST_PATH characters and split once, and only its components of
+        up to _MAX_LABEL characters are keyed, so a row costs time linear in that bound.
+        """
+        if self._product_keys is None:
+            self._product_keys = _host_product_keys(self.index)
+        for key in ("name", "path", "process"):
+            parts, folded = _path_parts(self._text(record.get(key), _MAX_HOST_PATH))
+            if _names_product(parts, folded, self._product_keys) or _in_model_store(folded):
+                return True
+        return False
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for record in records:
@@ -240,6 +514,29 @@ class HostConnector(_EndpointConnector):
             category = self._text(record.get("type") or record.get("category") or "host-runtime")
             if not name:
                 self.ctx.warn("endpoint.host: record has no runtime or configuration name")
+                continue
+            # A general software inventory names every installed product; a row
+            # becomes a finding only when something ties it to AI: a product
+            # name or configuration path a signature recognizes, the whole name
+            # of a known AI product or local runtime, or an AI category the
+            # collector declared.
+            relevant = (
+                bool(name_matches(self.index, name))
+                or _ai_category(category)
+                or self._names_ai_product(record)
+            )
+            if not relevant:
+                path = self._text(record.get("path") or record.get("name"))
+                relevant = bool(self.index.match_file(path.lstrip("~"))) if path else False
+            if not relevant:
+                if not self._skipped_records:
+                    self._skipped_records = True
+                    self.ctx.warn(
+                        "endpoint.host: inventory rows without a recognized AI product name, "
+                        "path or category were not reported",
+                        incomplete=False,
+                    )
+                self.ctx.examined()
                 continue
             yield self._finding(
                 name,
@@ -252,6 +549,9 @@ class HostConnector(_EndpointConnector):
 
 
 class MCPInventoryConnector(_EndpointConnector):
+    # Unlike its siblings this one does reach the network, probing the Agent
+    # Card URLs it is given; without them it falls back to the inventory.
+    live_collection: ClassVar[bool] = True
     name = "endpoint.mcp"
     provider = "mcp"
     description = (
@@ -749,41 +1049,395 @@ class ModelArtifactConnector(_EndpointConnector):
             )
 
 
+# endpoint.ebpf reads each producer's native export shape. A helper returns the
+# flat record ``EbpfConnector.analyze`` scores, or ``None`` when the record is
+# not that producer's format, and notes in ``defects`` the fields it could not
+# read. Field names follow the producers' published schemas; where exporters
+# differ, both snake_case and lowerCamelCase spellings are read. A record no
+# reader recognizes is reported, not silently dropped: an export full of unread
+# events must not look like a clean scan.
+
+# The flat shape ``analyze`` scores, also accepted directly as an export format.
+_EBPF_FLAT_KEYS = frozenset(
+    {
+        "destination",
+        "remote_addr",
+        "hostname",
+        "server.address",
+        "url",
+        "binary",
+        "process_name",
+        "process",
+        "port",
+        "destination_port",
+    }
+)
+# The flat fields that name where an event connected, scored for AI hosts.
+_EBPF_DESTINATION_KEYS = ("destination", "remote_addr", "hostname", "server.address", "url")
+# Tetragon wraps each event under its type (``tetra getevents -o json``).
+_TETRAGON_EVENT_KEYS = (
+    "process_kprobe",
+    "processKprobe",
+    "process_exec",
+    "processExec",
+    "process_exit",
+    "processExit",
+    "process_tracepoint",
+    "processTracepoint",
+    "process_lsm",
+    "processLsm",
+)
+_EBPF_ARG_LIMIT = 100
+# A port is a number or, in Tracee's sockaddr maps, its decimal text.
+_EBPF_PORT = (int, str)
+# Default ports of local model servers (Ollama, LM Studio, llama.cpp, vLLM), as text.
+_LOCAL_MODEL_PORTS = frozenset({"11434", "1234", "8080", "8000"})
+# What a reader could not read in a record it recognized: a field of the wrong
+# type ("malformed"), or the entries of a list past _EBPF_ARG_LIMIT ("limit").
+# Each is reported once per producer, the flat record shape included, and
+# leaves the scan incomplete: a malformed or oversized export must not hide a
+# connection on a scan that looks complete.
+_EBPF_DEFECT_WARNINGS = {
+    "malformed": "endpoint.ebpf: malformed {producer} event fields were not analyzed",
+    "limit": "endpoint.ebpf: {producer} event list limit reached; entries past it were not analyzed",
+}
+# The incomplete_reasons category of each, named rather than read from the text.
+_EBPF_DEFECT_REASONS = {"malformed": "unparsed-input", "limit": "analysis-limit"}
+
+
+def _ebpf_field(
+    container: dict[str, Any], keys: tuple[str, ...], kinds: type | tuple[type, ...], defects: set[str]
+) -> Any:
+    """The first non-empty value of ``keys`` in ``container`` that is of ``kinds``, or None.
+
+    A value of another type, even an empty one, is not read: it is noted in
+    ``defects`` as a malformed field. A JSON boolean is never of ``kinds``: no
+    field is one, and ``bool`` subclasses ``int``, so ``true`` would pass as a port.
+    An empty value of the right type carries nothing and is passed over.
+    """
+    for key in keys:
+        value = container.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, kinds) or isinstance(value, bool):
+            defects.add("malformed")
+        elif value:
+            return value
+    return None
+
+
+def _ebpf_list(container: dict[str, Any], key: str, defects: set[str]) -> list[Any]:
+    """``container[key]`` cut to _EBPF_ARG_LIMIT entries; a malformed or cut list is noted in ``defects``."""
+    value: list[Any] = _ebpf_field(container, (key,), list, defects) or []
+    if len(value) > _EBPF_ARG_LIMIT:
+        defects.add("limit")
+    return value[:_EBPF_ARG_LIMIT]
+
+
+def _tetragon_ebpf_record(record: dict[str, Any], defects: set[str]) -> dict[str, Any] | None:
+    """Tetragon event: ``{"process_kprobe": {"process": {...}, "args": [...]}}``."""
+    event = next(
+        (record[key] for key in _TETRAGON_EVENT_KEYS if isinstance(record.get(key), dict)),
+        None,
+    )
+    if event is None:
+        return None
+    process = _ebpf_field(event, ("process",), dict, defects) or {}
+    pod = _ebpf_field(process, ("pod",), dict, defects) or {}
+    destinations, ports = _tetragon_socket(_ebpf_list(event, "args", defects), defects)
+    return {
+        "process_name": _ebpf_field(process, ("binary",), str, defects) or "",
+        "destination": destinations,
+        "destination_port": ports,
+        "namespace": _ebpf_field(pod, ("namespace",), str, defects) or "",
+        "pod": _ebpf_field(pod, ("name",), str, defects) or "",
+    }
+
+
+# Tetragon's socket argument maps, and the destination address and port each carries.
+_TETRAGON_SOCKETS = (
+    (("sock_arg", "sockArg"), "daddr", "dport"),
+    (("sockaddr_arg", "sockaddrArg"), "addr", "port"),
+)
+
+
+def _tetragon_socket(args: list[Any], defects: set[str]) -> tuple[tuple[str, ...], tuple[Any, ...]]:
+    """Destination addresses and ports of every ``sock_arg`` and ``sockaddr_arg`` argument.
+
+    A hook can take several, and the first need not hold the destination: the example
+    TracingPolicy hooks ``tcp_v4_connect`` with ``[sock, sockaddr]``, and at kprobe entry
+    the socket has no ``daddr`` or ``dport`` yet, while the ``sockaddr`` names the address
+    being connected to.
+    """
+    addresses: list[str] = []
+    ports: list[Any] = []
+    for arg in args:
+        if not isinstance(arg, dict):
+            defects.add("malformed")
+            continue
+        for keys, address, port in _TETRAGON_SOCKETS:
+            socket = _ebpf_field(arg, keys, dict, defects)
+            if socket is not None:
+                addresses.append(_ebpf_field(socket, (address,), str, defects))
+                ports.append(_ebpf_field(socket, (port,), _EBPF_PORT, defects))
+    return _present(addresses), _present(ports)
+
+
+def _present(values: Iterable[Any]) -> tuple[Any, ...]:
+    """The values that carry something (a reader's None and empty text drop out)."""
+    return tuple(value for value in values if value)
+
+
+def _each(value: Any) -> tuple[Any, ...]:
+    """A reader's destination or port as the values to score: a reader passes several as a
+    tuple, which no JSON or YAML export holds."""
+    return value if isinstance(value, tuple) else (value,)
+
+
+def _falco_ebpf_record(record: dict[str, Any], defects: set[str]) -> dict[str, Any] | None:
+    """Falco JSON alert: dotted field names under ``output_fields``."""
+    fields = record.get("output_fields")
+    if not isinstance(fields, dict) or not ("rule" in record or "priority" in record):
+        return None
+    return {
+        "process_name": _ebpf_field(fields, ("proc.name",), str, defects),
+        "destination": _ebpf_field(fields, ("fd.sip.name", "fd.rip.name", "fd.sip", "fd.rip"), str, defects),
+        "destination_port": _ebpf_field(fields, ("fd.sport", "fd.rport"), _EBPF_PORT, defects),
+        "namespace": _ebpf_field(fields, ("k8s.ns.name",), str, defects),
+        "pod": _ebpf_field(fields, ("k8s.pod.name",), str, defects),
+    }
+
+
+def _tracee_ebpf_record(record: dict[str, Any], defects: set[str]) -> dict[str, Any] | None:
+    """Tracee event: ``eventName``/``processName`` with sockaddr maps in ``args``."""
+    if not isinstance(record.get("eventName"), str):
+        return None
+    if "processName" not in record and "args" not in record:
+        return None
+    kubernetes = _ebpf_field(record, ("kubernetes",), dict, defects) or {}
+    destinations, ports = _tracee_socket(_ebpf_list(record, "args", defects), defects)
+    return {
+        "process_name": _ebpf_field(record, ("processName",), str, defects),
+        "destination": destinations,
+        "destination_port": ports,
+        "namespace": _ebpf_field(kubernetes, ("podNamespace",), str, defects)
+        or _ebpf_field(record, ("podNamespace",), str, defects),
+        "pod": _ebpf_field(kubernetes, ("podName",), str, defects)
+        or _ebpf_field(record, ("podName",), str, defects),
+    }
+
+
+def _tracee_socket(args: list[Any], defects: set[str]) -> tuple[tuple[str, ...], tuple[Any, ...]]:
+    """Destination addresses and ports of every sockaddr map among the event's arguments."""
+    addresses: list[str] = []
+    ports: list[Any] = []
+    for arg in args:
+        if not isinstance(arg, dict):
+            defects.add("malformed")
+            continue
+        value = _tracee_sockaddr(arg, defects)
+        if isinstance(value, dict) and ("sin_addr" in value or "sin6_addr" in value):
+            addresses.append(_ebpf_field(value, ("sin_addr", "sin6_addr"), str, defects))
+            ports.append(_ebpf_field(value, ("sin_port", "sin6_port"), _EBPF_PORT, defects))
+    return _present(addresses), _present(ports)
+
+
+def _tracee_sockaddr(arg: dict[str, Any], defects: set[str]) -> Any:
+    """A Tracee argument's value when it may be a sockaddr map.
+
+    An argument Tracee declares a socket address (``remote_addr``, or a
+    ``struct sockaddr*`` type) whose value is not a map is malformed: its
+    destination cannot be read. Any other argument is a sockaddr map only when its
+    value is a map holding an address.
+    """
+    name = _ebpf_field(arg, ("name",), str, defects) or ""
+    kind = _ebpf_field(arg, ("type",), str, defects) or ""
+    if name == "remote_addr" or "sockaddr" in kind:
+        return _ebpf_field(arg, ("value",), dict, defects)
+    return arg.get("value")
+
+
+def _hubble_ebpf_record(record: dict[str, Any], defects: set[str]) -> dict[str, Any] | None:
+    """Hubble flow: the ``hubble observe -o json`` wrapper, or a bare flow."""
+    flow = record.get("flow")
+    if not isinstance(flow, dict):
+        bare = isinstance(record.get("IP"), dict) or (
+            isinstance(record.get("l4"), dict) and ("verdict" in record or "source" in record)
+        )
+        if not bare:
+            return None
+        flow = record
+    ip = _ebpf_field(flow, ("IP",), dict, defects) or {}
+    address = _ebpf_field(ip, ("destination",), str, defects) or ""
+    names = _ebpf_list(flow, "destination_names", defects)
+    if not all(isinstance(name, str) for name in names):
+        defects.add("malformed")
+    # Every name the destination address was resolved from: a CDN-fronted
+    # address carries several, and the AI host need not come first. A tuple,
+    # which no JSON or YAML export holds, has ``analyze`` read each name.
+    destinations = tuple(name for name in names if isinstance(name, str) and name)
+    l4 = _ebpf_field(flow, ("l4",), dict, defects) or {}
+    entry = _ebpf_field(l4, ("TCP", "UDP", "tcp", "udp", "SCTP"), dict, defects) or {}
+    source = _ebpf_field(flow, ("source",), dict, defects) or {}
+    return {
+        "process_name": "",
+        "destination": destinations or address,
+        "destination_port": _ebpf_field(entry, ("destination_port",), _EBPF_PORT, defects),
+        "namespace": _ebpf_field(source, ("namespace",), str, defects),
+        "pod": _ebpf_field(source, ("pod_name",), str, defects),
+    }
+
+
+# The native readers, by the producer name their warnings carry.
+_EBPF_READERS: tuple[tuple[str, Callable[[dict[str, Any], set[str]], dict[str, Any] | None]], ...] = (
+    ("Tetragon", _tetragon_ebpf_record),
+    ("Falco", _falco_ebpf_record),
+    ("Tracee", _tracee_ebpf_record),
+    ("Hubble", _hubble_ebpf_record),
+)
+
+
+# The flat fields that name a port an event connected to; every one is scored.
+_EBPF_PORT_KEYS = ("port", "destination_port")
+# The flat fields that say where a record connected.
+_EBPF_FLAT_DESTINATION_KEYS = frozenset({*_EBPF_DESTINATION_KEYS, *_EBPF_PORT_KEYS})
+# Top-level keys of a producer's own events that the flat shape also names: a
+# Falco alert's ``hostname`` is the sensor's host, and a bare Hubble flow's
+# ``destination`` is the destination endpoint, neither of them a flat destination.
+_EBPF_PRODUCER_KEYS = {"Falco": frozenset({"hostname"}), "Hubble": frozenset({"destination"})}
+
+
+def _flat_ebpf_record(
+    record: dict[str, Any], defects: set[str], own: frozenset[str] = frozenset()
+) -> dict[str, Any]:
+    """Flat record: the field names other collectors export (_EBPF_FLAT_KEYS), read with
+    the type checks the native readers apply.
+
+    The process is a ``process`` map's ``binary`` or ``name``, else ``binary`` or
+    ``process_name``; every destination field and every port field is scored. ``own``
+    names the top-level keys that belong to the native producer whose event this is
+    (_EBPF_PRODUCER_KEYS): they are not flat fields and are not read.
+    """
+    process = _ebpf_field(record, ("process",), dict, defects) or {}
+    destinations = (
+        _ebpf_field(record, (key,), str, defects) for key in _EBPF_DESTINATION_KEYS if key not in own
+    )
+    ports = (_ebpf_field(record, (key,), _EBPF_PORT, defects) for key in _EBPF_PORT_KEYS if key not in own)
+    return {
+        "process_name": _ebpf_field(process, ("binary", "name"), str, defects)
+        or _ebpf_field(record, ("binary", "process_name"), str, defects),
+        "destination": _present(destinations),
+        "destination_port": _present(ports),
+        "namespace": _ebpf_field(record, ("namespace",), str, defects),
+        "pod": _ebpf_field(record, ("pod", "pod_name"), str, defects),
+    }
+
+
+def _combined_ebpf_record(native: dict[str, Any], flat: dict[str, Any]) -> dict[str, Any]:
+    """A record's native and flat readings as one record to score: every destination and
+    port either reading found, and the flat process and workload, with gaps filled from
+    the native reading."""
+    combined = {key: value or native.get(key) for key, value in flat.items()}
+    for key in ("destination", "destination_port"):
+        combined[key] = _present((*_each(flat[key]), *_each(native.get(key))))
+    return combined
+
+
+# A record to score and, for each reader that read it, the producer and what it
+# could not read (see _EBPF_DEFECT_WARNINGS).
+_EbpfReading = tuple[dict[str, Any], list[tuple[str, set[str]]]]
+
+
+def _normalize_ebpf_record(record: dict[str, Any]) -> _EbpfReading | None:
+    """The record to score and what each reader that read it could not read, or None for
+    a record no reader recognizes.
+
+    A flat record can carry a key a native reader claims: a string ``eventName`` beside
+    ``processName`` reads as Tracee, ``rule`` beside an ``output_fields`` map as Falco.
+    When the record also has flat destination or port fields, it is read both ways and
+    scored on every destination and port either reading finds, so a top-level ``url``
+    or ``destination`` is not lost beside a native reading that found only a port or a
+    non-AI address. The producer's own top-level keys (_EBPF_PRODUCER_KEYS) are never
+    read as flat fields: a Falco alert's ``hostname`` is the sensor, not a destination.
+    """
+    for producer, reader in _EBPF_READERS:
+        defects: set[str] = set()
+        native = reader(record, defects)
+        if native is None:
+            continue
+        own = _EBPF_PRODUCER_KEYS.get(producer, frozenset())
+        if (_EBPF_FLAT_DESTINATION_KEYS - own).isdisjoint(record):
+            return native, [(producer, defects)]
+        flat_defects: set[str] = set()
+        flat = _flat_ebpf_record(record, flat_defects, own)
+        return _combined_ebpf_record(native, flat), [(producer, defects), ("flat", flat_defects)]
+    if _EBPF_FLAT_KEYS.intersection(record):
+        defects = set()
+        return _flat_ebpf_record(record, defects), [("flat", defects)]
+    return None
+
+
 class EbpfConnector(_EndpointConnector):
     name = "endpoint.ebpf"
     provider = "runtime-telemetry"
     description = "Correlate offline eBPF runtime events with known AI hosts and local model ports."
-    config_keys = {"input": "Offline Tetragon, Falco, Tracee, or Hubble JSON / JSONL export."}
+    config_keys = {"input": "Offline Tetragon, Falco, Tracee, or Hubble JSON / JSONL export (native shapes)."}
+    # Whether an unrecognized record was reported (one fixed-text warning).
+    _unrecognized_records = False
+    # The (producer, defect) pairs already reported (one fixed-text warning each).
+    _reported_defects: frozenset[tuple[str, str]] = frozenset()
+
+    def _report_defects(self, producer: str, defects: set[str]) -> None:
+        """Warn once per producer and defect: what a reader could not read leaves the scan incomplete."""
+        for defect in sorted(defects):
+            if (producer, defect) not in self._reported_defects:
+                self._reported_defects |= {(producer, defect)}
+                self.ctx.warn(
+                    _EBPF_DEFECT_WARNINGS[defect].format(producer=producer),
+                    reason=_EBPF_DEFECT_REASONS[defect],
+                )
+
+    def _destination_text(self, record: dict[str, Any]) -> str:
+        """The record's destinations as one text to score, each value cut to 512 characters.
+
+        A reader passes several destinations as a tuple (Hubble's ``destination_names``, a
+        flat record's destination fields); each is read on its own, so none is cut off by
+        those before it.
+        """
+        return " ".join(self._text(item, 512) for item in _each(record.get("destination")))
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
-        for record in records:
-            serialized = " ".join(
-                self._text(record.get(key), 512)
-                for key in ("destination", "remote_addr", "hostname", "server.address", "url")
-            )
-            process = record.get("process")
-            if isinstance(process, dict):
-                serialized += " " + self._text(process.get("binary") or process.get("name"))
-            else:
-                if process is not None:
-                    self.ctx.warn("endpoint.ebpf: malformed process")
-                serialized += " " + self._text(record.get("binary") or record.get("process_name"))
+        for raw in records:
+            normalized = _normalize_ebpf_record(raw)
+            if normalized is None:
+                # The record was not analyzed, so the scan is incomplete; one
+                # fixed-text warning however many records are unrecognized.
+                if not self._unrecognized_records:
+                    self._unrecognized_records = True
+                    self.ctx.warn(
+                        "endpoint.ebpf: unrecognized event records were not analyzed; supported "
+                        "exports are Tetragon, Falco, Tracee, Hubble and the flat record shape",
+                        reason="unparsed-input",
+                    )
+                continue
+            record, readings = normalized
+            # The event is still scored on what was read.
+            for producer, defects in readings:
+                self._report_defects(producer, defects)
+            binary = self._text(record.get("process_name"))
+            serialized = self._destination_text(record) + " " + binary
             lower = serialized.lower()
-            port = str(record.get("port") or record.get("destination_port") or "")
+            ports = {str(port) for port in _each(record.get("destination_port")) if port}
             tags = []
             if _HOST.search(serialized) or any(host in lower for host in ("openai", "anthropic", "ollama")):
                 tags.append("llm-egress")
-            if port in {"11434", "1234", "8080", "8000"}:
+            if not _LOCAL_MODEL_PORTS.isdisjoint(ports):
                 tags.append("local-llm-traffic")
             if not tags:
                 self.ctx.examined()
                 continue
-            pod = self._text(record.get("pod") or record.get("pod_name"))
+            pod = self._text(record.get("pod"))
             ns = self._text(record.get("namespace"))
-            process_binary = (
-                process.get("binary") or process.get("name") if isinstance(process, dict) else None
-            )
-            binary = self._text(process_binary or record.get("binary") or record.get("process_name"))
             binary = binary or "runtime-process"
             yield self._finding(
                 f"{ns}/{pod}/{binary}".strip("/"),

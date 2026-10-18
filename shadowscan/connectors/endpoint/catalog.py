@@ -190,6 +190,12 @@ class ModelStore:
     provider: str | None  # provider signature id
     layout: str  # how models are laid out: "ollama", "files" or "hf-hub"
 
+    @property
+    def root(self) -> str:
+        """The directory the runtime keeps its models in: ``path``, or for the Ollama
+        layout the ``models`` directory that holds ``manifests`` beside ``blobs``."""
+        return self.path.removesuffix("/manifests") if self.layout == "ollama" else self.path
+
 
 MODEL_STORES: tuple[ModelStore, ...] = (
     ModelStore("ollama", "Ollama", ".ollama/models/manifests", "provider.ollama", "ollama"),
@@ -227,3 +233,48 @@ SHELL_TOOLS: dict[str, tuple[str, str | None]] = {
     "copilot": ("GitHub Copilot CLI", "coding-agent.github-copilot"),
     "kiro-cli": ("Kiro CLI", None),
 }
+
+# Local model runtimes as a host or MDM software inventory names them, beyond
+# the products MODEL_STORES, SHELL_TOOLS and the bundled provider signatures
+# already name: desktop runtimes without a model store or signature here, and
+# the executables runtimes install under a name of their own.
+LOCAL_RUNTIME_NAMES: tuple[str, ...] = (
+    "Msty",
+    "Msty Studio",
+    "llama-server",  # llama.cpp
+    "llama-cli",  # llama.cpp
+    "Ollama app",  # Ollama's Windows tray application
+    "llamafile",
+    "KoboldCpp",
+)
+
+# Product names that are also a common word, a given name or the name of
+# unrelated software: a host inventory row named "Make" is GNU make far more
+# often than Make (Integromat), and Homebrew's "goose" is the pressly/goose
+# database migration tool, not Block's agent. endpoint.host takes one of these
+# as a row's whole name only in its own product's context, listed here: an
+# application bundle or executable the product installs, or a directory the
+# product keeps, each a run of whole path components anywhere on the row's path,
+# ignoring case (``Jan.exe``,
+# ``/Applications/Goose.app/Contents/MacOS/goose``, ``~/.lmstudio/bin/lms``,
+# ``~/.continue``). An ``.app`` or ``.exe`` suffix or a dot-directory is no
+# context by itself: Make (Integromat), Replicate and Cohere are hosted services
+# without a desktop application or a directory of their own, so their names never
+# count, and ``make.exe`` under Chocolatey or MSYS2 stays GNU make. Goose's
+# Windows executable is left out because pressly/goose builds a ``goose.exe`` too.
+AMBIGUOUS_PRODUCT_CONTEXTS: dict[str, tuple[str, ...]] = {
+    "Make": (),
+    "Rivet": ("Rivet.app",),
+    "Goose": ("Goose.app", ".config/goose", "Block/goose"),  # Block's desktop app and configuration
+    "Jan": ("Jan.app", "Jan.exe"),  # a given name and a month
+    # LM Studio's CLI, and the usual abbreviation of a learning management system.
+    # Its context is LM Studio's bundle and every directory the catalog lists for
+    # LM Studio: older releases install ~/.cache/lm-studio/bin/lms, newer ones
+    # ~/.lmstudio/bin/lms.
+    "lms": ("LM Studio.app", ".lmstudio", ".cache/lm-studio"),
+    # Common words.
+    "Continue": (".continue",),
+    "Replicate": (),
+    "Cohere": (),
+}
+AMBIGUOUS_PRODUCT_NAMES: tuple[str, ...] = tuple(AMBIGUOUS_PRODUCT_CONTEXTS)

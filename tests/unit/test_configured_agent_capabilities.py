@@ -91,12 +91,55 @@ def test_empty_or_disabled_javascript_options_are_unscored(tmp_path, run_connect
             {"tool-use", "multi-agent"},
             ".ts",
         ),
+        # The realtime (voice) agent of the same SDK takes the same options.
+        (
+            "import { RealtimeAgent } from '@openai/agents/realtime';\n"
+            "const a = new RealtimeAgent({name: 'support', tools: [lookup], handoffs: [billing]});\n",
+            {"tool-use", "multi-agent"},
+            ".ts",
+        ),
+        (
+            'from agents.realtime import RealtimeAgent\na = RealtimeAgent(name="support", tools=[lookup], handoffs=[billing])\n',
+            {"tool-use", "multi-agent"},
+            ".py",
+        ),
     ],
 )
 def test_explicit_positive_options_keep_capabilities(tmp_path, run_connector, source, capabilities, suffix):
     finding = _scan(tmp_path, run_connector, source, suffix)
     assert finding.kind == Kind.AGENT
     assert set(finding.capabilities) == capabilities
+
+
+@pytest.mark.parametrize(
+    ("source", "suffix"),
+    [
+        (
+            "import { RealtimeAgent, RealtimeSession } from '@openai/agents/realtime';\n"
+            "const greeter = new RealtimeAgent({name: 'greeter', instructions: 'Greet the user.'});\n"
+            "const session = new RealtimeSession(greeter);\n",
+            ".ts",
+        ),
+        (
+            "from agents.realtime import RealtimeAgent, RealtimeRunner\n"
+            'greeter = RealtimeAgent(name="greeter", instructions="Greet the user.")\n'
+            "runner = RealtimeRunner(starting_agent=greeter)\n",
+            ".py",
+        ),
+    ],
+)
+def test_a_realtime_agent_is_an_agent(tmp_path, run_connector, source, suffix):
+    # It was LLM usage at autonomy L0: only the SDK's Agent class was a construction.
+    finding = _scan(tmp_path, run_connector, source, suffix)
+    assert finding.kind == Kind.AGENT
+    assert "framework.openai-agents-sdk" in finding.frameworks
+
+
+def test_the_realtime_tool_factory_defines_executable_tools():
+    from shadowscan.connectors.code.javascript_tool_attribution import is_javascript_tool_factory
+
+    assert is_javascript_tool_factory("@openai/agents/realtime", "tool")
+    assert is_javascript_tool_factory("@openai/agents-realtime", "tool")
 
 
 @pytest.mark.parametrize("reverse", [False, True])

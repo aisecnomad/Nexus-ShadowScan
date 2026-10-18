@@ -143,12 +143,119 @@ def test_fleet_preserves_highest_source_risk_in_either_order(tmp_path: Path):
         assert result.findings[0].shadow is True
 
 
-def test_fleet_rejects_malformed_statistics(tmp_path: Path):
+@pytest.mark.parametrize(
+    ("key", "value"), [("errors", ""), ("declared_paths", "tests"), ("declared_paths", [3])]
+)
+def test_fleet_rejects_malformed_statistics(tmp_path: Path, key, value):
     path = _report(tmp_path, "laptop", {".mcp.json": MCP})
     report = json.loads(path.read_text())
-    report["stats"][0]["errors"] = ""
+    report["stats"][0][key] = value
     with pytest.raises(ValueError, match="diagnostics"):
         merge_reports([("broken", report)])
+
+
+@pytest.mark.parametrize("value", ["", 3, ["code.filesystem"]])
+def test_fleet_keeps_a_records_connector_name_and_rejects_a_malformed_one(tmp_path: Path, value):
+    # The name joins a labeled record to its findings (shadowscan diff), so a merge keeps it.
+    path = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    report = json.loads(path.read_text())
+    assert report["stats"][0]["name"] == "code.filesystem"
+    merged = merge_reports([("laptop", report)])
+    assert [s.name for s in merged.stats if s.connector == "code.filesystem"] == ["code.filesystem"]
+    report["stats"][0]["name"] = value
+    with pytest.raises(ValueError, match="connector name"):
+        merge_reports([("broken", report)])
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("incomplete_reasons", ["oversize-file"]),
+        ("incomplete_reasons", {"oversize-file": "1"}),
+        ("incomplete_reasons", {"oversize-file": -1}),
+        ("incomplete_reasons", {3: 1}),
+        ("declared_omissions", "1"),
+        ("declared_omissions", -1),
+    ],
+)
+def test_fleet_rejects_malformed_incomplete_reasons_and_omission_counts(tmp_path: Path, key, value):
+    path = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    report = json.loads(path.read_text())
+    report["stats"][0][key] = value
+    with pytest.raises(ValueError, match="incomplete reasons|counts"):
+        merge_reports([("broken", report)])
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "within budget",
+        [],
+        {"within_budget": True},
+        {
+            "examined": 1,
+            "gaps": 1,
+            "blinding_gaps": 0,
+            "gap_entries": 1,
+            "weighted_gap_entries": 1.0,
+            "allowance": 2.0,
+            "within_budget": "yes",
+            "max_gap_ratio": 0.02,
+            "details": [],
+        },
+    ],
+)
+def test_fleet_rejects_a_malformed_coverage_ledger(tmp_path: Path, value):
+    path = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    report = json.loads(path.read_text())
+    report["stats"][0]["coverage"] = value
+    with pytest.raises(ValueError, match="coverage"):
+        merge_reports([("broken", report)])
+
+
+def test_fleet_carries_incomplete_reasons_and_declared_omissions(tmp_path: Path):
+    path = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    report = json.loads(path.read_text())
+    report["stats"][0]["declared_omissions"] = 2
+    merged = merge_reports([("laptop", report)])
+    assert merged.summary()["declared_omissions"] == 2
+    broken = json.loads(path.read_text())
+    broken["stats"][0]["incomplete"] = True
+    broken["stats"][0]["incomplete_reasons"] = {"timeout": 1, "oversize-file": 3}
+    broken["stats"][0]["warnings"] = ["connector timed out"]
+    broken["summary"]["complete"] = False
+    merged = merge_reports([("laptop", broken)])
+    assert merged.summary()["incomplete_reasons"] == {"oversize-file": 3, "timeout": 1}
+
+
+def test_merge_counts_an_unknown_incomplete_reason_as_other(tmp_path: Path):
+    # A source report's reason keys reach the table banner: one outside the fixed
+    # categories (here a terminal title, clear-screen and colour sequence) is counted
+    # as "other", so the merged report and its terminal output name categories only.
+    path = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    broken = json.loads(path.read_text())
+    broken["stats"][0]["incomplete"] = True
+    broken["stats"][0]["incomplete_reasons"] = {
+        "\x1b]0;pwned\x07\x1b[2J\x1b[31mFAKE": 2,
+        "other": 1,
+        "timeout": 1,
+    }
+    broken["stats"][0]["warnings"] = ["connector timed out"]
+    broken["summary"]["complete"] = False
+    merged = merge_reports([("laptop", broken)])
+    assert merged.summary()["incomplete_reasons"] == {"other": 3, "timeout": 1}
+    hostile = tmp_path / "hostile.json"
+    hostile.write_text(json.dumps(broken))
+    result = CliRunner().invoke(main, ["merge", str(hostile), str(path), "--format", "table"])
+    assert result.exit_code == 3, result.output
+    assert "INCOMPLETE SCAN (other 3, timeout 1)" in result.output
+    assert "\x1b" not in result.output and "pwned" not in result.output
+    out = tmp_path / "merged.json"
+    result = CliRunner().invoke(main, ["merge", str(hostile), str(path), "--format", "json", "-o", str(out)])
+    assert result.exit_code == 3, result.output
+    report = json.loads(out.read_text())
+    assert report["summary"]["incomplete_reasons"] == {"other": 3, "timeout": 1}
+    assert all("pwned" not in json.dumps(entry["incomplete_reasons"]) for entry in report["stats"])
 
 
 def test_merge_refuses_a_reused_id_for_another_identity(tmp_path: Path):
@@ -459,3 +566,80 @@ def test_merge_drops_advisory_llm_triage_from_sources(tmp_path: Path):
     merged = merge_reports([("aaa-attacker.json", forged), ("laptop-a.json", report)])
     assert merged.findings
     assert all("llm_triage" not in f.metadata for f in merged.findings)
+
+
+def _tolerating_report(tmp_path: Path) -> dict:
+    """A complete scan report whose coverage budget tolerated one dangling test link."""
+    repo = tmp_path / "laptop"
+    (repo / "tests" / "certs").mkdir(parents=True)
+    for number in range(60):
+        (repo / f"mod{number}.py").write_text(f"VALUE = {number}\n")
+    (repo / ".mcp.json").write_text(MCP)
+    (repo / "tests" / "certs" / "ca.pem").symlink_to(repo / "missing.pem")
+    report = json.loads(_scan(repo, tmp_path / "laptop.json").read_text())
+    assert report["summary"]["tolerated_gaps"] == 1
+    return report
+
+
+def test_fleet_carries_tolerated_gaps_and_loads_reports_without_the_field(tmp_path: Path):
+    report = _tolerating_report(tmp_path)
+    merged = merge_reports([("laptop", report)])
+    assert merged.complete and merged.summary()["tolerated_gaps"] == 1
+    # A report written before the field existed still merges, and still counts them.
+    del report["summary"]["tolerated_gaps"]
+    merged = merge_reports([("laptop", report)])
+    assert merged.complete and merged.summary()["tolerated_gaps"] == 1
+
+
+@pytest.mark.parametrize("value", [5, -1, "1", None])
+def test_fleet_treats_a_summary_whose_tolerated_gaps_its_stats_do_not_hold_as_inconsistent(
+    tmp_path: Path, value
+):
+    report = _tolerating_report(tmp_path)
+    report["summary"]["tolerated_gaps"] = value
+    merged = merge_reports([("laptop", report)])
+    assert not merged.complete
+    assert any("inconsistent completion evidence" in e for s in merged.stats for e in s.errors)
+
+
+def test_fleet_refuses_a_ledger_within_budget_that_lost_more_than_it_was_allowed(tmp_path: Path):
+    report = _tolerating_report(tmp_path)
+    report["stats"][0]["coverage"]["weighted_gap_entries"] = 50.0
+    with pytest.raises(ValueError, match="coverage"):
+        merge_reports([("laptop", report)])
+
+
+def test_fleet_reads_a_ledger_over_budget_as_incomplete_whatever_the_flag_says(tmp_path: Path):
+    report = _tolerating_report(tmp_path)
+    report["stats"][0]["coverage"]["within_budget"] = False
+    merged = merge_reports([("laptop", report)])
+    assert not merged.complete
+    assert merged.summary()["tolerated_gaps"] == 0
+
+
+def test_fleet_counts_what_a_root_within_budget_tolerated_beside_one_over_it(tmp_path: Path):
+    # A multi-root report combines its roots' ledgers: the big root tolerated one
+    # link, the small root went over its own budget. The combined summary says so
+    # (tolerated_gap_entries), and merge recomputes summary.tolerated_gaps from it.
+    big, small = tmp_path / "big", tmp_path / "small"
+    for root, modules in ((big, 60), (small, 2)):
+        (root / "tests" / "certs").mkdir(parents=True)
+        for number in range(modules):
+            (root / f"mod{number}.py").write_text(f"VALUE = {number}\n")
+        (root / "tests" / "certs" / "ca.pem").symlink_to(root / "missing.pem")
+    out = tmp_path / "multi.json"
+    result = CliRunner().invoke(
+        main, ["code", str(big), str(small), "--no-incremental", "--format", "json", "-o", str(out)]
+    )
+    assert result.exit_code == 3, result.output
+    report = json.loads(out.read_text())
+    assert report["summary"]["tolerated_gaps"] == 1
+    assert report["stats"][0]["coverage"]["tolerated_gap_entries"] == 1
+    merged = merge_reports([("multi", report)])
+    assert not merged.complete and merged.summary()["tolerated_gaps"] == 1
+    # The part counts are optional: a report written before them still merges.
+    for key in ("parts", "parts_over_budget", "tolerated_gap_entries"):
+        del report["stats"][0]["coverage"][key]
+    report["summary"]["tolerated_gaps"] = 0
+    merged = merge_reports([("multi", report)])
+    assert not merged.complete and merged.summary()["tolerated_gaps"] == 0

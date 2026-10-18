@@ -1,10 +1,15 @@
 """Okta: OAuth/OIDC applications, service apps (client credentials), consent grants and user tokens.
 
-Live API (SSWS token or OAuth bearer with ``okta.apps.read``):
+Live API (SSWS token, or OAuth bearer with ``okta.apps.read`` and ``okta.appGrants.read``):
 
-* ``GET /api/v1/apps``                       – all applications
-* ``GET /api/v1/apps/{id}/grants``           – OAuth 2.0 scope consent grants (admin granted)
-* ``GET /api/v1/apps/{id}/tokens``           – refresh tokens users issued to the app (user consent)
+* ``GET /api/v1/apps``                       – all applications (``okta.apps.read``)
+* ``GET /api/v1/apps/{id}/grants``           – OAuth 2.0 scope consent grants (admin granted;
+  ``okta.appGrants.read``, a separate scope that ``okta.apps.read`` does not include)
+* ``GET /api/v1/apps/{id}/tokens``           – refresh tokens users issued to the app (user consent;
+  ``okta.apps.read``)
+
+A bearer token without ``okta.appGrants.read`` is refused on every grants call, so
+the inventory is incomplete (exit 3) rather than missing the grants silently.
 
 Offline export: list of app objects, optionally with ``_grants`` and ``_tokens`` arrays embedded.
 """
@@ -19,7 +24,12 @@ from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import config_boolean, failure_summary, finalize
-from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
+from shadowscan.connectors.identity.common import (
+    assess_app,
+    identity_kind_for,
+    only_ai_name_hint,
+    summarize_scopes,
+)
 from shadowscan.models import Evidence, Finding, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
@@ -34,8 +44,8 @@ class OktaConnector(BaseConnector):
         "org_url": "https://<org>.okta.com (env OKTA_ORG_URL)",
         "token": "SSWS API token (env OKTA_API_TOKEN); ignored when `bearer` is set",
         "bearer": (
-            "OAuth 2.0 access token with okta.apps.read, sent as Bearer instead of `token` (env "
-            "OKTA_ACCESS_TOKEN)"
+            "OAuth 2.0 access token with okta.apps.read and okta.appGrants.read, sent as Bearer "
+            "instead of `token` (env OKTA_ACCESS_TOKEN)"
         ),
         "include_inactive": "include INACTIVE apps (default false)",
         "fetch_tokens": "call /tokens per OIDC app to count user consents (default true)",
@@ -201,6 +211,13 @@ class OktaConnector(BaseConnector):
             # bookmark / SWA apps without AI signals are noise
             return None
         if not f.frameworks and not machine and not scopes:
+            return None
+        # A sign-in client with OpenID Connect scopes only and no AI hint, or
+        # one from a common word ("Insurance Agent Desk", "Copilot Money"),
+        # is a decoy; a stronger hint keeps the app (see only_ai_name_hint).
+        # Machine (service-app) clients are always surfaced: a service app
+        # with no scopes is an incomplete record, not a false positive.
+        if not machine and only_ai_name_hint(f, scopes, index=self.index, names=(label, app.get("name"))):
             return None
         f.metadata.update(
             {

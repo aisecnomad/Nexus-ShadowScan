@@ -21,18 +21,28 @@ that are never silent:
   to a scanned artifact with the same suffix, in the same project and test
   classification (`latest.gguf` linking to `model-q4.gguf`), is covered the
   same way: artifacts are inspected by suffix and content, and the target is
-  inventoried at its real path. Every other link makes
-  the scan incomplete (exit code 3): directory links, whose alias paths are not
-  inspected; other configuration and document aliases, whose parsing can depend
-  on their path; aliases into another project or test directory; links into
-  excluded or unread content; links outside the root; and unresolved links.
+  inventoried at its real path. Every other link is a
+  [coverage gap](#coverage-budget-and-strict-accounting): other configuration
+  and document aliases, whose parsing can depend on their path; aliases into
+  another project or test directory; links into excluded or unread content;
+  links outside the root; and unresolved links. A dangling link, or one to a
+  single regular file, costs one entry of the coverage budget; a link to a
+  directory, whose alias paths are not inspected and which can stand for any
+  number of files, makes the scan incomplete (exit code 3) at once. So does a
+  dangling link or one to a single file whose own name is configuration the
+  scanner reads (`.mcp.json` or `.claude/settings.json` pointing outside the
+  tree, `CLAUDE.md`, a manifest), as an oversize copy of that file does,
+  except in discounted test code; an MCP configuration or coding-agent file
+  under a test path (`tests/.mcp.json`) is not discounted.
   Files are read relative to the opened scan root without following a link in
   any path component, so a directory replaced by a link after the walk listed it
   fails that file's read (incomplete) instead of reading content outside the
   root. Like a read by path, this needs only search permission on the
   directories above each file.
 * **Oversize files** (`max_file_size`, default 1,000,000 bytes) that the scanner would
-  inspect make the scan incomplete when skipped. Known generated, binary and
+  inspect are a coverage gap when skipped: one entry of the
+  [budget](#coverage-budget-and-strict-accounting), or an immediate exit 3 for
+  a configuration file its name selects. Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain
   warnings, including when `strict_coverage` is enabled.
 * **Binary or undecodable content.** Text with a UTF-8, UTF-16 or UTF-32
@@ -44,7 +54,7 @@ that are never silent:
   scanner looks for is ASCII, which such an encoding writes the same way, so the
   file is analyzed in full and the scan stays complete; the warning `is not
   valid UTF-8, the bytes that are not were replaced` records it (one warning
-  per kind, listing the first files; `strict_coverage` makes each file a gap
+  per kind, listing the first files; [strict accounting](#coverage-budget-and-strict-accounting) makes each file a gap
   instead). Content in which any 8 KiB window has more than four characters,
   and more than a tenth of the window, that are not valid UTF-8, or that holds a
   control character other than tab, line break or form feed anywhere, is not
@@ -65,8 +75,8 @@ that are never silent:
   cannot decode or does not read as ASCII where the bytes are ASCII (UTF-16 or
   UTF-32 without a byte-order mark, UTF-7, HZ, EBCDIC code pages), makes the
   scan incomplete (exit code 3) with `binary or
-  undecodable content in analyzable file`; it is never silently treated as
-  empty. A compiled or packed artifact with no file extension and a known
+  undecodable content in analyzable file`, outside the test-code exception
+  below; it is never silently treated as empty. A compiled or packed artifact with no file extension and a known
   header (ELF, Mach-O, WebAssembly, gzip, zip, bzip2, xz, zstd, 7z, PNG, JPEG,
   GIF, PDF) is skipped quietly, as are names the scanner never analyzes
   (images, archives, fonts, lockfiles, minified bundles). Exclude a directory
@@ -93,7 +103,22 @@ that are never silent:
   analyze (source, manifests, `.env`, configuration, MCP and agent files,
   notebooks) that is not text in a supported encoding makes the scan incomplete
   with `binary or undecodable content in analyzable file`; the rules above say
-  which invalid UTF-8 and NUL-bearing files are read instead. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
+  which invalid UTF-8 and NUL-bearing files are read instead. Under a test or
+  fixture path, with `include_tests` false, such a file (a syntax-highlighting
+  sample, a PNG attachment saved as `.txt`) is read for credentials only, its
+  bytes as Latin-1 without NUL bytes and without excerpts, and is then charged
+  to the [coverage budget](#coverage-budget-and-strict-accounting) as one whole
+  entry: its other evidence would be discounted, and credentials never are.
+  [Strict accounting](#coverage-budget-and-strict-accounting) reads it for
+  credentials all the same and then reports its gap as an error, so it never
+  finds fewer keys than the default accounting. That exception
+  does not cover a file whose findings keep their full weight under a test
+  path: an MCP configuration (by a dedicated name such as `.mcp.json`, or a
+  JSON, TOML or YAML file, `settings.json` included, whose text declares
+  servers, which is read for that check even with `scan_secrets` off), a
+  coding-agent instruction, rule or settings file (`CLAUDE.md`,
+  `AGENTS.md`, `.cursor/rules/`, `.claude/settings.json`, …) and an agent
+  manifest or card stay a gap there as anywhere else. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
   decoded and analyzed (the mark is removed, so a BOM-prefixed `.mcp.json`
   parses). A file with a NUL byte in its first 8 KiB and no byte-order mark is
   not text in any supported encoding, yet interpreters such as Node and `sh`
@@ -109,12 +134,15 @@ that are never silent:
   Unrecognised binary content stays a gap in those places too. An operator can
   exclude a known binary with an `exclude` file glob.
 * **Entries that are not regular files** (a directory, FIFO, socket or device)
-  named like a file the scanner analyzes, such as `.mcp.json` or
-  `requirements.txt`, make the scan incomplete, as a symbolic link of the same
-  name does. A directory is only reported when its name is an MCP configuration
-  file name such as `.mcp.json`; directories that agent tools read as
-  directories (`.roo/rules/`, `.clinerules/`, `.cursor/rules/`) are not. Its
-  contents are still scanned.
+  named like a file the scanner analyzes are a coverage gap of one entry
+  each, as a symbolic link of the same name to a single file is. A FIFO,
+  socket or device in place of configuration the scanner reads (`.mcp.json`,
+  `.claude/settings.json`, `requirements.txt`) makes the scan incomplete at
+  once, outside discounted test code, as a link or an oversize copy of it
+  does. A directory is only reported when its name is an MCP configuration
+  file name such as `.mcp.json`, and costs one entry: its contents are still
+  scanned. Directories that agent tools read as directories (`.roo/rules/`,
+  `.clinerules/`, `.cursor/rules/`) are not reported.
 * **Directory nesting** of any depth is walked on an explicit stack, so a tree
   deeper than the Python runtime's recursion limit loses no findings.
 
@@ -138,10 +166,290 @@ inventory reads committed `HEAD`, not staged-only index entries; an undeclared,
 staged-only gitlink is likewise outside that check. Use a reviewed committed
 checkout and declared submodule paths when completeness matters.
 
-By default, incomplete coverage is recorded as a warning and exits 3.
-`strict_coverage: true` (`--strict-coverage`) elevates the diagnostic to an
-error; it does not change the exit code. Raise `max_file_size`, explicitly
-exclude known data, or review `oversize_skip_globs` for the intended scope.
+Which of these gaps exits 3 on its own, and which only once enough of them
+accumulate, is decided by the [coverage budget](#coverage-budget-and-strict-accounting).
+Raise `max_file_size`, explicitly exclude known data, or review
+`oversize_skip_globs` for the intended scope.
+
+Every diagnostic that leaves a scan incomplete is also counted by reason in
+`stats[].incomplete_reasons` and, summed over the connectors, in
+`summary.incomplete_reasons`; the CLI names the counts on stderr when it exits 3
+(`scan incomplete (exit 3): oversize-file 2, unresolved-link 1`). A connector
+names the reason when it records the diagnostic, as `code.filesystem` does for
+its oversize, undecodable, link, non-regular, Git LFS pointer, parser and
+analysis-limit gaps and for its credential limit (`more than 5 credentials
+matched` is `analysis-limit`), and `endpoint.ebpf` for records it could not
+read (`unparsed-input`) or cut at its list limit (`analysis-limit`); one
+recorded without a reason is classified from its text, the connectors' own
+message vocabulary, with the path the diagnostic names left out where the
+connector passes it (`code.filesystem` does for every coverage gap), so a file
+called `src/http_client.py` or a directory called `deadline` does not choose
+the category. Each gap in `stats[].coverage.details` keeps the `reason` it was
+recorded with, and when the coverage budget leaves the scan incomplete each
+partial gap is counted under it. The categories are `oversize-file` (a file
+over `max_file_size` or `max_notebook_size`), `unresolved-link` (a symbolic
+link, gitlink or submodule not followed), `unparsed-input` (content that did
+not parse or could not be decoded, or an input defect, including a structured
+document whose excerpts were withheld because it did not parse),
+`sanitization-limit` (a sanitizer or parser resource limit that left the
+credential-redaction context unestablished, so excerpts were withheld),
+`timeout` (a file's matching budget, a connector deadline or a job deadline,
+including a connector left unstarted because timed-out calls hold every worker
+slot, and findings an overrun produced that could not be reported),
+`access-denied`, `upstream-error` (a live API, network or
+rate-limit failure),
+`analysis-limit` (a per-file budget such as `max_ast_nodes` or the model
+literal limit), `subset-scan` (a `triage` scan), `unscanned-input` and `other`.
+Counts read back from a source report (`shadowscan merge`) or a plugin worker
+keep their totals, but a key that is not one of these categories is counted as
+`other`, so the table banner and the stderr line never print a source's own
+text there. A connector that failed or was skipped before it recorded a diagnostic has no
+entry; the summary's `status` still says `incomplete`.
+
+### The coverage budget
+
+A gap the scanner cannot bound is *blinding*: the walk stopped early, a page
+was refused, a deadline expired, a link names a directory, a sanitizer limit
+was reached. It marks the scan incomplete at once. A *partial* gap costs a
+known number of entries (a dangling link is one) and is charged against a
+budget: `max_coverage_gap` (`--max-coverage-gap`), by default 2% of the entries
+the connector examined and at most 100 weighted entries. A gap under a
+dependency, cache or test path (`node_modules`, `vendor`, `tests`, `fixtures`
+and similar) is charged a quarter of its entries, unless the scanner could not
+read or decode the content. Within the budget the scan stays complete and the
+gaps' diagnostics remain warnings; over it the scan is incomplete and every
+partial gap is counted under its reason in `stats[].incomplete_reasons`.
+`strict_coverage: true` or `--max-coverage-gap 0` sets the budget to zero.
+
+A connector that recorded any gap publishes its ledger in the JSON report as
+`stats[].coverage`, which is `null` when there was none. When a gap was
+partial it also adds one verdict line to its warnings, or to its errors when
+the scan is incomplete.
+
+| Key | Meaning |
+|---|---|
+| `examined` | Entries the connector reached, summed over its roots (for a code scan, the entries the walk examined): the budget's denominator |
+| `gaps` | Gaps recorded, blinding and partial |
+| `blinding_gaps` | How many of them were blinding |
+| `gap_entries` | Entries the partial gaps cost, before weighting |
+| `weighted_gap_entries` | The same after path weighting: what is charged against the budget |
+| `allowance` | Weighted entries the scan could lose: `max_gap_ratio` times `examined`, at most 100, and 0 under strict accounting |
+| `within_budget` | Whether `weighted_gap_entries` stayed within `allowance` |
+| `max_gap_ratio` | The ratio in force |
+| `details` | The first 50 gaps (`MAX_PUBLISHED_GAPS`) in the order they were recorded |
+| `details_truncated` | Present only when more than 50 gaps were recorded: how many `details` leaves out. Every gap is still counted in `gaps` and `gap_entries`. |
+| `parts` | Present only when the connector was judged in parts (several roots or repositories): how many parts recorded a gap |
+| `parts_over_budget` | Present with `parts`: how many of them went over their own allowance, so `within_budget` is false exactly when it is above 0 |
+| `tolerated_gap_entries` | Present with `parts`: the entries of the parts that stayed within their own allowance, which `summary.tolerated_gaps` counts even when another part went over |
+
+Each entry of `details` has `detail` (the diagnostic), `path`, `kind`
+(`blinding` or `partial`), `entries`, `full_weight` (true when the path discount
+was not applied), `reason` (the `incomplete_reasons` category the gap counts
+under if it leaves the scan incomplete) and `relevance` (`low` for a dependency,
+cache or test path, otherwise `high`). `shadowscan merge` and a process-mode plugin's result are
+checked against this shape (`shadowscan.coverage.validate_coverage_summary`), and
+a ledger that does not match is refused rather than republished.
+
+Only the JSON report carries `stats[].coverage`. SARIF has no coverage block:
+its `invocations[].toolExecutionNotifications` hold each connector's warnings
+and errors, among them the verdict line and the diagnostic of each gap that
+was reported, but not the counts, nor the gaps that one representative
+diagnostic stands for (a tree's further unread links). The verdict line names
+the JSON report for that reason. To have both from one scan, write the JSON
+report and render the SARIF log from it:
+
+```bash
+shadowscan code . --format json --output report.json
+shadowscan merge report.json --format sarif --output report.sarif
+```
+
+The rendered log has the scan's results and notifications, and one more saying
+the source report is incomplete when it was; `merge` exits 3 as the scan did.
+A second scan would not do: it is a different scan, whose ledger need not be
+the one the SARIF log came from.
+
+### Coverage budget and strict accounting
+
+A coverage gap is *blinding* when the scanner cannot bound what it lost: the
+walk stopped early (`max_files`, `max_entries`, a deadline), a page was
+refused, a symbolic link names a directory, undecodable bytes, padding past
+`max_file_size`, a link or a FIFO, socket or device hide a file read as
+configuration, or a sanitizer limit was hit. A blinding gap marks the scan
+incomplete at once. A *partial* gap costs a known number of entries: any other
+dangling link or link to a single file, any other non-regular entry, an
+incidental file over `max_file_size`. Partial gaps
+accumulate against the gap budget, `options.max_coverage_gap`
+(`--max-coverage-gap`; `code.filesystem` also takes its own
+`max_coverage_gap`): 2% of examined entries by default, at most 100 weighted
+entries. A gap weighs a quarter of an entry when its path cannot hold
+deployed code as the scan reads it: under a dependency tree or tool cache
+(`node_modules`, `vendor`, `third_party`, …), or under a test path while
+`include_tests` is off (the test paths of
+[test and fixture code](#test-and-fixture-code), test file names such as
+`test_*.py`, `*.test.ts` and `conftest.py` included). With `include_tests` a
+test path is source and its gaps weigh in full, and so does a file whose
+findings keep their full weight under a test path (an MCP configuration such
+as `tests/.mcp.json`, a coding-agent instruction, rule or settings file, an
+agent manifest or card), as the discount and the declaration read it. A
+`__snapshots__/` directory is not a test path to the scan, so its gaps weigh
+in full too. Within the budget the scan
+stays complete; every gap is still listed in `stats[].coverage.details`, with
+its path, reason and `relevance` (`low` for a quarter-weight gap).
+
+The budget is judged per scan root, and per repository for `code.github` and
+`code.gitlab`, never over a summed run: a scan of several roots is complete
+only if every root would be complete scanned alone. The 2% ratio and the
+100-entry ceiling apply to each root's own examined entries, so several roots
+may each lose up to their own allowance, and the verdict line names each root
+or repository that went over its budget. Summing them would let one large
+clean root dilute a small root's gaps, and would make an organisation of
+ordinary repositories exit 3 with no setting to fix it. The published
+`stats[].coverage` combines the roots that recorded a gap: counts add, the
+`allowance` is the sum of their allowances, and `within_budget` is true only
+if every root was. Because each root was judged against its own allowance, a
+combined `weighted_gap_entries` below the summed `allowance` can sit beside
+`within_budget: false`; the combined summary therefore also states `parts`
+(the roots or repositories that recorded a gap), `parts_over_budget` and
+`tolerated_gap_entries` (the entries the roots within their own budget
+tolerated), and lists in `details` the gaps of the roots that left the scan
+incomplete first, so the gaps the verdict line points to are never crowded
+out of the 50 published by a larger root's tolerated ones. A single root's
+summary has none of these three keys. An incremental scan (`--incremental`),
+which runs and caches each root on its own, reaches the same verdict and
+publishes the same summary.
+
+`summary.tolerated_gaps` counts the entries left unread in every root or
+repository whose own budget tolerated them (the `gap_entries` of each
+`stats[].coverage` within budget, or a combined summary's
+`tolerated_gap_entries`), so a complete scan that skipped content says so
+beside `summary.declared_omissions`, and so does a scan another root put over
+its budget: the table banner shows both, and the stderr line of an exit 3
+names them as gaps and omissions that did not count, as the verdict line
+does. A report written before the field existed has none; `shadowscan merge`
+recomputes it from the stats and treats a source whose summary states a
+different value as inconsistent (incomplete). A ledger summary that claims to
+be within budget while losing more than it allows, or whose part counts its
+own counts refute, is refused, and one over budget or blinded marks its
+connector incomplete whatever the report or a plugin worker says.
+
+Every gap a `code.filesystem` scan records (and every gap in a `code.github`
+or `code.gitlab` checkout, which that connector scans) is decided by one rule,
+applied in this order:
+
+1. **Strict accounting.** `strict_coverage: true` (`--strict-coverage`) and a
+   gap budget of 0 (`max_coverage_gap: 0`, `options.max_coverage_gap: 0` or
+   `--max-coverage-gap 0`) are both strict accounting, the accounting from
+   before the budget: every gap marks the scan incomplete and is counted under
+   its reason, no gap is discounted as test code, and none is declared by the
+   `ci` profile. The profile is therefore refused with either setting: a
+   configuration error before anything is read, and a usage error for
+   `--profile ci --strict-coverage` or `--profile ci --max-coverage-gap 0`.
+   The two settings differ only in where a gap the budget would charge (a
+   link, a non-regular entry, an incidental oversize file) is reported:
+   `strict_coverage` records each as an error where it happens, while a
+   budget of 0 charges each to the budget, so those gaps stay listed in
+   `stats[].coverage` and the verdict that leaves the scan incomplete is one
+   error line. Every other gap is a diagnostic at the file under either
+   setting, counted under its reason and absent from `stats[].coverage`: a
+   test-code gap the default accounting discounts (a malformed fixture, or a
+   binary one after its credential-only read) is an error, and content the
+   default accounting only notes (invalid structured syntax, a test file over
+   the binder's budget, text that is not valid UTF-8) is an error or a warning
+   that marks the scan incomplete and ends in `coverage incomplete`.
+2. **Credentials.** A credential limit is never declared, discounted or
+   budgeted: a file holding more matches of one credential format than the
+   matcher reports (`more than 5 credentials matched`) marks the scan
+   incomplete under every profile, in test code too. No file is declared
+   without a credential read: a gap that left a file's bytes unread by
+   credential detection while `scan_secrets` is on (a file over
+   `max_file_size`, a notebook's saved outputs) is recorded as without the
+   profile, an oversize file as one entry of the budget weighed by its path
+   like any other gap, or blinding when its name selects it as
+   configuration. A binary or undecodable test fixture is read for
+   credentials before its gap is recorded, under every accounting. The one
+   exception left is an undecodable file under a documentation, example or
+   generated path, which `profile: ci` declares without that read.
+3. **Declared omissions.** Under `profile: ci`, a gap in a path the
+   [profile](#the-ci-profile) names is declared: counted in
+   `declared_omissions`, every entry of it, never charged to the budget. A
+   file whose findings keep their full weight wherever it lies (an MCP
+   configuration, a coding-agent instruction, rule or settings file, an agent
+   manifest or card) is never declared.
+4. **Discounted test code.** With `include_tests` off, a gap in a test or
+   fixture file whose evidence the scan discounts (a malformed fixture, a
+   structured parse that withheld excerpts, test source the lexer cannot
+   settle) is charged to the budget as a partial gap at a quarter weight, and
+   a binary or undecodable fixture, read for credentials first, at a whole
+   entry. Its warning and its `stats[].coverage.details` entry say `test code
+   is discounted evidence`. Against the default 2% budget a root therefore
+   tolerates malformed fixtures up to about 8% of its entries, but binary
+   ones only up to about 2%, fewer beside other gaps: a 200-file service with
+   four binary fixtures and one dangling certificate link exits 3 (see
+   [test and fixture code](#test-and-fixture-code)).
+5. **Budget.** Every other partial gap is charged to the budget; a blinding
+   one marks the scan incomplete.
+
+### The `ci` profile
+
+A gate on a repository's source does not read the certificate links in its test
+suite, its malformed fixtures or its generated code, yet by default each of
+those is a coverage gap: a few are tolerated by the
+[budget](#coverage-budget-and-strict-accounting) and enough of them exit 3.
+`profile: ci` (`--profile ci`) declares such gaps in advance: an unread symbolic
+link, a non-regular entry, content that did not parse or an analysis limit under
+a test, fixture, documentation, example or generated path is recorded as a
+warning that names it and ends in `declared omission (profile ci)`, counted in
+`stats[].declared_omissions` and `summary.declared_omissions` and listed by path
+in `stats[].declared_paths` (the first 200 of each connector), and the scan
+stays complete. So is a file over `max_file_size` under a documentation, example
+or generated path, but only while `scan_secrets` is off (an oversize test
+fixture is then skipped with a warning under every profile): with credential
+detection on (the default) a recorded cassette or fixture over the limit may
+hide a key, and credentials are never declared without a read, so its gap is
+charged to the budget as without the profile. Every declared entry is counted:
+of a run of skipped links,
+one warning per root names the first and the rest are counted without one, as
+the budget counts every undeclared link. Test paths are declared only while
+`include_tests` is false, when their evidence is discounted; with it set they
+are source like any other. A file whose findings keep their full weight under
+any path is never declared, wherever it lies: an MCP configuration (by a
+dedicated name such as `.mcp.json`, or a structure that declares servers), a
+coding-agent instruction, rule or settings file (`CLAUDE.md`, `.cursor/rules/`,
+`.claude/settings.json`, …) and an agent manifest or card, since a client
+started in `tests/` or `docs/` reads it there. Nor is a credential limit
+(`more than 5 credentials matched`): it marks the scan incomplete under the
+profile too.
+Documentation and example directories count only below the file's project
+root, as they do for evidence: a directory that holds its own manifest
+(`demo/pyproject.toml`, `examples/svc/package.json`) is a deployable project
+reported at full weight, whatever it is called, so a gap in it still marks
+the scan incomplete. That holds for any directory with a manifest, not only
+`demo/` and `examples/`: a documentation site that is its own package
+(`docs/package.json` in a Docusaurus or VitePress layout) is a project, so an
+oversize blog post, a generated search index or a binary page directly in it
+exits 3 under the profile. The `docs/` and `examples/` directories below such a
+project, and test paths anywhere, are still declared (`docs/docs/` in that
+layout); its own content is not. A template is not such a project: a directory
+with template syntax in its path (`templates/crew/{{cookiecutter.slug}}/`, a
+`{%` or `${` segment), or one none of whose JSON or TOML manifests parses as
+its tool reads it (a templated `package.json`; a repeated key, which npm and
+Composer accept, still parses), is judged by the project around it, so a template
+under a documentation or example path keeps its own unparsed manifest and
+sources declared. A template at the repository root (a cookiecutter
+repository's `{{cookiecutter.slug}}/`) is judged from the root, where no profile
+path applies. Every other gap, in `src/`, at
+the repository root or in a path the profile does not name, is judged as without
+the profile: charged to the budget, or marking the scan incomplete when it is
+blinding, as a connector deadline, a `max_files` or `max_entries` limit and a
+triage scan always do. The profile
+is refused under [strict accounting](#coverage-budget-and-strict-accounting)
+(`strict_coverage`, or a gap budget of 0). The report of a
+profile scan is not the report of a scan that read everything: read
+`declared_omissions` before treating its exit 0 as full coverage. `diff` reads
+them too: while the current report counts declared omissions, a missing
+finding under a test, documentation, example or generated path is not resolved,
+nor is a missing project with a declared omission inside or above its directory
+(see [comparing reports](#comparing-reports)).
 
 Analysis limits are reported with their reason, for example
 `file analysis incomplete (MatchTimeoutError: source binding call limit exceeded)`.
@@ -207,8 +515,24 @@ example and generated code like any other source. A real-format credential under
 fixture or `cassettes/` path is still reported as a `secret` finding, because
 recorded cassettes capture real traffic and a committed key is exposed wherever
 it lives; without `include_tests` it has half weight and the `test-code-only`
-tag. Recognisable placeholders (repeated characters, marker words such as
-`EXAMPLE`, or very low character diversity) are never reported.
+tag. A credential under a documentation, example or generated path outside the
+test paths is likewise reported with that context's weight and confidence cap
+and the `docs-only`, `example-code-only` or `generated-code-only` tag. Recognisable
+placeholders (repeated characters, marker words such as `EXAMPLE` or their
+Portuguese, Spanish, French, German, Italian, Dutch, Indonesian and Turkish
+equivalents written as whole words between separators, such as
+`sk-proj-sua-chave-aqui-...`, a possessive followed by words that name the
+credential, such as `sua_chave_openai`, `votre-cle-api` or `your_api_key`, or
+very low character diversity) are never reported. A translated word joined to
+the rest by a case boundary (`SuaChaveDaOpenAI`) is read as part of a token,
+as random keys hold such runs, and so is a passphrase that only begins with a
+possessive or a pronoun (`je-suis-le-patron`). An assigned value shaped like
+the name of another variable (`api_key = resolved_api_key`,
+`ENV_API_KEY = "ANTHROPIC_API_KEY"`, `settings.openai_api_key_v2`) is not
+reported either: the
+generic assigned-credential rule accepts an unquoted value because `.env` and
+shell assignments carry none, so it requires a token's shape, digits or evenly
+mixed cases, rather than an identifier's.
 Evidence that only names a coding agent in a test path (an environment variable,
 a display name, a dependency or a code pattern) likewise does not establish a
 coding-agent configuration; instruction documents and coding-agent config
@@ -217,8 +541,8 @@ a variable name, a display name, a model identifier, a CI job image) anchors
 no project finding at all without `include_tests`; imports, dependencies and
 code patterns there still do. An oversize file under a test path is skipped
 with the warning `skipped oversize test fixture` and leaves the scan complete
-only when `scan_secrets` is off and neither `include_tests` nor
-`strict_coverage` is set; otherwise it is read for credentials below the
+only when `scan_secrets` is off, `include_tests` is not set and the
+accounting is not strict ([strict accounting](#coverage-budget-and-strict-accounting)); otherwise it is read for credentials below the
 limit and a coverage gap above it (see
 [large and generated files](#large-and-generated-files)).
 
@@ -377,7 +701,23 @@ incomplete depends on what the file could hide:
   settings file under such a path is still recorded as unread for its
   project's approval gate, which then covers only some actions. With credential
   detection on, or `include_tests: true`, the file is analyzable like any
-  other and the gap returns; `strict_coverage` records it as an error.
+  other and the gap returns; strict accounting keeps it a gap too, and
+  `strict_coverage` records it as an error.
+* With `include_tests` unset and the accounting not strict, a file under a
+  test or fixture path that is read but cannot be fully analyzed (manifest XML
+  that does not parse, YAML that fails the integrity checks, source the lexer
+  cannot settle, a parser input defect) is a warning ending `test code is
+  discounted evidence (include_tests is false)`, charged to the coverage
+  budget at a quarter weight, so a root tolerates such files up to about 8%
+  of its entries (2% at a quarter each), fewer beside other gaps. Its
+  credentials were scanned on the text as read. The
+  same file outside a test path is a gap, and `include_tests: true` or
+  [strict accounting](#coverage-budget-and-strict-accounting) keeps it one.
+  An MCP configuration (by a dedicated name or by the structure that
+  declares its servers), a coding-agent instruction, rule or settings file
+  and an agent manifest or card are reported at full weight under a test
+  path, so a defect in one (`tests/.mcp.json` with a syntax error,
+  `testing/CLAUDE.md` with a NUL byte) is a gap there too.
 * Every other oversize file, for example a 2 MiB Python module, JSON or YAML
   document, is skipped and makes the scan incomplete (exit 3). With
   `strict_coverage: true` (`--strict-coverage`) it is recorded as an error
@@ -444,7 +784,25 @@ connector's deadline. Legacy `options.connector_timeout` and `--connector-timeou
 are deprecated compatibility aliases; the YAML alias logs a deprecation warning
 once per process. Configure only one YAML key; supplying both is rejected.
 Legacy YAML `connector_timeout: null` uses the 120-second default; it does not
-disable the deadline.
+disable the deadline. Left unset, the default is raised for a large input
+when the connector can measure it: `code.filesystem` counts up to 20,000
+entries and scales the deadline above 12,000, to at most 200 seconds. An
+explicit value, 120 included, is honoured unchanged, so a configuration that
+sets `connector_timeout_seconds: 120` turns that scaling off; a larger tree
+needs an explicit, larger deadline.
+
+Leaving the option out and setting it are not the same. Left out (or given as
+legacy `connector_timeout: null`), the 120 seconds is where a connector starts,
+and a connector may raise its own deadline to fit its input: `code.filesystem`
+counts up to 20,000 entries of the tree it is about to walk and, above 12,000,
+scales its deadline in proportion, to at most 200 seconds, and reports
+`input is large; deadline raised to ...` in its progress output. The engine caps
+any connector's proposal at 30 minutes. A value you set, from a configuration
+file, `--connector-timeout-seconds` or `ScanConfig`, is used as it is and never
+raised, and that includes 120: a configuration that spells out
+`connector_timeout_seconds: 120` gives a large repository 120 seconds and
+reports it incomplete. The sample configurations therefore leave the option
+out. Set it for a fixed bound, or for a tree larger than the probe can measure.
 
 Setup failures that name only paths, option names and positions are printed
 verbatim by the CLI: a missing inventory path or signature directory, a
@@ -467,14 +825,27 @@ Listing stops after half of the time in which a file can still start and records
 `connector deadline: listing stopped after N entries`, so a large tree or a slow
 filesystem still scans the entries it listed. A root that starts when no file can
 start any more lists nothing (`listing stopped after 0 entries`), so it cannot run
-the connector past the deadline and discard the findings of the roots before it.
+the connector past the deadline into an expiry, which reports the findings
+already produced but none of the connector's own diagnostics.
 A tree whose listing alone takes more than that half is reported incomplete even
 when listing and scanning together would have finished; raise
 `connector_timeout_seconds` or narrow the root with `exclude` for such a tree.
 
-On expiry, the engine discards that connector's results, records incomplete
-coverage and the reason, retains other completed connectors' findings, and
-returns an incomplete scan (CLI exit 3). Cancellation is cooperative: Python
+On expiry, the engine reports the findings that connector had already produced
+and sanitized, and discards the rest of its result: its statistics, any later
+finding and any artifact it publishes afterwards. For a job split into
+repository roots that is every root's findings, those reused from the
+incremental cache included. The surrendered findings are copies taken from the
+abandoned worker and prepared as a completed job's are: a plugin's get the id
+its own name derives and lose any registry record. Preparing them stops after 5
+seconds; the findings left then, and any the worker changed into something that
+is not plain data, are omitted and counted in the connector's errors. A plugin
+in its own worker process (the default) surrenders nothing: the process is
+killed and its result discarded. The entry is marked incomplete with the
+timeout diagnostic and the reason `timeout`, a warning says that the findings
+are a subset of what a full run would find, other completed connectors'
+findings are retained, and the scan is incomplete (CLI exit 3). Cancellation is
+cooperative: Python
 cannot forcibly interrupt a thread blocked in a vendor SDK call, or in a plugin
 call under `plugin_execution: thread` (a plugin in its default spawned worker is
 killed). Such a call may outlive `Engine.run()`; once timeout handling returns,
@@ -660,9 +1031,11 @@ program can be, still produce ordinary SDK evidence and leave coverage complete.
 
 Several rules keep weak observations from producing strong or high-risk
 findings. A credential whose value looks like a documentation placeholder
-(`REPLACE_ME`, `<your-key>`, `xxxx`, all zeros, `abcdef...` or `1234567890`
-sequences after the provider prefix) is never a `secret` finding; it is listed
-on the project finding as low-weight `example-credential` evidence. A key alone
+(`REPLACE_ME`, `<your-key>`, `sua_chave_openai`, `xxxx`, all zeros, `abcdef...`
+or `1234567890` sequences after the provider prefix) is never a `secret`
+finding; it is listed on the project finding as low-weight `example-credential`
+evidence. An assigned value shaped like an identifier (`api_key = resolved_api_key`)
+is not a credential at all. A key alone
 does not establish LLM usage, a coding-agent configuration needs more than an
 environment-variable or display-name mention (`GOOSE_PROVIDER` in a detector
 list is not "Goose configured"; a config file, instruction document,
@@ -938,15 +1311,24 @@ the scope stable.
 
 Comparing replays of record exports is the alternative for any built-in
 connector: collect live with `--dump-records` (or `options.dump_records`),
-replay each export with `input`, and diff the replays. Two pitfalls apply. The
+replay each export with `input`, and diff the replays. Three pitfalls apply. The
 scope digest of an offline entry includes the absolute resolved `input` path,
 so stage every replay at the same path under the same label, or the comparison
-reports `scope differs`. And an export is published even when the live run
+reports `scope differs`. An export is published even when the live run
 behind it was incomplete (a denied listing is a warning, not an export
 failure), while the replay of that export can complete: check the export's
 `manifest.json` (`complete` for the run and `exported` for the entry) and
-replay only complete runs. A replay attests the export's contents, not the
-tenant's completeness.
+replay only complete runs. And an export is sanitized before it is written:
+a credential the live run recognized in a record, by its shape or by the name
+of the field holding it, is already redacted there, so a replay cannot observe
+it. Findings that rest on a plaintext credential in a resource's
+configuration (the `plaintext-credential` tag of a Lambda, AgentCore or
+container environment, and the evidence, confidence and risk it adds) appear
+in the live report and not in the replay of its own export, and the replay
+reports neither a warning nor incomplete coverage for the difference. Compare
+such findings between live runs, or between a live run and its replay only
+after discounting them. A replay attests the export's contents, not the
+tenant's completeness or the live run's credential evidence.
 
 ## Comparing reports
 
@@ -957,8 +1339,41 @@ score/factors within the same risk band. Each changed item includes
 completed, declare the same supported finding-identity schema, carry a
 `summary` whose `total` (and `by_surface`/`by_kind` counts) match their
 `findings` array, and have the same `collection_scope` fingerprint. A truncated
-or filtered report is therefore unknown (exit 3), not a resolution. The
-fingerprint is an opaque digest that covers
+or filtered report is therefore unknown (exit 3), not a resolution.
+
+A complete report can still have left content unread: the omissions a `ci`
+profile scan declared and the coverage gaps its budget tolerated
+(`stats.coverage`). A finding missing from such content may only have gone
+unread, so it is not resolved. When a missing finding's file (its
+`metadata.path` or the file an evidence location names) is, or lies below, a
+gap path that `stats[].coverage.details` lists, or lies under a test,
+documentation, example or generated path while the current report counts
+declared omissions, the comparison is incomplete with the reason `absence
+there is not resolution`: every missing finding is `unknown` and diff exits 3.
+A project finding is held back by a gap or a declared omission
+(`stats[].declared_paths`) inside its directory or above it, since its
+evidence can come from any file in it; removing an agent project in `src/`
+still resolves while a cassette under `tests/` is declared. When a connector
+declared more omissions than it lists (over 200, or a report from before the
+list), every missing project finding of that connector is held back. A finding missing from content the scan
+did read still resolves, so a `--profile ci` gate keeps reporting resolutions.
+When the report cannot say where a connector stopped reading (a gap list cut at
+50 entries, a malformed ledger or count, a summary counting declared omissions
+that no connector record holds, or declared omissions from a connector without
+the `ci` profile), every missing finding of that connector is held back. A
+connector record names the connector its findings carry in `stats[].name`
+(`stats[].connector` is the label when one is set), and that is how a finding
+is matched to its record's unread content; a record without a name, in an older
+report, applies to every connector's findings. Only
+the current report's unread content counts: the baseline's could only make a
+finding look new, which diff reports anyway. Unread content means what the
+report records as such, declared omissions and `stats[].coverage`: a gap the
+default profile discounts in test code (a warning ending "test code is
+discounted evidence (include_tests is false)") is in neither, so a finding
+missing from such a file, such as a test notebook that stopped parsing, still
+resolves.
+
+The fingerprint is an opaque digest that covers
 selected source paths, connector settings, filters, confidence threshold,
 signatures and scanner implementation. File contents and inventory approvals
 are excluded so real removals and approval changes can be compared. A public

@@ -19,12 +19,14 @@ import tokenize
 from bisect import bisect_right
 from collections.abc import Iterator
 
+from shadowscan.utils.python_tokens import TokenizerFault, generate_tokens
 from shadowscan.utils.redaction_formats import _URL
 from shadowscan.utils.redaction_rules import (
     _FINGERPRINT,
     _MAX_REDACTION_WORK,
     REDACTED,
     SanitizationLimitError,
+    _environment_lookup,
     _sensitive_assignment_key,
 )
 
@@ -421,7 +423,7 @@ class _AssignmentScanner:
         stopped: tokenize.TokenInfo | None = None
         quoted = False
         try:
-            for item in tokenize.generate_tokens(lines.readline):
+            for item in generate_tokens(lines.readline):
                 stopped = item
                 if _TOKEN_COPIES_LINE:
                     self.charge(len(item.line))
@@ -493,13 +495,18 @@ class _AssignmentScanner:
                     previous_operator = ""
             else:
                 stopped = None
-        except (tokenize.TokenError, IndentationError, SyntaxError, UnicodeError) as exc:
+        except (tokenize.TokenError, IndentationError, SyntaxError, TokenizerFault, UnicodeError) as exc:
             # Once '=' is seen, incomplete source must not expose any RHS,
             # including credential fragments on subsequent physical lines.
             # Indentation and nesting errors depend on where a scan started,
             # and so may the codec errors Python 3.12+ tokenizers raise for a
-            # lone surrogate or a non-ASCII character after a lone '\r'.
-            definitive = not isinstance(exc, (IndentationError, UnicodeError)) and "nest" not in str(exc)
+            # lone surrogate or a non-ASCII character after a lone '\r'. So may a
+            # TokenizerFault, which CPython 3.12's tokenizer causes for a NUL byte after
+            # an indented line (found by the fuzzing in #259): an interpreter
+            # fault, read as any other tokenizer error.
+            definitive = not isinstance(
+                exc, (IndentationError, TokenizerFault, UnicodeError)
+            ) and "nest" not in str(exc)
             stopped = None
         if lines.undecided(stopped):
             return None
@@ -549,7 +556,8 @@ def _redact_python_assignments(text: str) -> str:
             fingerprint = bare
             if bare.startswith(('"', "'")) and bare.endswith(bare[0]):
                 fingerprint = bare[1:-1]
-            if _FINGERPRINT.fullmatch(fingerprint):
+            if _FINGERPRINT.fullmatch(fingerprint) or _environment_lookup(bare, 0, len(bare)):
+                # A whole value that only reads an environment variable by name holds no credential.
                 continue
             pieces.append(text[cursor:assigned_at])
             if annotated:

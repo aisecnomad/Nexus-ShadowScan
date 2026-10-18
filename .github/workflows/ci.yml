@@ -43,7 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.13"]
+        python: ["3.11", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -61,18 +61,27 @@ jobs:
           python -m pip install --no-deps --no-build-isolation -e .
           python -m pip check
       - name: Check native file confinement and plugin worker lifecycle
-        run: pytest -q tests/unit/test_confined_file_portability.py tests/unit/test_plugin_process.py
+        run: pytest -q --junitxml="$RUNNER_TEMP/junit-native.xml" tests/unit/test_confined_file_portability.py tests/unit/test_plugin_process.py
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
       - name: Validate threat and control mapping catalogs
         run: python -m shadowscan.mappings.validate
+      - name: Check the vendored OCSF requirements match the reporter
+        run: python -m tools.ocsf_schema --check
+      - name: Ratchet cyclomatic complexity (no new or worsened functions)
+        run: python -m tools.complexity_gate
       - run: ruff check shadowscan tests tools benchmarks
       - run: ruff format --check shadowscan tests tools benchmarks
       - run: mypy shadowscan tools benchmarks
       # The full suite without coverage tracing; the Linux coverage leg of the
       # test job enforces both coverage floors. The console entry point is used
       # on purpose: it must import the checkout-only tools packages.
-      - run: pytest -q
+      - run: pytest -q --junitxml="$RUNNER_TEMP/junit-suite.xml"
+      # The checks API shows a failed step only as "exit code 1"; this names each
+      # failing test there, from the JUnit reports above, with messages redacted.
+      - name: Name the failing tests
+        if: failure()
+        run: python -m tools.test_annotations "$RUNNER_TEMP"/junit-*.xml
   test:
     runs-on: ubuntu-latest
     # The coverage-traced 3.11 leg runs the full suite serially and takes about
@@ -81,14 +90,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12", "3.13"]
-        # One leg traces line and branch coverage and enforces the aggregate
-        # and per-connector floors. Tracing slows the suite several-fold and
-        # the floors measure the tests, not the interpreter, so the other legs
-        # (and macOS) run the same full suite untraced.
-        include:
-          - python: "3.11"
-            coverage: true
+        python: ["3.11", "3.12", "3.13", "3.14"]
+    env:
+      # The 3.11 leg traces line and branch coverage and enforces the
+      # aggregate and per-connector floors. Tracing slows the suite
+      # several-fold and the floors measure the tests, not the interpreter,
+      # so the other legs (and macOS) run the same full suite untraced. An
+      # environment expression, not a matrix ``include`` key: an added matrix
+      # value joins the job's check name, so an include would rename this leg
+      # to ``test (3.11, true)`` and the required ``test (3.11)`` status
+      # could never report.
+      COVERAGE_LEG: ${{ matrix.python == '3.11' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -135,6 +147,10 @@ jobs:
         run: python -m shadowscan.signatures.validate
       - name: Validate threat and control mapping catalogs
         run: python -m shadowscan.mappings.validate
+      - name: Check the vendored OCSF requirements match the reporter
+        run: python -m tools.ocsf_schema --check
+      - name: Ratchet cyclomatic complexity (no new or worsened functions)
+        run: python -m tools.complexity_gate
       - run: ruff check shadowscan tests tools benchmarks
       - run: ruff format --check shadowscan tests tools benchmarks
       - run: mypy shadowscan tools benchmarks
@@ -150,13 +166,16 @@ jobs:
               --disable-pip -r "$lock"
           done
       - name: Run the test suite
-        if: ${{ !matrix.coverage }}
-        run: python -m pytest -q
+        if: ${{ env.COVERAGE_LEG != 'true' }}
+        run: python -m pytest -q --junitxml="$RUNNER_TEMP/junit-suite.xml"
       - name: Run the test suite with line and branch coverage
-        if: ${{ matrix.coverage }}
-        run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
+        if: ${{ env.COVERAGE_LEG == 'true' }}
+        run: python -m pytest -q --junitxml="$RUNNER_TEMP/junit-suite.xml" --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
+      - name: Name the failing tests
+        if: failure()
+        run: python -m tools.test_annotations "$RUNNER_TEMP"/junit-*.xml
       - name: Enforce per-connector coverage floor
-        if: ${{ matrix.coverage }}
+        if: ${{ env.COVERAGE_LEG == 'true' }}
         run: |
           python -m coverage json -o "$RUNNER_TEMP/shadowscan-coverage.json"
           python -m tools.coverage_gate "$RUNNER_TEMP/shadowscan-coverage.json"

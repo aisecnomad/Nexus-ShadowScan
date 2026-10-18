@@ -9,6 +9,7 @@ import random
 import re
 import string
 import threading
+import time
 from bisect import bisect_left, bisect_right
 from pathlib import Path
 
@@ -27,9 +28,12 @@ from shadowscan.connectors.code.filesystem import (
 from shadowscan.engine import Engine
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.matcher import (
+    _FOLLOWER_CHARS,
     _HOST_TOKEN_RX,
+    MAX_SECRETS_PER_SIGNAL,
     WALL_BUDGET_FACTOR,
     MatchTimeoutError,
+    _CredentialJudge,
     keep_file_matches,
     keep_secret_matches,
     language_for_path,
@@ -311,10 +315,13 @@ def test_oversize_source_file_marks_coverage_incomplete_by_default(tmp_path, ind
     (tmp_path / "big.py").write_text("x" * 200)
     result = Engine(_engine_config(tmp_path), index).run()
     assert not result.complete and result.findings
-    assert not result.stats[0].errors
+    # The file is named in a warning; the error is the budget verdict, since
+    # one unread file of two examined is half the tree.
     assert any(
         "big.py: skipped, file exceeds max_file_size" in warning for warning in result.stats[0].warnings
     )
+    assert all("big.py" not in error for error in result.stats[0].errors)
+    assert any("over the" in error and "budget" in error for error in result.stats[0].errors)
     # Strict coverage keeps the error severity for callers that use it.
     strict = Engine(_engine_config(tmp_path, strict_coverage=True), index).run()
     assert not strict.complete and strict.findings
@@ -337,7 +344,10 @@ def test_oversize_skip_globs_is_configurable_and_validated(tmp_path, index, run_
     _, ctx = run_connector(
         "code.filesystem", path=str(tmp_path), use_git=False, max_file_size=100, oversize_skip_globs=[]
     )
-    assert ctx.stats.incomplete and not ctx.stats.errors and len(ctx.stats.warnings) == 2
+    # Both files are named in warnings; the single error is the budget verdict.
+    assert ctx.stats.incomplete
+    assert len([w for w in ctx.stats.warnings if "max_file_size" in w]) == 2
+    assert all("over the" in error and "budget" in error for error in ctx.stats.errors)
     _, ctx = run_connector(
         "code.filesystem",
         path=str(tmp_path),
@@ -365,7 +375,7 @@ def test_only_oversize_agent_source_does_not_yield_a_clean_empty_result(tmp_path
     assert not result.complete and result.findings == []
     assert result.stats[0].incomplete
     assert any(
-        "agent.py: skipped, file exceeds max_file_size; coverage incomplete" in warning
+        "agent.py: skipped, file exceeds max_file_size; coverage gap" in warning
         for warning in result.stats[0].warnings
     )
 
@@ -562,7 +572,13 @@ def _reference_regex_matches(
 ) -> list[tuple[str, int, str, float, int]]:
     """Every pattern of every signal over the text: the matcher the literal prefilter must reproduce."""
     out = []
+    ends: list[int] = []
     newlines = [m.start() for m in re.finditer("\n", text)]
+    if signal_type == "secret":
+        # Secret matches are judged as they are found and only accepted ones
+        # count toward the reported cap (match_secrets).
+        max_per_signal = MAX_SECRETS_PER_SIGNAL
+    judge = _CredentialJudge(text, False)
     for sig, s in index._by_type.get(signal_type, []):
         if language and s.languages and language not in s.languages:
             continue
@@ -579,17 +595,23 @@ def _reference_regex_matches(
                     hints,
                     m.group(0),
                 )
+                if signal_type == "secret" and not judge(sig, s, m):
+                    continue
                 line = bisect_left(newlines, m.start()) + 1
                 value = m.group(0) if signal_type == "secret" else sanitize_text(m.group(0))[:200]
                 out.append((sig.id, sig.signals.index(s), value, s.weight, line))
+                ends.append(m.end())
                 hits += 1
                 if hits >= max_per_signal:
                     break
             if hits >= max_per_signal:
                 break
     if signal_type == "secret":
-        # match_secrets applies the same deterministic post-filter after the regex pass.
-        keep = keep_secret_matches([(sig_id, value, line) for sig_id, _, value, _, line in out])
+        # match_secrets applies the same deterministic cross-signal filter after the regex pass.
+        keep = keep_secret_matches(
+            [(sig_id, value, line) for sig_id, _, value, _, line in out],
+            followers=[text[end : end + _FOLLOWER_CHARS] for end in ends],
+        )
         out = [item for item, kept in zip(out, keep, strict=True) if kept]
     return out
 
@@ -613,6 +635,128 @@ def test_prefiltered_regex_signals_equal_the_exhaustive_reference(index):
         assert secrets == _reference_regex_matches(index, "secret", text, max_per_signal=5), name
         hits += len(code) + len(imports) + len(secrets)
     assert hits > 50
+
+
+class _CountingTokens:
+    """Stands in for the operand tokenizer and records every token read: (position, end)."""
+
+    def __init__(self, pattern: re.Pattern[str]) -> None:
+        self.pattern = pattern
+        self.reads: list[tuple[int, int]] = []
+
+    def match(self, text: str, position: int) -> re.Match[str] | None:
+        token = self.pattern.match(text, position)
+        self.reads.append((position, token.end() if token else position))
+        return token
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "(" * 5000,  # a call that never closes
+        "[{(" * 2000,
+        "?.a" * 2000,  # an optional chain of any length
+        "!" * 5000,
+        " || x" * 1000,  # operators and operands up to the end
+        '"' + '\\"' * 3000,  # a string that never closes
+        " /*" + "'" * 5000,  # a block comment that never closes
+        " // don't\n||" * 500,  # comments with apostrophes between operators
+        "\\\n" * 3000,  # Python line continuations
+        "(" + '"' * 5000,
+        " ||\n" * 1000,
+    ],
+    ids=lambda tail: repr(tail[:8]),
+)
+def test_the_operands_after_a_reference_are_read_once_and_within_the_follower(index, monkeypatch, tail):
+    # Counts tokens instead of timing them: every follower is read left to
+    # right, one token where the last one ended, never past _FOLLOWER_CHARS.
+    from shadowscan.signatures import matcher
+
+    counting = _CountingTokens(matcher._OPERAND_TOKEN)
+    monkeypatch.setattr(matcher, "_OPERAND_TOKEN", counting)
+    # A comment with a key-length literal in it makes the reader run; the
+    # reader skips the comment, so the tail is read as it is.
+    hint = " /* 'not-a-fallback-literal' */"
+    text = "".join(f"const key{n}ApiKey = process.env.KEY{n}_API_KEY{hint}{tail}\n" for n in range(3))
+    index.match_secrets(text, code=True)
+    assert counting.reads
+    runs: list[int] = []
+    end = 0
+    for position, token_end in counting.reads:
+        if position == 0:
+            runs.append(0)
+        else:
+            assert position == end  # contiguous: no character is read twice
+        assert token_end > position
+        runs[-1] += token_end - position
+        end = token_end
+    assert max(runs) <= _FOLLOWER_CHARS
+    assert len(counting.reads) <= len(runs) * _FOLLOWER_CHARS
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "?.trim()" * 30 + ";",  # long chains, short or no literals
+        '.get("a")' * 20 + ";",
+        " || a || b || c || d || e || f;",
+        ' || cfg.get("svc").and("x").then((v) => v.trim()).catch(() => null) || undefined',
+    ],
+    ids=lambda tail: repr(tail[:8]),
+)
+def test_a_follower_without_a_key_length_literal_is_not_read(index, monkeypatch, tail):
+    # The operand reader costs several microseconds a token in Python; a
+    # follower with no quote followed by 16 characters of the value class can
+    # hold no fallback literal, so the reader does not run on it at all.
+    from shadowscan.signatures import matcher
+
+    counting = _CountingTokens(matcher._OPERAND_TOKEN)
+    monkeypatch.setattr(matcher, "_OPERAND_TOKEN", counting)
+    text = "".join(f"const svc{n}ApiKey = process.env.SVC{n}_API_KEY{tail}\n" for n in range(20))
+    assert index.match_secrets(text, code=True) == []
+    assert counting.reads == []
+
+
+def _slow_judge(monkeypatch, seconds: float) -> None:
+    """Make the credential judge spend ``seconds`` of CPU on every generic match before judging it."""
+    from shadowscan.signatures import matcher
+
+    original = matcher._generic_literal
+
+    def slow(value: str, **kwargs):
+        until = time.thread_time() + seconds
+        while time.thread_time() < until:
+            pass
+        return original(value, **kwargs)
+
+    monkeypatch.setattr(matcher, "_generic_literal", slow)
+
+
+_CREDENTIAL_READS = "".join(f"const svc{n}ApiKey = process.env.SVC{n}_API_KEY;\n" for n in range(60))
+
+
+@pytest.mark.production_budgets
+def test_judging_secret_matches_does_not_spend_the_patterns_execution_allowance(index, monkeypatch):
+    # The judge reads up to _FOLLOWER_CHARS after each generic match. Run
+    # inside the regex iteration, its CPU time was charged to the pattern's
+    # allowance (0.1 s for a small input), so a file of a few thousand
+    # credential reads timed out (exit 3) where the pattern alone finishes.
+    # A fixed spin per match stands in for that work, independent of the
+    # machine: 60 matches spend three times the allowance.
+    from shadowscan.signatures import matcher
+
+    _slow_judge(monkeypatch, matcher.REGEX_TIMEOUT_SECONDS / 20)
+    with index.scan_budget(seconds=10):
+        assert index.match_secrets(_CREDENTIAL_READS, code=True) == []
+
+
+@pytest.mark.production_budgets
+def test_judging_secret_matches_still_ends_with_the_inputs_budget(index, monkeypatch):
+    # The judge's time is the input's: a budget it spends ends the input
+    # (MatchTimeoutError, an incomplete scan), however few regex steps ran.
+    _slow_judge(monkeypatch, 0.01)
+    with pytest.raises(MatchTimeoutError), index.scan_budget(seconds=0.2):
+        index.match_secrets(_CREDENTIAL_READS, code=True)
 
 
 @pytest.mark.parametrize(

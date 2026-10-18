@@ -11,6 +11,7 @@ from click.testing import CliRunner
 
 import shadowscan.connectors as registry
 import shadowscan.engine as engine_module
+from shadowscan import cli as cli_module
 from shadowscan.cli import main
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
@@ -541,3 +542,249 @@ def test_a_plugin_finding_never_merges_with_the_builtin_finding_it_imitates(
     [forged] = [finding for finding in result.findings if finding.connector == PLUGIN]
     expected = Finding(connector=PLUGIN, surface=target.surface, kind=Kind.AGENT, title="FORGED", **fields).id
     assert forged.id == expected != target.id
+
+
+# The colliding finding again, with a registry record, from a plugin that then overruns its
+# deadline. It holds its worker until the test releases it, then changes the finding it yielded.
+_OVERRUNNING_PLUGIN = """
+import json
+import os
+import threading
+
+from shadowscan.connectors.base import BaseConnector
+from shadowscan.models import Finding, Kind, Surface
+
+TARGET = json.loads(os.environ["SHADOWSCAN_FORGE_TARGET"])
+release = threading.Event()
+changed = threading.Event()
+
+
+class Connector(BaseConnector):
+    name = "code.acme-exit"
+    surface = Surface.CODE
+    description = "Claims a built-in finding's id and a registry approval, then overruns."
+    config_keys = {"paths": "roots"}
+
+    def collect(self):
+        return [{}]
+
+    def analyze(self, records):
+        shape = {**TARGET, "surface": Surface(TARGET["surface"]), "kind": Kind.AGENT, "title": "FORGED"}
+        claimed = Finding(connector="code.filesystem", **shape)
+        forged = Finding(connector=self.name, id=claimed.id, tags=["plugin-injected"], **shape)
+        forged.metadata["registry_record"] = {"registry": "aws-agent-registry"}
+        yield forged
+        self.ctx.cancelled.wait(30)
+        release.wait(30)
+        forged.id = claimed.id
+        forged.title = "CHANGED AFTER THE DEADLINE"
+        changed.set()
+"""
+
+
+def test_an_overrunning_plugin_surrenders_only_what_a_completed_plugin_could_report(
+    monkeypatch, tmp_path, index
+):
+    """Regression: an expired job's findings were published as the worker left them. A thread-mode
+    plugin's finding kept the built-in finding's id it claimed and folded that finding into its own,
+    kept a registry record only built-in connectors may emit, and stayed the object the abandoned
+    worker could still change after the report was built."""
+    repository = ConnectorSpec("code.filesystem", {"path": str(_repository(tmp_path)), "use_git": False})
+    target = Engine(ScanConfig(connectors=[repository]), index).run().findings[0]
+    identity = ("resource", "resource_type", "provider", "account", "region", "identity_discriminator")
+    fields = {name: getattr(target, name) for name in identity}
+    monkeypatch.setenv("SHADOWSCAN_FORGE_TARGET", json.dumps({**fields, "surface": target.surface.value}))
+    monkeypatch.setattr(registry, "_cache", {})
+    monkeypatch.setattr(registry, "_load_errors", {})
+    monkeypatch.setattr(registry, "_listing_errors", [])
+    _install_plugin(monkeypatch, tmp_path, "acme_overrunning_plugin", _OVERRUNNING_PLUGIN)
+    config = ScanConfig(
+        connectors=[ConnectorSpec(PLUGIN), repository],
+        plugins=[PLUGIN],
+        plugin_execution="thread",
+        allow_credential_mixing=True,
+        # Long enough for the built-in scan to finish beside the plugin's overrun.
+        connector_timeout_seconds=3.0,
+        parallel=2,
+    )
+    try:
+        result = Engine(config, index).run()
+    finally:
+        # Only now may the abandoned worker change the finding it surrendered.
+        plugin = sys.modules["acme_overrunning_plugin"]
+        plugin.release.set()
+    assert plugin.changed.wait(10)
+
+    assert not result.complete
+    [builtin] = [finding for finding in result.findings if finding.id == target.id]
+    assert builtin.connector == "code.filesystem" and builtin.title == target.title
+    assert "plugin-injected" not in builtin.tags
+    [forged] = [finding for finding in result.findings if finding.connector == PLUGIN]
+    expected = Finding(connector=PLUGIN, surface=target.surface, kind=Kind.AGENT, title="FORGED", **fields).id
+    assert forged.id == expected != target.id and forged.title == "FORGED"
+    assert all("registry_record" not in finding.metadata for finding in result.findings)
+    [stats] = [st for st in result.stats if st.connector == PLUGIN]
+    assert stats.findings == 1 and any("registry record metadata ignored on 1" in w for w in stats.warnings)
+    assert not any(st.connector == "engine.registries" for st in result.stats)
+
+
+# A plugin that overruns after it yielded a finding, then changes that finding or is asked about
+# its class while the supervisor prepares the surrendered findings. That runs on the supervisor
+# thread, outside the worker's isolation, so plugin code raising sys.exit() there ended the scan.
+_SURRENDER_EXIT_PLUGIN = """
+import sys
+
+from shadowscan.connectors.base import BaseConnector
+from shadowscan.models import Finding, Kind, Surface
+
+
+class Fatal(BaseException):
+    pass
+
+
+def leave(*args, **kwargs):
+    {exit}
+
+
+class Poison:
+    # Every operation a copy, a sanitizer pass or a comparison can use ends the process.
+    __deepcopy__ = __copy__ = __reduce_ex__ = __reduce__ = __getstate__ = leave
+    __repr__ = __str__ = __format__ = __eq__ = __ne__ = __hash__ = __bool__ = leave
+    __iter__ = __len__ = __getitem__ = __contains__ = leave
+
+
+class Meta(type(BaseConnector)):
+    {meta}
+
+
+class Connector(BaseConnector, metaclass=Meta):
+    name = "code.acme-exit"
+    surface = Surface.CODE
+    description = "Yields a finding, then overruns its deadline."
+    config_keys = {{"paths": "roots"}}
+
+    def collect(self):
+        return [{{}}]
+
+    def analyze(self, records):
+        finding = Finding(
+            connector=self.name, surface=Surface.CODE, kind=Kind.AGENT, title="surrendered",
+            resource="surrendered", resource_type="file",
+        )
+        finding.metadata["registry_record"] = {{"registry": "aws-agent-registry"}}
+        yield finding
+        {after_yield}
+        self.ctx.cancelled.wait(30)
+"""
+
+_SURRENDER_EXITS = {
+    "exit-0": "sys.exit(0)",
+    "exit-text": f"raise SystemExit('token={SECRET}')",
+    "baseexception": f"raise Fatal('token={SECRET}')",
+}
+
+
+def _scan_overrunning_plugin(monkeypatch, tmp_path, module, source):
+    """Scan the repository beside an overrunning thread-mode plugin through the real CLI path."""
+    _install_plugin(monkeypatch, tmp_path, module, source)
+    exits = []
+
+    def hard_exit(code):
+        # The CLI leaves abandoned workers with os._exit; record the code it chose instead.
+        exits.append(code)
+        raise SystemExit(code)
+
+    monkeypatch.setattr(cli_module.os, "_exit", hard_exit)
+    # Long enough for the built-in scan to finish beside the plugin's overrun.
+    result, out = _scan(tmp_path, extra_options="  connector_timeout_seconds: 3\n  parallel: 2\n")
+    assert exits in ([], [3]), exits
+    assert result.exit_code == 3, (result.exit_code, result.output, result.exception)
+    assert "Traceback" not in result.output and SECRET not in result.output
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["summary"]["complete"] is False and SECRET not in json.dumps(report)
+    stats = {entry["connector"]: entry for entry in report["stats"]}
+    sibling, plugin = stats["code.filesystem"], stats[PLUGIN]
+    assert not sibling["incomplete"] and not sibling["errors"]
+    assert any(finding["connector"] == "code.filesystem" for finding in report["findings"])
+    assert plugin["incomplete"] and any("deadline exceeded" in error for error in plugin["errors"])
+    assert all("registry_record" not in finding["metadata"] for finding in report["findings"])
+    return report, plugin
+
+
+@pytest.mark.parametrize("case", sorted(_SURRENDER_EXITS))
+def test_a_surrendered_finding_that_exits_when_copied_is_omitted_not_a_clean_exit(
+    monkeypatch, tmp_path, plugin_registry, case
+):
+    """Regression: _surrender copied an overrunning thread-mode plugin's findings on the supervisor
+    thread under ``except Exception``, so an object the plugin planted in a yielded finding's
+    metadata, raising SystemExit(0) from __deepcopy__ or __str__, ended the scan with exit 0 and
+    no report."""
+    source = _SURRENDER_EXIT_PLUGIN.format(
+        exit=_SURRENDER_EXITS[case], meta="pass", after_yield='finding.metadata["planted"] = Poison()'
+    )
+    module = f"acme_poison_plugin_{case.replace('-', '_')}"
+
+    report, plugin = _scan_overrunning_plugin(monkeypatch, tmp_path, module, source)
+
+    assert plugin["findings"] == 0
+    assert "1 finding(s) completed before the deadline omitted: not readable" in plugin["errors"]
+    assert all(finding["title"] != "surrendered" for finding in report["findings"])
+
+
+@pytest.mark.parametrize("case", sorted(_SURRENDER_EXITS))
+def test_a_plugin_class_that_exits_when_asked_for_its_records_keeps_none(
+    monkeypatch, tmp_path, plugin_registry, case
+):
+    """Regression: the surrendered findings' registry records were withheld by reading the plugin
+    class's declarations on the supervisor thread, where a metaclass property raising SystemExit
+    ended the scan with exit 0 and no report."""
+    meta = f"@property\n    def emits_registry_records(cls):\n        {_SURRENDER_EXITS[case]}"
+    source = _SURRENDER_EXIT_PLUGIN.format(exit=_SURRENDER_EXITS[case], meta=meta, after_yield="pass")
+    module = f"acme_declaring_plugin_{case.replace('-', '_')}"
+
+    report, plugin = _scan_overrunning_plugin(monkeypatch, tmp_path, module, source)
+
+    assert plugin["findings"] == 1
+    [surrendered] = [finding for finding in report["findings"] if finding["connector"] == PLUGIN]
+    assert surrendered["title"] == "surrendered"
+    assert any("registry record metadata ignored on 1" in warning for warning in plugin["warnings"])
+
+
+_SINK_EXIT_PLUGIN = """
+import sys
+
+from shadowscan.connectors.base import BaseConnector
+from shadowscan.models import Surface
+
+
+class Exiting(list):
+    def __iter__(self):
+        sys.exit(0)
+
+    def __len__(self):
+        sys.exit(0)
+
+
+class Connector(BaseConnector):
+    name = "code.acme-exit"
+    surface = Surface.CODE
+    description = "Registers a findings list that exits when it is read, then overruns."
+    config_keys = {"paths": "roots"}
+
+    def collect(self):
+        return [{}]
+
+    def analyze(self, records):
+        self.ctx.partial_sink(Exiting())
+        self.ctx.cancelled.wait(30)
+        yield from ()
+"""
+
+
+def test_a_findings_list_that_exits_when_read_is_never_surrendered(monkeypatch, tmp_path, plugin_registry):
+    """Regression: the job state held whatever a connector passed to its partial sink, and the
+    supervisor copied it on its own thread, so a list subclass whose __iter__ called sys.exit(0)
+    ended the scan with exit 0 and no report."""
+    report, plugin = _scan_overrunning_plugin(monkeypatch, tmp_path, "acme_sink_plugin", _SINK_EXIT_PLUGIN)
+
+    assert plugin["findings"] == 0 and all(f["connector"] != PLUGIN for f in report["findings"])

@@ -129,6 +129,27 @@ class NegativeContext:
     confidence_cap: float | None = None
 
 
+# The finding tag that names each context (``shadowscan.risk.TAG_WEIGHTS`` scores them).
+NEGATIVE_CONTEXT_TAGS: dict[str, str] = {
+    "documentation": "docs-only",
+    "example-code": "example-code-only",
+    "generated-code": "generated-code-only",
+}
+
+
+def may_be_declared(rel: str) -> bool:
+    """Whether the ``ci`` profile could declare a coverage gap at ``rel``, whatever its project root.
+
+    The profile declares a gap only under a test, documentation, example or
+    generated path (``FilesystemConnector._declared_omission``, which also
+    reads the file's project root and ``include_tests``), so a path none of
+    them names anywhere in it never holds a declared omission. ``shadowscan
+    diff`` reads this to tell which missing findings a declared omission
+    could have hidden: a report counts those omissions but does not list them.
+    """
+    return _is_test_path(rel) or _is_docs_path(rel) or _is_example_path(rel) or _is_generated_path(rel)
+
+
 def negative_context(rel: str, project_root: str = ".") -> NegativeContext | None:
     """Return the strongest negative context for a file path, or None.
 

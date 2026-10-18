@@ -390,7 +390,7 @@ def _openclaw(data: dict[str, Any]) -> list[PostureIssue]:
     bind = gateway.get("bind", "loopback")
     custom = gateway.get("customBindHost")
     # Values come from an untrusted file: a list or object must not reach a set lookup.
-    exposed = bind == "lan" or (bind == "custom" and isinstance(custom, str) and custom in {"0.0.0.0", "::"})
+    exposed = bind == "lan" or (bind == "custom" and isinstance(custom, str) and custom in {"0.0.0.0", "::"})  # noqa: S104 - a literal the scanner detects in scanned input; nothing binds here
     if exposed:
         value = "lan" if bind == "lan" else f"custom {custom}"
         issues.append(PostureIssue("posture-exposed-gateway", "openclaw", "gateway.bind", value))

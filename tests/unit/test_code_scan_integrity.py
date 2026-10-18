@@ -379,12 +379,19 @@ def test_mcp_parser_does_not_see_the_bom_after_read_text(tmp_path):
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs FIFOs")
-@pytest.mark.parametrize("name", [".mcp.json", "requirements.txt", "agent.py"])
-def test_fifo_named_like_an_analyzable_file_is_a_coverage_gap(tmp_path, run_connector, name):
+@pytest.mark.parametrize(
+    ("name", "configuration"), [(".mcp.json", True), ("requirements.txt", True), ("agent.py", False)]
+)
+def test_fifo_named_like_an_analyzable_file_is_a_coverage_gap(tmp_path, run_connector, name, configuration):
+    # A FIFO in place of configuration its name selects is blinding, an error at
+    # once, as an oversize copy of it is; one named like other content is one
+    # entry of the budget, which this one-entry tree cannot absorb.
     os.mkfifo(tmp_path / name)
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete
-    assert any(name in w and "not a regular file" in w for w in ctx.stats.warnings)
+    channel = ctx.stats.errors if configuration else ctx.stats.warnings
+    assert any(name in m and "not a regular file" in m for m in channel)
+    assert ctx.stats.coverage is not None and ctx.stats.coverage["blinding_gaps"] == int(configuration)
 
 
 @pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="needs unix sockets")
@@ -403,7 +410,8 @@ def test_socket_named_like_a_config_file_is_a_coverage_gap(tmp_path, run_connect
     finally:
         sock.close()
     assert ctx.stats.incomplete
-    assert any(".mcp.json" in w and "not a regular file" in w for w in ctx.stats.warnings)
+    assert any(".mcp.json" in e and "not a regular file" in e for e in ctx.stats.errors)
+    assert ctx.stats.coverage is not None and ctx.stats.coverage["blinding_gaps"] == 1
 
 
 @pytest.mark.parametrize("strict", [False, True])

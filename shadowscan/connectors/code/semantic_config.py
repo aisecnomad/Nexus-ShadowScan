@@ -796,7 +796,7 @@ def structured_code_matches(
                     limits.append(_XML_ENTITY_DECLARATIONS)
                 return []
             # XML examples in descriptions/CDATA do not become active Salesforce metadata.
-            root = ET.fromstring(text)
+            root = ET.fromstring(text)  # noqa: S314 - entity declarations are refused before parsing; see the guard above
             tag = root.tag.rsplit("}", 1)[-1]
             if tag in _AGENTFORCE_ROOTS and len(root):
                 return _matches(index, "platform.salesforce-agentforce", "<" + tag + ">")

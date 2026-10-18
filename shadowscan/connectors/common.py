@@ -9,11 +9,22 @@ Placeholder credentials
 A credential-looking value is treated as a documentation placeholder, not a
 live secret, when :func:`placeholder_reason` finds one of:
 
-* a template marker anywhere in the value (``<...>``, ``${...}``, ``{{...}}``);
+* a template marker anywhere in the value (``<...>``, ``${...}``, ``{{...}}``),
+  or a value that is only a possessive (``your``, ``sua``, ``votre``, ``dein``,
+  ``jouw``, ``anda``, ...) followed by a separator and words that name the
+  credential or a placeholder (``sua_chave_openai``, ``votre-cle-api``,
+  ``your_api_key``; see ``_possessive_template``): a passphrase that only
+  begins with a possessive or a pronoun (``je-suis-le-patron``) is none;
 * a placeholder word such as REPLACE, REPLACE_ME, YOUR, EXAMPLE, SAMPLE,
   DUMMY, FAKE, TEST, PLACEHOLDER, CHANGEME, INSERT, PASTE, HERE or TODO,
   case-insensitive, delimited by ``_ - .`` or by a case boundary; a fill run
-  such as ``xxxx`` counts as a word;
+  such as ``xxxx`` or an ellipsis (``sk-ant-api03-...``) counts as a word;
+* its Portuguese, Spanish, French, German, Italian, Dutch, Indonesian or
+  Turkish equivalent of four letters or more (CHAVE, CLAVE, CLEF, SCHLUESSEL,
+  CHIAVE, SLEUTEL, KUNCI, ANAHTAR, EXEMPLO, BEISPIEL, ...), case-insensitive,
+  only as a whole word between separators (``sk-proj-sua-chave-aqui-...``):
+  across a case boundary or inside a run of letters, a short one such as
+  ``hier`` or ``aqui`` is too often part of a random key;
 * a low-entropy body: after the provider prefix the value is one or two
   repeated characters, or at least half of its characters continue a run of
   the same or adjacent characters (``0000``, ``1234567890``, ``abcdef``).
@@ -23,8 +34,12 @@ When a context-bound pattern captured an assignment (``NAME=value``,
 ``TEST_API_KEY`` never marks a real key as a placeholder; an empty value is a
 template.
 
-Randomly generated keys practically never satisfy these rules (fewer than one
-in ten thousand in simulation), and connectors report a placeholder as
+Randomly generated keys rarely satisfy these rules. In a seeded simulation of
+a million values of each shape, about one in eleven thousand random
+32-character base62 keys (more for longer ones: one in 7,500 at 48
+characters) and one in twenty thousand random 20-letter mixed-case passwords
+were taken for placeholders; ``tests/unit/test_detection_precision.py``
+re-measures both on a smaller sample. Connectors report a placeholder as
 low-weight ``example-credential`` evidence rather than dropping it silently,
 so a rare misclassification remains visible to analysts.
 """
@@ -42,6 +57,7 @@ from shadowscan.config import ConfigValidationError, connector_boolean
 from shadowscan.connectors.base import ConnectorError, _positive_limit
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, SignatureIndex
+from shadowscan.signatures.matcher import reported_credential
 from shadowscan.utils.http import HttpError
 from shadowscan.utils.text import redact
 
@@ -367,9 +383,27 @@ def classify_permissions(index: SignatureIndex, finding: Finding, scopes: Iterab
     apply_matches(finding, matches, weight_scale=0.5)
 
 
+# A value that is only a possessive and words naming a credential (``your_api_key``,
+# ``sua_chave_openai``, ``votre-cle-api``) is a placeholder in any of the languages
+# documentation is written in; a token carries digits, which the word tail
+# excludes (see ``_possessive_template``). A separator must follow the
+# possessive: without one, every letters-only token that begins with ``Su``,
+# ``Ta``, ``Je`` or ``Ton`` would read as a possessive and a word.
+_POSSESSIVES = (
+    "your|sua|seu|suas|seus|su|tu|tus|votre|vos|ton|ta|dein|deine|ihr|ihre|jouw|uw|je"
+    "|tua|tuo|tuoi|vostra|vostro|anda|senin|sizin"
+)
+# Possessives of languages that put the credential's noun last ('your_api_key',
+# 'deine_api_schluessel', 'jouw_sleutel'); the others put it first or last
+# ('sua_chave_openai', 'votre-cle-api', 'sua_serper_api_key').
+_NOUN_LAST_POSSESSIVES = frozenset({"your", "dein", "deine", "ihr", "ihre", "jouw", "uw", "je"})
+# Each word after the possessive is one case, as a written word is: a mixed-case
+# run ('ta-QzWpLmNxVbRtYcDfGh') is a token's body, not a word.
+_POSSESSIVE_TEMPLATE = re.compile(
+    rf"(?P<possessive>(?i:{_POSSESSIVES}))(?P<words>(?:[_-](?:[a-z]+|[A-Z][a-z]*|[A-Z]+))*)(?P<end>[_-]?)"
+)
 _PLACEHOLDER = re.compile(
-    r"^(?:x{3,}|\*{3,}|<[^>]+>|\$\{[^}]+\}|your[_-]?[a-z_]*"
-    r"|changeme|redacted|placeholder|todo|null|none)$",
+    r"^(?:x{3,}|\*{3,}|<[^>]+>|\$\{[^}]+\}|changeme|redacted|placeholder|todo|null|none)$",
     re.IGNORECASE,
 )
 _TEMPLATE_MARKER = re.compile(r"<[^<>\s]+>|\$\{[^{}]*\}|\{\{[^{}]*\}\}")
@@ -393,7 +427,61 @@ _PLACEHOLDER_WORDS: tuple[str, ...] = (
     "mock",
     "demo",
 )
-_FILL_RUN = re.compile(r"(?<![A-Za-z])(?:x{4,}|X{4,})(?![A-Za-z])|[*#?]{4,}")
+# The same words in the languages documentation is commonly translated into.
+# Every word has at least four letters, and each counts only as a whole word
+# between separators (``sua_chave_aqui``, ``votre-clef``), never across a case
+# boundary or as the start or end of a longer run of letters as the English
+# words do: random keys hold short runs such as ``hier``, ``aqui`` or ``kunci``
+# often enough that matching them there doubled how often a real key was taken
+# for a placeholder. The possessives (``su``, ``ta``, ``ton``) are matched as
+# whole values by ``_PLACEHOLDER`` instead.
+_TRANSLATED_PLACEHOLDER_WORDS: frozenset[str] = frozenset(
+    {
+        # Portuguese
+        "chave",
+        "senha",
+        "exemplo",
+        "substitua",
+        "insira",
+        "aqui",
+        # Spanish
+        "clave",
+        "ejemplo",
+        "reemplazar",
+        "reemplace",
+        "inserte",
+        # French
+        "votre",
+        "clef",
+        "exemple",
+        "remplacer",
+        "remplacez",
+        # German
+        "dein",
+        "deine",
+        "ihre",
+        "schluessel",
+        "beispiel",
+        "ersetzen",
+        "hier",
+        # Italian
+        "chiave",
+        "esempio",
+        "sostituire",
+        # Dutch
+        "jouw",
+        "sleutel",
+        "voorbeeld",
+        # Indonesian and Turkish
+        "kunci",
+        "contoh",
+        "anahtar",
+        "ornek",
+    }
+)
+# An ellipsis stands for the rest of a key in documentation ('sk-ant-api03-...');
+# no key alphabet has a run of dots.
+_FILL_RUN = re.compile(r"(?<![A-Za-z])(?:x{4,}|X{4,})(?![A-Za-z])|[*#?]{4,}|\.{3,}|…")
 _ALPHA_RUN = re.compile(r"[A-Za-z]+")
 # Vendor prefixes such as sk-ant-api03- or lsv2_pt_ are not part of the body.
 _SECRET_PREFIX = re.compile(r"^(?:[A-Za-z0-9]{1,8}[-_]){1,3}")
@@ -401,6 +489,70 @@ _NON_ALNUM = re.compile(r"[^A-Za-z0-9]+")
 _MIN_ENTROPY_BODY = 8
 # Context-bound secret patterns capture ``NAME=value`` / ``NAME: value``; only the value is judged.
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*\s*[=:]\s*[\"']?(.*?)[\"']?$")
+
+
+# The words that name what a possessive placeholder stands for, besides the
+# placeholder words themselves: the credential's noun in English and in the
+# translations too short for ``_TRANSLATED_PLACEHOLDER_WORDS`` ('cle').
+_POSSESSIVE_NOUNS = frozenset(
+    {
+        "api",
+        "apikey",
+        "auth",
+        "cle",
+        "cles",
+        "credential",
+        "credentials",
+        "key",
+        "keys",
+        "pass",
+        "passphrase",
+        "passwd",
+        "password",
+        "pwd",
+        "secret",
+        "secrets",
+        "token",
+        "tokens",
+    }
+)
+
+
+def _template_word(word: str) -> bool:
+    return word in _POSSESSIVE_NOUNS or word in _PLACEHOLDER_WORDS or word in _TRANSLATED_PLACEHOLDER_WORDS
+
+
+def _possessive_template(value: str) -> bool:
+    """Whether a whole value is a possessive and the words of a placeholder ('your_api_key').
+
+    The words must say what the value stands for: the credential's noun or a
+    placeholder word comes last after a possessive of a language that puts
+    it there ('your_client_secret', 'deine_api_schluessel'), and first or
+    last after any other ('sua_chave_openai', 'votre-cle-api',
+    'sua_serper_api_key'). A passphrase that begins with a possessive or a
+    pronoun ('je-suis-le-patron', 'your-secret-garden', 'ton-chat-noir-dort')
+    is no placeholder, nor is a two-letter possessive with one word after it
+    ('ta-QzWpLmNxVbRtYcDfGh'; 'tu_clave' is still a placeholder by its
+    translated word). A possessive of three letters or more alone, or with a
+    separator after it ('sua', 'seu_token_'), is a template.
+    """
+    match = _POSSESSIVE_TEMPLATE.fullmatch(value)
+    if match is None:
+        return False
+    possessive = match["possessive"].lower()
+    words = [word.lower() for word in re.split(r"[_-]", match["words"]) if word]
+    if not words:
+        return len(possessive) >= 3
+    if len(possessive) == 2 and len(words) < 2:
+        return False
+    if possessive in _NOUN_LAST_POSSESSIVES:
+        return _template_word(words[-1])
+    return _template_word(words[0]) or _template_word(words[-1])
+
+
+def whole_value_placeholder(value: str) -> bool:
+    """Whether ``value`` as a whole is a placeholder: a fill run, a marker, a word or a possessive one."""
+    return _PLACEHOLDER.fullmatch(value) is not None or _possessive_template(value)
 
 
 def _case_delimited(value: str, start: int, end: int) -> bool:
@@ -420,6 +572,8 @@ def _case_delimited(value: str, start: int, end: int) -> bool:
 
 
 def _placeholder_word(value: str) -> bool:
+    if any(segment.lower() in _TRANSLATED_PLACEHOLDER_WORDS for segment in _NON_ALNUM.split(value)):
+        return True
     for run in _ALPHA_RUN.finditer(value):
         word = run.group(0).lower()
         if word in _PLACEHOLDER_WORDS:
@@ -463,7 +617,7 @@ def placeholder_reason(value: str) -> str | None:
         value = assignment.group(1).strip()
         if not value:
             return "template"
-    if _PLACEHOLDER.match(value) or _TEMPLATE_MARKER.search(value):
+    if whole_value_placeholder(value) or _TEMPLATE_MARKER.search(value):
         return "template"
     if _FILL_RUN.search(value) or _placeholder_word(value):
         return "placeholder-word"
@@ -514,7 +668,9 @@ def blob_matches(index: SignatureIndex, text: str, *, secrets: bool = False) -> 
     if not text:
         return out
     secret_matches = (
-        [m for m in index.match_secrets(text) if not looks_like_placeholder(m.value)] if secrets else []
+        [m for m in index.match_secrets(text) if not looks_like_placeholder(reported_credential(m))]
+        if secrets
+        else []
     )
     candidates = [
         *index.match_code(text, None),

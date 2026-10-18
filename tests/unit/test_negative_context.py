@@ -386,10 +386,28 @@ _MOVED_FROM_FILESYSTEM = {
         "_strip_comment",
         "_without_ipython_lines",
     ),
+    # The ownership group (ADR-005): the constants its methods used moved with them.
+    "shadowscan.connectors.code.ownership": (
+        "MAX_ROOT_OWNERSHIP_STEPS",
+        "_MAX_GIT_AUTHOR_CHARS",
+        "_MAX_GIT_EMAIL_CHARS",
+        "_MAX_GIT_TIMESTAMP_CHARS",
+    ),
     # Importable before only because filesystem.py imported them itself.
     "shadowscan.connectors.code.catalogs": ("_PIPELINE_DIRECTORIES", "_PIPELINE_NAMES"),
     "shadowscan.connectors.code.semantic_config": ("has_template_markers",),
     "shadowscan.utils.jsonc": ("_load_json_lenient_marked",),
+    # Imported for the ownership methods before they moved into OwnershipResolver.
+    "shadowscan.utils.files": ("link_in_path", "open_confined_file"),
+    "shadowscan.utils.git": (
+        "MetadataOutputLimitError",
+        "MetadataTimeoutError",
+        "metadata_git_argv_prefix",
+        "metadata_git_env",
+        "require_local_git_metadata",
+        "run_bounded_metadata",
+    ),
+    "shadowscan.utils.text": ("parse_timestamp",),
 }
 
 
@@ -398,6 +416,7 @@ def test_names_moved_out_of_filesystem_stay_importable_from_it():
     # re-exported as the defining module's own object (patch it there).
     import ast
     import importlib
+    import subprocess
     import tomllib
 
     from shadowscan.connectors.code import filesystem
@@ -409,4 +428,5 @@ def test_names_moved_out_of_filesystem_stay_importable_from_it():
             source = "load_json_lenient_marked" if name == "_load_json_lenient_marked" else name
             assert getattr(filesystem, name) is getattr(module, source), name
     assert filesystem.ast is ast
+    assert filesystem.subprocess is subprocess
     assert filesystem.tomllib is tomllib

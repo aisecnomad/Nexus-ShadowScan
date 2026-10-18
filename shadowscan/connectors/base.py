@@ -30,6 +30,7 @@ import importlib
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 from _thread import LockType
@@ -42,6 +43,16 @@ from typing import Any, ClassVar, NoReturn
 
 from shadowscan.connectors import offline as _offline
 from shadowscan.connectors.offline import OfflineInputBudget
+from shadowscan.coverage import (
+    BLINDING,
+    INCOMPLETE_REASONS,
+    MAX_DECLARED_PATHS,
+    PARTIAL,
+    CoverageGap,
+    CoverageLedger,
+    CoveragePolicy,
+    validate_max_coverage_gap,
+)
 from shadowscan.models import Finding, ScanStats, Surface, now_iso
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.utils.files import changed_since
@@ -122,6 +133,78 @@ class _ExportReplayLimitError(ValueError):
     """A credential-free export limit diagnostic; analysis can still use the original record."""
 
 
+# Why a diagnostic leaves a scan incomplete, as ``ScanStats.incomplete_reasons``
+# counts it: one of ``INCOMPLETE_REASONS`` (``shadowscan.coverage``). A connector
+# names the reason when it records the diagnostic; one recorded without a reason
+# is classified from its text by ``incomplete_reason``, which reads the
+# connectors' own message vocabulary. A caller that knows the path or resource
+# its message names passes it, and the classifier leaves it out: a file called
+# ``src/http_client.py`` does not make its undecodable content an upstream error.
+# Ordered: the first category whose phrase occurs wins, so "rate limit" is an
+# upstream error before "limit" is an analysis limit, and a withheld excerpt is
+# a sanitization limit before it is unscanned input.
+_INCOMPLETE_REASON_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("oversize-file", ("max_file_size", "max_notebook_size", "oversize", "byte limit", "too large")),
+    ("unresolved-link", ("symbolic link", "symlink", "gitlink", "submodule")),
+    ("sanitization-limit", ("sanitization", "sanitizationlimiterror", "redaction")),
+    ("timeout", ("matchtimeouterror", "timed out", "timeout", "deadline", "time budget")),
+    ("access-denied", ("denied", "forbidden", "unauthorized", "unauthorised", "401", "403", "permission")),
+    (
+        "upstream-error",
+        (
+            "rate limit",
+            "http",
+            "api error",
+            "status code",
+            "connection",
+            "unreachable",
+            "network",
+            "tls",
+            "dns",
+        ),
+    ),
+    (
+        "unparsed-input",
+        ("not parse", "invalid", "malformed", "input defect", "not strict json", "syntax", "undecodable"),
+    ),
+    ("analysis-limit", ("limit", "budget", "exhausted", "literals only", "not matched", "partially")),
+    ("subset-scan", ("triage scan", "subset")),
+    ("unscanned-input", ("not scanned", "skipped", "unread", "withheld", "omitted", "not inspected")),
+)
+
+
+def incomplete_reason(message: str, *, path: str = "") -> str:
+    """The ``INCOMPLETE_REASONS`` category of a diagnostic, read from the connectors' message vocabulary.
+
+    ``path`` is the path or resource ``message`` names. Each occurrence of it is
+    left out first, so a scanned tree's own names (``http``, ``403``,
+    ``deadline``) never pick the category. Only whole occurrences go, so a
+    file called ``a`` does not take the letter out of ``max_file_size``.
+    """
+    if path:
+        message = re.sub(rf"(?<![\w./\\-]){re.escape(path)}(?![\w/\\-]|\.\w)", " ", message)
+    lowered = message.lower()
+    for reason, phrases in _INCOMPLETE_REASON_PHRASES:
+        if any(phrase in lowered for phrase in phrases):
+            return reason
+    return "other"
+
+
+def known_incomplete_reasons(reasons: dict[str, int]) -> dict[str, int]:
+    """``reasons`` with every key outside ``INCOMPLETE_REASONS`` counted as ``other``.
+
+    For reason counts read from a report or a plugin worker: their keys are
+    untrusted text that reaches the table banner and the exit-3 line, which
+    must only ever name the fixed categories. The counts are kept, so an
+    unknown category still says the scan is incomplete.
+    """
+    known: dict[str, int] = {}
+    for reason, count in reasons.items():
+        key = reason if reason in INCOMPLETE_REASONS else "other"
+        known[key] = known.get(key, 0) + count
+    return known
+
+
 class ConnectorContext:
     """Runtime context handed to a connector."""
 
@@ -157,6 +240,15 @@ class ConnectorContext:
         self.dump_path: str | None = None
         self._resolved_config: dict[str, Any] = {}
         self._diagnostic_counts: dict[str, int] = {}
+        # Coverage gaps accumulate here and are judged once, at the end of the
+        # run, against the policy. A blinding gap marks the scan incomplete the
+        # moment it is recorded, so an early stop is never tolerated.
+        self._coverage = CoverageLedger()
+        self._coverage_policy = CoveragePolicy()
+        # Set by the engine so a connector that overruns its deadline can still
+        # surrender the findings it completed. Discarding them would turn an
+        # overrun into an empty report that looks clean.
+        self.partial_sink: Callable[[list[Finding]], None] | None = None
         # Live collection scope evidence (the attest_* methods). The engine reads it
         # only for a built-in connector that declares attests_live_scope.
         self._scope_principal: dict[str, str] | None = None
@@ -244,15 +336,177 @@ class ConnectorContext:
                 self.stats.incomplete = True
             return f"diagnostic omitted: sanitization safety limit exceeded {REDACTED}"
 
-    def warn(self, msg: str, incomplete: bool = True) -> None:
+    def warn(
+        self,
+        msg: str,
+        incomplete: bool = True,
+        *,
+        reason: str | None = None,
+        declared: bool = False,
+        path: str | None = None,
+    ) -> None:
+        """Record a warning; an incomplete one is counted under ``reason``, classified from ``msg`` when None.
+
+        ``declared`` marks a coverage omission a profile declared in advance: the
+        warning leaves the scan complete and is counted in ``declared_omissions``.
+        ``path`` is where it lies, listed in ``declared_paths`` while there is room;
+        an omission without one is counted but not located.
+        """
         if self.stats is not None:
             self.stats.incomplete = self.stats.incomplete or incomplete
-        self._diagnostic(msg, warning=True)
+            if declared:
+                self.stats.declared_omissions += 1
+                if path and len(self.stats.declared_paths) < MAX_DECLARED_PATHS:
+                    self.stats.declared_paths.append(path)
+        self._diagnostic(msg, warning=True, incomplete=incomplete, reason=reason)
 
-    def error(self, msg: str) -> None:
+    def error(self, msg: str, *, reason: str | None = None) -> None:
         if self.stats is not None:
             self.stats.incomplete = True
-        self._diagnostic(msg, warning=False)
+        self._diagnostic(msg, warning=False, incomplete=True, reason=reason)
+
+    def count_declared_omissions(self, entries: int = 1) -> None:
+        """Count ``entries`` more omissions a profile declared, without another diagnostic line.
+
+        For a caller that already recorded one representative declared warning
+        (``warn(declared=True)``) for a run of identical omissions, as
+        ``coverage_gap(quiet=True)`` is for gaps: the report counts every
+        omission, so ``declared_omissions`` never under-states what was skipped.
+        """
+        if self.stats is not None and entries > 0:
+            self.stats.declared_omissions += entries
+
+    # ------------------------------------------------------- coverage gaps
+    def set_coverage_policy(self, policy: CoveragePolicy) -> None:
+        """Install the budget this connector's partial gaps are judged against."""
+        self._coverage_policy = policy
+
+    @property
+    def coverage_policy(self) -> CoveragePolicy:
+        return self._coverage_policy
+
+    def coverage_gap(
+        self,
+        msg: str,
+        *,
+        path: str = "",
+        entries: int = 1,
+        blinding: bool = False,
+        quiet: bool = False,
+        full_weight: bool = False,
+        reason: str | None = None,
+        relevance: str | None = None,
+    ) -> None:
+        """Record content the scan could not read, and say so in the report.
+
+        A *blinding* gap (the walk stopped, a page was refused, a deadline
+        expired) marks the scan incomplete at once: the scanner cannot bound
+        what it missed. A partial gap costs ``entries`` of known coverage and
+        is judged at the end of the run against :class:`CoveragePolicy`, so a
+        handful of unreadable entries in a large tree no longer invalidates an
+        otherwise complete scan. Either way the gap is reported.
+
+        ``quiet`` records the gap against the budget without a second
+        diagnostic line, for a caller that already emitted one representative
+        message for a run of identical gaps. The budget still sees every entry,
+        so a tree planted with thousands of them is not tolerated. A quiet
+        blinding gap still marks the scan incomplete and is counted under its
+        reason, as the representative error was.
+
+        ``full_weight`` keeps the path discount off, for a gap that is as
+        dangerous in a fixture directory as in a deployed one.
+
+        ``reason`` is the ``INCOMPLETE_REASONS`` category the gap is counted
+        under if it leaves the scan incomplete; without one it is classified
+        from ``msg`` with ``path`` left out. The gap keeps it, so a budget
+        verdict at the end of the run counts each gap as it was recorded.
+
+        ``relevance`` (``low`` or ``high``) is this connector's judgement of
+        whether the path could hold deployed code, for a connector that knows
+        how it reads the path; None leaves it to the path's segments
+        (:meth:`CoverageGap.relevance`).
+        """
+        if reason is None or reason not in INCOMPLETE_REASONS:
+            reason = incomplete_reason(msg, path=path)
+        gap = CoverageGap(
+            detail=self.sanitize_message(msg),
+            path=path,
+            kind=BLINDING if blinding else PARTIAL,
+            entries=max(0, entries),
+            full_weight=full_weight,
+            reason=reason,
+            assessed_relevance=relevance,
+        )
+        self._coverage.record(gap)
+        if gap.blinding:
+            # Fail closed immediately; no budget applies to an unbounded gap.
+            if not quiet:
+                self.error(msg, reason=reason)
+            elif self.stats is not None:
+                self.stats.incomplete = True
+                self.stats.incomplete_reasons[reason] = self.stats.incomplete_reasons.get(reason, 0) + 1
+            return
+        if quiet:
+            return
+        # Still visible as a warning, but it does not by itself condemn the
+        # scan. ``finalize_coverage`` takes that decision once, with the
+        # whole run's gaps in view.
+        self.warn(msg, incomplete=False, reason=reason)
+
+    def begin_coverage_part(self, label: str) -> None:
+        """Judge the gaps recorded from now on against their own budget, as the part ``label``.
+
+        For a connector that scans several roots or repositories in one run
+        (``code.filesystem`` starts one per root, which a nested
+        ``code.github`` or ``code.gitlab`` checkout scan shares): each is
+        judged as it would be scanned alone, so one large clean root cannot
+        dilute a small root's gaps, and many roots each within budget do not
+        fail together. ``label`` names the part in the verdict line.
+        """
+        self._coverage.begin_part(label)
+
+    def note_coverage_examined(self, count: int) -> None:
+        """Raise the examined-entry floor used as the gap ratio's denominator."""
+        self._coverage.note_examined(count)
+
+    def add_coverage_examined(self, delta: int = 1) -> None:
+        """Count entries reached, summed across roots."""
+        self._coverage.add_examined(delta)
+
+    def finalize_coverage(self) -> None:
+        """Judge the run's partial gaps against the policy and publish the ledger.
+
+        Called once, after ``analyze()``. Every gap is counted in
+        ``stats.coverage``, and the first ``MAX_PUBLISHED_GAPS`` are listed
+        there with their paths and weights, so a reader sees what was skipped
+        whether or not the exit code changed.
+        """
+        if self.stats is None:
+            return
+        if not self._coverage.gaps:
+            return
+        if len(self._coverage.parts) == 1 and self._coverage.examined <= 0:
+            # A connector that counts no entries of its own is judged against
+            # the objects it examined. A part of a multi-part run that reached
+            # no entry has nothing to dilute its gaps with, which fails closed.
+            self._coverage.note_examined(self.stats.objects_examined)
+        incomplete, summary = self._coverage.evaluate(self._coverage_policy)
+        self.stats.coverage = summary
+        if incomplete:
+            self.stats.incomplete = True
+        # Together the partial gaps of a part over its budget left the scan
+        # incomplete, so each is counted under its own reason, as a blinding
+        # gap was when it was recorded: the verdict line below says which
+        # part went how far over its budget, and the reasons say what the
+        # unread entries were. A part within its budget left nothing incomplete.
+        counts = self.stats.incomplete_reasons
+        for gap in self._coverage.over_budget_gaps(self._coverage_policy):
+            counts[gap.reason] = counts.get(gap.reason, 0) + 1
+        message = self._coverage.verdict_message(self._coverage_policy)
+        if message is not None:
+            self._diagnostic(
+                f"{self.stats.connector}: {message}", warning=not incomplete, incomplete=False, reason=None
+            )
 
     def diagnostics_recorded(self) -> int:
         """Warnings and errors recorded so far, including those past the report's diagnostic limit.
@@ -261,10 +515,14 @@ class ConnectorContext:
         """
         return sum(self._diagnostic_counts.values())
 
-    def _diagnostic(self, msg: str, *, warning: bool) -> None:
+    def _diagnostic(self, msg: str, *, warning: bool, incomplete: bool, reason: str | None) -> None:
         channel = "warnings" if warning else "errors"
         count = self._diagnostic_counts.get(channel, 0) + 1
         self._diagnostic_counts[channel] = count
+        if incomplete and self.stats is not None:
+            # Counted before the diagnostic limit: the reasons stay complete when the messages do not.
+            key = reason if reason in INCOMPLETE_REASONS else incomplete_reason(msg)
+            self.stats.incomplete_reasons[key] = self.stats.incomplete_reasons.get(key, 0) + 1
         if count > self._MAX_DIAGNOSTICS + 1:
             return
         if count == self._MAX_DIAGNOSTICS + 1:
@@ -429,6 +687,26 @@ class BaseConnector(ABC):
     # credential. Third-party connectors are never attested, whatever they declare.
     attests_live_scope: ClassVar[bool] = False
     scope_options: ClassVar[frozenset[str]] = frozenset()
+    # Whether this connector can collect from a live API at all. False for one
+    # that only replays an export someone else produced: a Kubernetes manifest
+    # dump, a gateway log, an endpoint inventory. Declared rather than inferred
+    # from whether ``collect`` raises, so the published count of live
+    # connectors is a fact the connector states and a test can pin, not a
+    # guess from an exception message. ``collect`` must still raise.
+    live_collection: ClassVar[bool] = True
+
+    @classmethod
+    def estimate_timeout_seconds(cls, config: dict[str, Any], default: float) -> float | None:
+        """Propose a larger deadline than *default* for a large input, or None.
+
+        The engine calls this only when the operator left the default deadline
+        in place, and never lets the result exceed its own ceiling. An
+        estimate must be cheap: it runs before the connector starts and its
+        cost is charged to the scan. Returning None keeps *default*, which is
+        right for a connector whose work does not grow with an input it can
+        measure beforehand — most API connectors.
+        """
+        return None
 
     @classmethod
     def inherits_instance_credentials_approval(cls) -> bool:
@@ -699,7 +977,12 @@ class BaseConnector(ABC):
         self.ctx.stats = stats
         self.ctx.dump_path = None
         self._offline_bytes_read = 0
+        self.ctx.set_coverage_policy(self._resolve_coverage_policy())
         findings: list[Finding] = []
+        if self.ctx.partial_sink is not None:
+            # Registered before any work, so even a deadline reached during
+            # collection surrenders whatever analysis had already produced.
+            self.ctx.partial_sink(findings)
         try:
             self.ctx.check_deadline()
             if self.offline:
@@ -735,9 +1018,49 @@ class BaseConnector(ABC):
         except Exception as exc:  # noqa: BLE001 - connectors must never abort the whole scan
             self.ctx.error(f"{self.name}: {failure_summary(exc)}")
             self.log.debug("connector failure (%s)", type(exc).__name__)
+        # After analysis, so the ledger sees every gap the run recorded.
+        self.ctx.finalize_coverage()
         stats.finished_at = now_iso()
         stats.findings = len(findings)
         return findings
+
+    def coverage_is_strict(self) -> bool:
+        """Whether every gap, however small, marks this connector incomplete.
+
+        False here, so the gap budget applies. A connector with its own
+        strictness option (the code connectors' ``strict_coverage``) overrides
+        this; the option stays theirs rather than becoming one every connector
+        appears to accept.
+        """
+        return False
+
+    def coverage_gap_override(self) -> float | None:
+        """A gap budget from this connector's own configuration, or None.
+
+        None here: most connectors take the scan-wide policy. A connector that
+        documents its own ``max_coverage_gap`` reads it in an override, so the
+        key belongs to the connectors that advertise it rather than appearing
+        on every one.
+        """
+        return None
+
+    def _resolve_coverage_policy(self) -> CoveragePolicy:
+        """Build this run's gap budget: the connector's own setting, else the scan's.
+
+        Strictness wins over any budget: it restores the original accounting
+        in which a single unread entry marks the scan incomplete.
+        """
+        if self.coverage_is_strict():
+            return CoveragePolicy.strict()
+        raw = self.coverage_gap_override()
+        if raw is None:
+            # Injected by the engine from options.max_coverage_gap. Private,
+            # because it is a scan-wide policy rather than a key each
+            # connector independently accepts.
+            raw = self.ctx.config.get("_max_coverage_gap")
+        if raw is None:
+            return CoveragePolicy()
+        return CoveragePolicy(max_gap_ratio=validate_max_coverage_gap(raw))
 
 
 class _NoDump:

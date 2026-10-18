@@ -9,8 +9,10 @@ paths that are not valid UTF-8.
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import tomllib
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -61,6 +63,61 @@ def _marks_project(directory: Path, names: Iterable[str]) -> bool:
         name in PROJECT_ROOT_MARKERS and (name != "setup.py" or _packaging_setup_script(directory / name))
         for name in names
     )
+
+
+# Template syntax in a path segment: cookiecutter and copier (``{{cookiecutter.slug}}``,
+# ``{% if x %}``) and shell-style (``${name}``) placeholders a generator fills in.
+_TEMPLATE_SYNTAX = re.compile(r"\{\{|\{%|\$\{")
+# A manifest larger than this is not read to tell whether it parses: it counts as one.
+_MANIFEST_PROBE_BYTES = 1024 * 1024
+_JSON_MANIFESTS = frozenset({"package.json", "composer.json"})
+_TOML_MANIFESTS = frozenset({"pyproject.toml", "Cargo.toml", "Pipfile"})
+
+
+def _refuse_constant(value: str) -> float:
+    raise ValueError(f"JSON constant {value} is not a manifest value")
+
+
+def _manifest_parses(path: Path, name: str) -> bool:
+    """Whether the manifest ``name`` at ``path`` parses as its tool reads it.
+
+    Only JSON and TOML manifests are checked; any other, or one that cannot be
+    read or is over the probe size, counts as parsing. A JSON manifest is read
+    as npm and Composer read it: a repeated key is accepted (the last counts),
+    ``NaN`` and ``Infinity`` are not. Whether the scanner's own analysis accepts
+    it is another question; it reads manifests strictly and records a gap.
+    """
+    if name not in _JSON_MANIFESTS and name not in _TOML_MANIFESTS:
+        return name != "setup.py" or _packaging_setup_script(path)
+    try:
+        with open_confined_file(path, label=name) as (stream, _):
+            data = stream.read(_MANIFEST_PROBE_BYTES + 1)
+    except (OSError, ValueError):
+        return True
+    if len(data) > _MANIFEST_PROBE_BYTES:
+        return True
+    try:
+        text = data.decode("utf-8-sig")
+        if name in _JSON_MANIFESTS:
+            json.loads(text, parse_constant=_refuse_constant)
+        else:
+            tomllib.loads(text)
+    except (UnicodeDecodeError, ValueError, RecursionError):  # TOMLDecodeError is a ValueError
+        return False
+    return True
+
+
+def _marks_deployable_project(directory: Path, rel_dir: str, names: Iterable[str]) -> bool:
+    """Whether the project root ``rel_dir`` that ``names`` mark is a deployable project's.
+
+    A template's directory (template syntax in its path, as in a cookiecutter
+    ``{{cookiecutter.slug}}/pyproject.toml``) is not, nor is one none of whose
+    manifests parses (a templated ``package.json``): the ``ci`` profile judges
+    the documentation and example paths in it below the project around it.
+    """
+    if _TEMPLATE_SYNTAX.search(rel_dir):
+        return False
+    return any(_manifest_parses(directory / name, name) for name in names if name in PROJECT_ROOT_MARKERS)
 
 
 def _holds_file(directory: Path, budget: _WalkBudget | None = None) -> bool:

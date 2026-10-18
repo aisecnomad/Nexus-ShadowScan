@@ -9,23 +9,29 @@ a ProcessPoolExecutor future cannot stop a running worker.
 
 from __future__ import annotations
 
+import io
 import json
 import multiprocessing
 import multiprocessing.connection
+import multiprocessing.context
+import multiprocessing.util
 import os
 import re
 import socket
+import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
+from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import asdict, replace
+from multiprocessing import popen_spawn_posix, reduction, spawn
 from multiprocessing.process import BaseProcess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from shadowscan.config import ConnectorSpec, ScanConfig
+from shadowscan.connectors.base import known_incomplete_reasons
+from shadowscan.coverage import coverage_incomplete, validate_coverage_summary
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import Signature, SignatureIndex
 from shadowscan.utils.redaction import sanitize
@@ -46,31 +52,275 @@ _WORKER_GRACE_SECONDS = 2.0
 # Without a descriptor listing, descriptors up to the open-file limit are
 # visited, but never more than this many.
 _MAX_DESCRIPTOR_LIMIT = 1 << 20
-# Serializes the brief PYTHONSAFEPATH window around a spawn (see _safe_path_spawn).
-_SPAWN_ENVIRONMENT = threading.Lock()
+# A process-mode worker does not inherit the credentials the operator exported
+# for the built-in connectors: a variable whose name ends in one of these words
+# (after ``_``, or the whole name; a version after the word, as in
+# ``CI_JOB_JWT_V2``, is ignored, a bare number is not: Git's
+# ``GIT_CONFIG_KEY_0`` names a setting), starts with one of the prefixes (a
+# token or connection string whose name ends in a host or connection name:
+# Terraform's ``TF_TOKEN_<host>``, npm's ``npm_config__auth*``, .NET's
+# ``ConnectionStrings__<name>``, Azure App Service's ``<type>CONNSTR_<name>``),
+# is npm's per-registry ``npm_config_//<registry>/:_auth``, names a .NET
+# connection string anywhere in its configuration path (``App_ConnectionStrings__Db``,
+# ``Azure__Storage__ConnectionString``),
+# is a Bundler host credential (``BUNDLE_<HOST>__COM``: any ``BUNDLE_`` name
+# with ``__``, which also takes the gem-scoped ``BUNDLE_BUILD__<gem>`` and
+# ``BUNDLE_LOCAL__<gem>``), or is one of the CI and cloud SDK variables that
+# carry a credential, the file holding one or a session without such a word at
+# the end of their names. A ``*_URL``, ``*_URI`` or ``*_DSN`` variable is
+# withheld when its value carries a user or password
+# (``redis://:password@host``, ``https://token@host``) or is a webhook of a
+# chat service that carries its secret in the path (``hooks.slack.com``); a
+# webhook URL by name (``*_WEBHOOK``, ``*_WEBHOOK_URL``, ``*_WEBHOOK_URI``,
+# ``*_WEBHOOK_URLS``, ``*_WEBHOOKURL``) is always withheld. Configuration
+# selectors (``AWS_PROFILE``, ``KUBECONFIG``, ``CLOUDSDK_CONFIG``,
+# ``DOCKER_CONFIG``, ``BUNDLE_GEMFILE``) and endpoints (``IDENTITY_ENDPOINT``,
+# ``NPM_CONFIG_REGISTRY``) stay, as does everything
+# else a program needs: PATH, HOME, locale, temporary directory, proxy and CA
+# settings. ``SESSION`` is not a suffix: it would also take the desktop's
+# DESKTOP_SESSION.
+CREDENTIAL_NAME_SUFFIXES: tuple[str, ...] = (
+    "TOKEN",
+    "ACCESSTOKEN",
+    "SECRET",
+    "KEY",
+    "APIKEY",
+    "PASSWORD",
+    "PASSWD",
+    "PASSPHRASE",
+    "CREDENTIALS",
+    "CREDENTIAL",
+    "PAT",
+    "JWT",
+    "CONNECTION_STRING",
+    "AUTHTOKEN",
+    "WEBHOOK",
+    "WEBHOOK_URL",
+    "WEBHOOK_URI",
+    "WEBHOOK_URLS",
+    "WEBHOOKURL",
+)
+CREDENTIAL_NAME_PREFIXES: tuple[str, ...] = (
+    "OP_SESSION_",
+    "TF_TOKEN_",
+    "NPM_CONFIG__AUTH",
+    "CONNECTIONSTRINGS__",
+    # Azure App Service connection strings, one prefix per connection type.
+    "CUSTOMCONNSTR_",
+    "SQLAZURECONNSTR_",
+    "SQLCONNSTR_",
+    "MYSQLCONNSTR_",
+    "POSTGRESQLCONNSTR_",
+    "APIHUBCONNSTR_",
+    "DOCDBCONNSTR_",
+    "EVENTHUBCONNSTR_",
+    "NOTIFICATIONHUBCONNSTR_",
+    "REDISCACHECONNSTR_",
+    "SERVICEBUSCONNSTR_",
+)
+CREDENTIAL_NAMES: frozenset[str] = frozenset(
+    {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+        "AWS_WEB_IDENTITY_TOKEN_FILE",
+        "AZURE_CLIENT_CERTIFICATE_PATH",
+        "AZURE_FEDERATED_TOKEN_FILE",
+        "BW_SESSION",
+        "CLOUDSDK_AUTH_ACCESS_TOKEN_FILE",
+        "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE",
+        "COMPOSER_AUTH",
+        "DOCKER_AUTH_CONFIG",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "GOOGLE_GHA_CREDS_PATH",
+        "IDENTITY_HEADER",
+        "OCI_CLI_KEY_FILE",
+        "OCI_CLI_KEY_CONTENT",
+        "OCI_CLI_SECURITY_TOKEN_FILE",
+        "DATABASE_URL",
+        "DATABASE_DSN",
+        "YARN_NPM_AUTH_IDENT",
+    }
+)
+CREDENTIAL_URL_SUFFIXES: tuple[str, ...] = ("URL", "URI", "DSN")
+_NAME_VERSION = re.compile(r"_V[0-9]+$")
+# Bundler reads a host's credentials from BUNDLE_ and the host, ``.`` written ``__``.
+_BUNDLER_HOST = re.compile(r"BUNDLE_.+__")
+# npm's per-registry basic credential: ``npm_config_//<registry>/:_auth``.
+_NPM_REGISTRY_AUTH = re.compile(r"NPM_CONFIG_//.*[:_]_AUTH")
+# .NET reads ``ConnectionStrings:<name>`` and ``<section>:ConnectionString`` from any
+# configuration path, ``:`` written ``__``, after an AddEnvironmentVariables prefix.
+_DOTNET_CONNECTION_STRING = re.compile(r"(?:^|_)CONNECTIONSTRINGS?(?:__|$)")
+# Chat-service webhooks: the URL is the credential, with no user information in it.
+_WEBHOOK_URL = re.compile(
+    r"://(?:hooks\.slack\.com/|discord(?:app)?\.com/api/webhooks/|[^/]*\.webhook\.office\.com/"
+    r"|outlook\.office(?:365)?\.com/webhook|chat\.googleapis\.com/v1/spaces/)",
+    re.IGNORECASE,
+)
 
 
-@contextmanager
-def _safe_path_spawn() -> Iterator[None]:
-    """Give an interpreter spawned in this block PYTHONSAFEPATH=1, then restore os.environ.
+def _ends_in(upper: str, suffixes: tuple[str, ...]) -> bool:
+    return any(upper == suffix or upper.endswith("_" + suffix) for suffix in suffixes)
 
-    The spawned child runs ``python -c``, which would put the working directory (possibly an
-    untrusted checkout) first on sys.path before its first ``import multiprocessing``.
-    multiprocessing has no per-child environment, so the variable is set only for the
-    duration of the spawn, under a lock so concurrent spawns cannot restore it early, and
-    the previous value (or its absence) is put back: the scanner's and an embedder's own
-    later children must not inherit it.
+
+def is_credential_name(name: str) -> bool:
+    """Whether an environment variable named ``name`` is withheld from a plugin worker, whatever its value."""
+    upper = name.upper()
+    if upper in CREDENTIAL_NAMES or upper.startswith(CREDENTIAL_NAME_PREFIXES) or _BUNDLER_HOST.match(upper):
+        return True
+    if _NPM_REGISTRY_AUTH.fullmatch(upper) or _DOTNET_CONNECTION_STRING.search(upper):
+        return True
+    return _ends_in(_NAME_VERSION.sub("", upper), CREDENTIAL_NAME_SUFFIXES)
+
+
+def is_credential_variable(name: str, value: str) -> bool:
+    """Whether the environment variable ``name=value`` is withheld from a plugin worker.
+
+    The names :func:`is_credential_name` withholds, and a ``*_URL``, ``*_URI`` or ``*_DSN``
+    whose value has an ``@`` after ``://``: a user and password, or a token, as the URL's
+    user information. Any ``@`` after the scheme counts, so a password that leaves ``/``,
+    ``?`` or ``#`` unescaped is withheld too. So is such a variable holding a chat service's
+    webhook (``SLACK_HOOK_URL=https://hooks.slack.com/services/...``), whose path is the secret.
     """
-    with _SPAWN_ENVIRONMENT:
-        previous = os.environ.get("PYTHONSAFEPATH")
-        os.environ["PYTHONSAFEPATH"] = "1"
+    if is_credential_name(name):
+        return True
+    if not _ends_in(name.upper(), CREDENTIAL_URL_SUFFIXES):
+        return False
+    _, separator, rest = value.partition("://")
+    return bool(separator) and ("@" in rest or _WEBHOOK_URL.search(value) is not None)
+
+
+def _withheld_names(environ: Mapping[str, str], keep: Iterable[str]) -> list[str]:
+    """The names of the credential-shaped variables in ``environ``, except ``keep``."""
+    kept = set(keep)
+    return sorted(
+        name for name in environ if name not in kept and is_credential_variable(name, environ.get(name) or "")
+    )
+
+
+def scrub_credential_environment(environ: MutableMapping[str, str], keep: Iterable[str] = ()) -> list[str]:
+    """Remove the credential-shaped variables from ``environ``, except ``keep``; return the names removed.
+
+    Called in the worker before the plugin is imported, on the worker's own
+    copy of the environment: the scanner's environment is not changed, and
+    thread-mode plugins, which share the scanner's process, are unaffected.
+    ``keep`` is ``options.plugin_env``: the variables an approved plugin reads
+    itself, by exact name. The worker was already started without these
+    variables (see _worker_environment); this is the second line.
+    """
+    removed = _withheld_names(environ, keep)
+    for name in removed:
+        del environ[name]
+    return removed
+
+
+def _worker_environment(environ: Mapping[str, str], keep: Iterable[str]) -> dict[str, str]:
+    """The environment a worker starts with: ``environ`` without the withheld credentials.
+
+    The credential-shaped variables (except ``keep``) and the identity key, even when ``keep``
+    names it, are left out, so the worker never holds them: removing a variable inside the
+    worker would not change the environment it was started with, which it can still read
+    (``/proc/self/environ`` on Linux). PYTHONSAFEPATH=1 keeps the working directory (possibly
+    an untrusted checkout) off the worker's sys.path before its first ``import
+    multiprocessing``, since spawn runs ``python -c``.
+    """
+    from shadowscan.comparison import IDENTITY_KEY_ENV
+
+    snapshot = {name: value for name in list(environ) if (value := environ.get(name)) is not None}
+    withheld = {IDENTITY_KEY_ENV, *_withheld_names(snapshot, keep)}
+    environment = {name: value for name, value in snapshot.items() if name not in withheld}
+    environment["PYTHONSAFEPATH"] = "1"
+    return environment
+
+
+def _close_descriptors(*descriptors: int) -> None:
+    for descriptor in descriptors:
+        os.close(descriptor)
+
+
+class _WorkerPopen(popen_spawn_posix.Popen):
+    """multiprocessing's spawn launcher, handing the worker its own environment.
+
+    The stdlib launcher starts the child with the process environment, so the only way to
+    change what the child receives would be to change the whole process's environment while
+    it starts, which a program another thread starts meanwhile would inherit. This launcher
+    passes the environment :func:`_worker_environment` builds to ``subprocess.Popen``
+    instead; nothing in the scanner's environment changes. It mirrors CPython 3.13's
+    ``popen_spawn_posix.Popen._launch`` otherwise, except that the worker gets no descriptor
+    of the scanner's resource tracker: that tracker would start with the scanner's
+    environment and working directory, and a plugin that needs one starts its own.
+    """
+
+    # The descriptors the child inherits: the stdlib launcher's list, which pickling the
+    # worker's socket (duplicate_for_child) adds to.
+    _fds: list[int]
+
+    def __init__(self, process_obj: BaseProcess) -> None:
+        self._child: subprocess.Popen[bytes] | None = None
+        super().__init__(process_obj)
+
+    def _launch(self, process_obj: BaseProcess) -> None:
+        if not isinstance(process_obj, _WorkerProcess):
+            raise TypeError("only a plugin worker process starts through this launcher")
+        environment = _worker_environment(os.environ, process_obj.credential_keep)
+        preparation = spawn.get_preparation_data(process_obj.name)
+        data = io.BytesIO()
+        multiprocessing.context.set_spawning_popen(self)
         try:
-            yield
+            reduction.dump(preparation, data)
+            reduction.dump(process_obj, data)
         finally:
-            if previous is None:
-                os.environ.pop("PYTHONSAFEPATH", None)
-            else:
-                os.environ["PYTHONSAFEPATH"] = previous
+            multiprocessing.context.set_spawning_popen(None)
+        parent_r: int | None = None
+        parent_w: int | None = None
+        child_r: int | None = None
+        child_w: int | None = None
+        try:
+            parent_r, child_w = os.pipe()
+            child_r, parent_w = os.pipe()
+            command = spawn.get_command_line(pipe_handle=child_r)
+            self._fds.extend([child_r, child_w])
+            self._child = subprocess.Popen(  # noqa: S603 - this interpreter, multiprocessing's own command
+                command,
+                executable=spawn.get_executable(),
+                env=environment,
+                close_fds=True,
+                pass_fds=self._fds,
+                restore_signals=False,
+            )
+            self.pid = self._child.pid
+            # As in CPython 3.13: a worker that dies before reading its data must not leave
+            # this write blocked on a pipe whose reading end the scanner itself still holds.
+            os.close(child_r)
+            child_r = None
+            os.close(child_w)
+            child_w = None
+            self.sentinel = parent_r
+            with open(parent_w, "wb", closefd=False) as pipe:
+                pipe.write(data.getbuffer())
+        finally:
+            parent = [descriptor for descriptor in (parent_r, parent_w) if descriptor is not None]
+            self.finalizer = multiprocessing.util.Finalize(self, _close_descriptors, parent)
+            for leftover in (child_r, child_w):
+                if leftover is not None:
+                    os.close(leftover)
+
+    def poll(self, flag: int = os.WNOHANG) -> int | None:
+        # subprocess reaps the child it started; a second waitpid here would race it.
+        if self.returncode is None and self._child is not None:
+            self.returncode = self._child.wait() if flag == 0 else self._child.poll()
+        return self.returncode
+
+
+class _WorkerProcess(multiprocessing.context.SpawnProcess):
+    """A spawned worker started by :class:`_WorkerPopen`; ``keep`` is ``options.plugin_env``."""
+
+    def __init__(self, *args: Any, keep: Iterable[str] = (), **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.credential_keep = tuple(keep)
+
+    @staticmethod
+    def _Popen(process_obj: BaseProcess) -> _WorkerPopen:
+        return _WorkerPopen(process_obj)
 
 
 def _remaining(deadline: float) -> float:
@@ -177,6 +427,7 @@ def _worker(
     number: int,
     deadline: float,
     identity_key: bytes,
+    identity_key_stable: bool,
     dump_directory: Path | None,
 ) -> None:
     """Import and execute the approved plugin only inside its spawned process."""
@@ -194,10 +445,13 @@ def _worker(
 
         index = SignatureIndex(signatures)
         engine = Engine(config, index)
-        # Remove the operator's raw identity key from the process environment
-        # before importing or running the plugin; connectors that declare
-        # ``uses_run_identity_key`` receive the decoded key via ConnectorContext.
+        # Remove the operator's raw identity key, and every other credential
+        # the operator exported for the built-in connectors, from the process
+        # environment before importing or running the plugin; connectors that
+        # declare ``uses_run_identity_key`` receive the decoded key via
+        # ConnectorContext, and ``options.plugin_env`` names what a plugin keeps.
         os.environ.pop(IDENTITY_KEY_ENV, None)
+        scrub_credential_environment(os.environ, config.plugin_env)
         exports = _ExportLedger()
         runner = _ConnectorRunner(
             engine,
@@ -207,7 +461,10 @@ def _worker(
             dump_directory,
             exports,
         )
+        # The worker starts without the operator's key in its environment, so its own
+        # Engine cannot tell whether this key is that stable key or the run's own.
         runner._run_identity_key = identity_key
+        runner._identity_key_stable = identity_key_stable
         state = _JobState(started_at=now_iso(), deadline=deadline)
         spec = config.connectors[0]
         _, findings, stats = runner._run_job(number, spec, state)
@@ -236,7 +493,7 @@ def _worker(
         for stream in (sys.stdout, sys.stderr):
             try:
                 stream.flush()
-            except Exception:  # noqa: BLE001 - output goes to /dev/null
+            except Exception:  # noqa: BLE001, S110 - output goes to /dev/null; teardown must not raise
                 pass
         os._exit(status)
 
@@ -308,6 +565,34 @@ class _WorkerHandle:
             _stop(self._process)
 
 
+def _check_statistics(raw: Any) -> None:
+    """Refuse a worker's statistics unless every field has the type ``ScanStats`` gives it."""
+    if not isinstance(raw, dict) or set(raw) != set(asdict(ScanStats("", ""))):
+        raise ValueError("invalid plugin statistics")
+    for key in ("connector", "started_at"):
+        if not isinstance(raw[key], str):
+            raise ValueError("invalid plugin statistics string")
+    for key in ("finished_at", "skip_reason", "name"):
+        if raw[key] is not None and not isinstance(raw[key], str):
+            raise ValueError("invalid plugin statistics optional string")
+    for key in ("findings", "objects_examined", "declared_omissions"):
+        if type(raw[key]) is not int or raw[key] < 0:
+            raise ValueError("invalid plugin statistics count")
+    for key in ("incomplete", "skipped", "cached"):
+        if type(raw[key]) is not bool:
+            raise ValueError("invalid plugin statistics flag")
+    for key in ("errors", "warnings", "declared_paths"):
+        if not isinstance(raw[key], list) or any(not isinstance(item, str) for item in raw[key]):
+            raise ValueError("invalid plugin diagnostics")
+    reasons = raw["incomplete_reasons"]
+    if not isinstance(reasons, dict) or any(
+        not isinstance(reason, str) or type(count) is not int or count < 0
+        for reason, count in reasons.items()
+    ):
+        raise ValueError("invalid plugin incomplete reasons")
+    validate_coverage_summary(raw["coverage"])
+
+
 def _decode_result(
     payload: bytes, number: int, spec: ConnectorSpec
 ) -> tuple[list[Finding], ScanStats, list[dict[str, Any]]]:
@@ -317,26 +602,15 @@ def _decode_result(
     if not isinstance(data["findings"], list) or not isinstance(data["exports"], list):
         raise ValueError("invalid plugin result arrays")
     raw = data["stats"]
-    if not isinstance(raw, dict) or set(raw) != set(asdict(ScanStats("", ""))):
-        raise ValueError("invalid plugin statistics")
-    for key in ("connector", "started_at"):
-        if not isinstance(raw[key], str):
-            raise ValueError("invalid plugin statistics string")
-    for key in ("finished_at", "skip_reason"):
-        if raw[key] is not None and not isinstance(raw[key], str):
-            raise ValueError("invalid plugin statistics optional string")
-    for key in ("findings", "objects_examined"):
-        if type(raw[key]) is not int or raw[key] < 0:
-            raise ValueError("invalid plugin statistics count")
-    for key in ("incomplete", "skipped", "cached"):
-        if type(raw[key]) is not bool:
-            raise ValueError("invalid plugin statistics flag")
-    for key in ("errors", "warnings"):
-        if not isinstance(raw[key], list) or any(not isinstance(item, str) for item in raw[key]):
-            raise ValueError("invalid plugin diagnostics")
+    _check_statistics(raw)
     stats = ScanStats(**sanitize(raw))
     stats.connector = spec.id
-    stats.incomplete = stats.incomplete or stats.skipped or bool(stats.errors)
+    # Reason keys are the plugin process's own text, bound for the banner and the exit-3 line.
+    stats.incomplete_reasons = known_incomplete_reasons(stats.incomplete_reasons)
+    # A ledger over budget or blinded is an incomplete run, whatever the flag says.
+    stats.incomplete = (
+        stats.incomplete or stats.skipped or bool(stats.errors) or coverage_incomplete(stats.coverage)
+    )
     findings = [Finding.from_dict(item) for item in data["findings"]]
     if any(finding.connector != spec.name for finding in findings) or stats.findings != len(findings):
         raise ValueError("invalid plugin finding attribution or count")
@@ -389,7 +663,7 @@ def _run_plugin_process(
     )
     parent, child = socket.socketpair()
     try:
-        process = multiprocessing.get_context("spawn").Process(
+        process = _WorkerProcess(
             target=_worker,
             args=(
                 child,
@@ -398,10 +672,12 @@ def _run_plugin_process(
                 number,
                 deadline,
                 runner._run_identity_key,
+                runner._identity_key_stable,
                 dump_directory,
             ),
             daemon=True,
             name="shadowscan-plugin",
+            keep=config.plugin_env,
         )
     except Exception:
         parent.close()
@@ -418,10 +694,9 @@ def _run_plugin_process(
         _remaining(deadline)
         if state.cancelled.is_set():
             raise TimeoutError
-        # A planted ``multiprocessing/`` in an untrusted working directory must not run in the
-        # worker (or the resource tracker the first start launches): see _safe_path_spawn.
-        with _safe_path_spawn():
-            process.start()
+        # The worker starts with its own environment, without the scanner's credentials and
+        # with PYTHONSAFEPATH=1: see _worker_environment and _WorkerPopen.
+        process.start()
         if state.cancelled.is_set():
             raise TimeoutError
         child.close()
@@ -440,7 +715,7 @@ def _run_plugin_process(
         warnings = [
             "Plugin worker terminated; its descendants and external side effects are not rolled back."
         ]
-    except Exception:  # noqa: BLE001 - no fallback or unsafe exception/configuration diagnostics
+    except Exception:  # noqa: BLE001, S110 - the generic message above stands; the exception may echo plugin configuration
         pass
     finally:
         parent.close()

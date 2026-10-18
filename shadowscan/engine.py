@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import time
+from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
@@ -22,21 +23,24 @@ from shadowscan import __version__
 from shadowscan.autonomy import apply_autonomy
 from shadowscan.comparison import IDENTITY_KEY_ENV, build_collection_scope
 from shadowscan.config import (
+    DEFAULT_CONNECTOR_TIMEOUT,
     ConfigValidationError,
     ConnectorSpec,
     ScanConfig,
+    connector_timeout_is_default,
     plugin_names,
     validate_min_confidence,
 )
 from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.correlation import correlate, correlate_lifecycle, correlate_runtime
+from shadowscan.coverage import MAX_DECLARED_PATHS, combine_coverage_summaries
 from shadowscan.errors import SetupError
 from shadowscan.governance import apply_declared_governance
 from shadowscan.incremental import IncrementalCache
 from shadowscan.mcp_registry import LoadedRegistries, enrich_mcp_findings, load_registries
 from shadowscan.merge import merge
-from shadowscan.models import Finding, ScanResult, ScanStats, Surface, now_iso
+from shadowscan.models import Finding, ScanResult, ScanStats, Surface, detached_copy, now_iso
 from shadowscan.registries import (
     RECORD_KEY,
     REGISTRY_TYPES,
@@ -67,7 +71,14 @@ _JobResult = tuple[ConnectorSpec, list[Finding], ScanStats]
 # A job's connector class, or the exception its lookup raised.
 _Resolved = type[BaseConnector] | Exception
 
-_TIMEOUT_MESSAGE = "connector_timeout completion deadline exceeded; results discarded"
+#: Ceiling on an automatically raised deadline. A scan that needs longer than
+#: this should say so explicitly rather than be allowed to run unbounded.
+MAX_AUTO_TIMEOUT = 1800.0
+_TIMEOUT_MESSAGE = (
+    "connector_timeout completion deadline exceeded; this connector's results are truncated. "
+    "Set --connector-timeout-seconds for a large estate or repository (when it is not set, the"
+    " deadline is 120 s, raised up to 1800 s for a large input)"
+)
 _TIMEOUT_WARNING = (
     "Cancellation is cooperative: an in-flight SDK, plugin call, or filesystem "
     "replacement may continue. A cache or record artifact whose replacement "
@@ -82,6 +93,10 @@ _TIMEOUT_WARNING = (
 _TRIAGE_RESERVE_SHARE = 0.1
 _TRIAGE_RESERVE_MIN = 5.0
 _TRIAGE_RESERVE_MAX = 60.0
+# The supervisor's time for preparing one expired job's surrendered findings. It
+# enforces no other job's deadline meanwhile, and the report waits; what is left
+# when it is spent is omitted and counted, never reported as a complete result.
+_SURRENDER_BUDGET_SECONDS = 5.0
 
 # The operator's stable identity key comes from IDENTITY_KEY_ENV only, never
 # from a configuration field.
@@ -168,6 +183,38 @@ class _JobState:
     publication_lock: Lock = field(default_factory=Lock)
     isolated_process: bool = False
     kill_process: Callable[[], None] | None = None
+    # Findings the worker had already produced and sanitized when its deadline
+    # expired. Unlike a late *artifact*, which must never count as an accepted
+    # export, these are observations the connector completed inside its budget:
+    # discarding them turns an overrun into a silent clean report. The scan is
+    # still marked incomplete, so they cannot be read as a complete result.
+    partial_findings: list[list[Finding]] = field(default_factory=list)
+    # The job's engine hooks, so an expiry withholds registry records from the
+    # surrendered findings exactly as _run_one does from a completed job's.
+    # _run_one records them before the connector can register any finding, and
+    # _hooks() always gives a class (BaseConnector for a failed lookup), so this
+    # is None only for an expiry that came before _run_one got that far.
+    hooks: type[BaseConnector] | None = None
+
+    def register_partial(self, findings: list[Finding]) -> None:
+        """Hold a worker's live findings list so an expiry can still read it.
+
+        A job split into repository roots registers one list per root, and an
+        expiry reports them all. Each reference is registered once; the worker
+        then appends without synchronising. Copying a list while another thread
+        appends to it is safe in CPython, and the only risk is observing fewer
+        findings than the worker had produced — acceptable on a path that
+        already reports the scan incomplete, and far better than reporting none.
+
+        Only an exact list is held. The sink is on the connector's context, so a
+        plugin can pass anything, and the supervisor copies what it holds on its
+        own thread: a list subclass would run the plugin's ``__iter__`` there.
+        """
+        if type(findings) is list:
+            self.partial_findings.append(findings)
+
+    def take_partial(self) -> list[Finding]:
+        return [finding for findings in list(self.partial_findings) for finding in list(findings)]
 
     @property
     def supervision_deadline(self) -> float | None:
@@ -206,7 +253,7 @@ def _retain_sanitizable(candidates: list[Finding]) -> tuple[list[Finding], int]:
 
 
 def _withhold_registry_records(
-    hooks: type[BaseConnector], builtin: bool, findings: list[Finding], st: ScanStats
+    hooks: type[BaseConnector] | None, builtin: bool, findings: list[Finding], st: ScanStats
 ) -> None:
     """Keep registry records only from built-in connectors that declare they read vendor registries.
 
@@ -214,7 +261,10 @@ def _withhold_registry_records(
     that copies record-shaped metadata from an export or a repository, or a plugin that declares
     the hook, must not create an approval, so the key is dropped and the drop is reported. A
     declaring connector keeps only records of the registry types it lists, so it cannot speak
-    for another vendor's registry.
+    for another vendor's registry. ``hooks`` is None only when a job's deadline expired before
+    ``_run_one`` recorded its class on the job state (a failed lookup still gets
+    ``BaseConnector``'s hooks, see ``_hooks``), or when a surrendering job's class could not say
+    what it declares; None declares nothing, so every record is withheld.
     """
     declared = getattr(hooks, "emits_registry_records", False) is True
     declared_types = getattr(hooks, "registry_record_types", None)
@@ -245,6 +295,78 @@ def _withhold_registry_records(
             f"registry record metadata ignored on {undeclared_type} finding(s): "
             "the connector does not declare that registry type"
         )
+
+
+def _timeout_error(st: ScanStats, message: str) -> None:
+    """Record an error a connector deadline caused, counted as ``timeout`` like the deadline itself.
+
+    The supervisor writes these stats itself, so no connector context names the reason;
+    without it the CLI's exit-3 explanation could not say that a timeout was why.
+    """
+    st.errors.append(message)
+    st.incomplete_reasons["timeout"] = st.incomplete_reasons.get("timeout", 0) + 1
+
+
+def _surrendered_copy(finding: Finding, plugin: str | None) -> Finding | None:
+    """One surrendered finding detached from its worker and prepared, or None when it cannot be read."""
+    try:
+        copied = detached_copy(finding)
+        if plugin is not None:
+            copied.reattribute(plugin, derive_id=True)
+        copied.sanitize()
+    except KeyboardInterrupt:
+        raise
+    except BaseException:  # noqa: BLE001 - one the worker is still changing is omitted, never guessed at
+        return None
+    return copied
+
+
+def _surrender(spec: ConnectorSpec, state: _JobState, st: ScanStats) -> list[Finding]:
+    """An expired job's findings, prepared as ``_collect`` and ``_run_one`` prepare a completed job's.
+
+    The abandoned worker still holds these objects and may change them while the
+    report is built, so each is copied first (``detached_copy``), reading only the
+    plain data a sanitizer pass leaves, and the copy is prepared. A plugin finding
+    gets the id its own name derives, and registry records are withheld: an
+    overrun cannot report what the same plugin's completed run would not. A copy
+    of a finding nobody changed since the worker sanitized it costs a digest
+    check, not another sanitizer pass.
+
+    This runs on the supervisor thread, which meanwhile enforces no other job's
+    deadline, so it stops after ``_SURRENDER_BUDGET_SECONDS``: the findings left
+    are omitted and counted. It is outside any worker's isolation, and the job's
+    class can still run plugin code. Whatever that code raises, ``sys.exit()``
+    included, omits the finding or withholds the records, as ``_run_one`` and
+    ``_hook_failure`` treat it; only a KeyboardInterrupt still ends the scan.
+    """
+    plugin = spec.name not in builtin_connector_names()
+    candidates = state.take_partial()
+    surrendered = []
+    unreadable = 0
+    ends = time.monotonic() + _SURRENDER_BUDGET_SECONDS
+    for number, finding in enumerate(candidates):
+        if time.monotonic() >= ends:
+            _timeout_error(
+                st,
+                f"{len(candidates) - number} finding(s) completed before the deadline omitted: "
+                f"the {_SURRENDER_BUDGET_SECONDS:g}-second budget for reporting them was spent",
+            )
+            break
+        copied = _surrendered_copy(finding, spec.name if plugin else None)
+        if copied is None:
+            unreadable += 1
+        else:
+            surrendered.append(copied)
+    if unreadable:
+        _timeout_error(st, f"{unreadable} finding(s) completed before the deadline omitted: not readable")
+    try:
+        _withhold_registry_records(state.hooks, not plugin, surrendered, st)
+    except KeyboardInterrupt:
+        raise
+    except BaseException:  # noqa: BLE001 - reading a plugin class's declarations runs plugin code
+        # It fails before any record is touched; a job that declares nothing keeps none.
+        _withhold_registry_records(None, not plugin, surrendered, st)
+    return surrendered
 
 
 def _offline_record_ids(spec: ConnectorSpec, findings: list[Finding]) -> set[str]:
@@ -311,7 +433,8 @@ class _ScopeLedger:
     """Live collection scope records reported by connector workers of one run, by configuration ordinal.
 
     A cancelled job reports nothing, and ``records`` drops what a timed-out job reported:
-    its findings are discarded, so its scope must not be attested either.
+    it surrenders only the findings it had produced, a subset of its scope, so that scope
+    must not be attested.
     """
 
     def __init__(self) -> None:
@@ -376,8 +499,7 @@ class _ConnectorRunner:
 
     def run(self, number: int, spec: ConnectorSpec, state: _JobState) -> _JobResult:
         state.started_at = now_iso()
-        timeout = self._config.connector_timeout_seconds
-        state.deadline = time.monotonic() + timeout
+        state.deadline = time.monotonic() + self._config.connector_timeout_seconds
         try:
             if state.isolated_process:
                 from shadowscan.plugin_process import run_plugin_process
@@ -525,6 +647,9 @@ class _ConnectorRunner:
             combined.extend(child_findings)
             parts.append(child_stats)
         cached_count = sum(s.cached for s in parts)
+        reasons: Counter[str] = Counter()
+        for part in parts:
+            reasons.update(part.incomplete_reasons)
         stats = ScanStats(
             connector=spec.id,
             started_at=min(s.started_at for s in parts),
@@ -536,12 +661,47 @@ class _ConnectorRunner:
             incomplete=any(s.incomplete or s.skipped or s.errors for s in parts),
             skipped=all(s.skipped for s in parts),
             cached=cached_count == len(parts),
+            coverage=combine_coverage_summaries(s.coverage for s in parts),
+            incomplete_reasons=dict(reasons),
+            declared_omissions=sum(s.declared_omissions for s in parts),
+            declared_paths=[path for s in parts for path in s.declared_paths][:MAX_DECLARED_PATHS],
         )
         if cached_count:
             stats.warnings.append(
                 f"incremental: reused {cached_count}/{len(parts)} unchanged repository roots"
             )
         return spec, combined, stats
+
+    def _extend_deadline_for_large_input(
+        self, spec: ConnectorSpec, hooks: type[BaseConnector], state: _JobState
+    ) -> None:
+        """Grow this job's deadline to match its input, when the default applies.
+
+        A fixed 120 seconds is ample for an API page and far too little for a
+        large monorepo, where the walk hit the deadline mid-tree and the
+        connector reported nothing -- which reads as a clean result everywhere
+        except the exit code. The connector class proposes a budget from a
+        cheap look at its own input; an explicit ``--connector-timeout-seconds``
+        is always honoured unchanged.
+
+        Done here rather than before the job starts, so it reuses the class
+        the runner has already resolved: a second lookup would happen outside
+        the job's origin-policy scope.
+        """
+        if not connector_timeout_is_default(self._config.connector_timeout_seconds):
+            return
+        try:
+            proposed = hooks.estimate_timeout_seconds(dict(spec.config), DEFAULT_CONNECTOR_TIMEOUT)
+        except Exception:  # noqa: BLE001 - an estimate must never fail a scan
+            return
+        if proposed is None or proposed <= DEFAULT_CONNECTOR_TIMEOUT or state.deadline is None:
+            return
+        scaled = min(float(proposed), MAX_AUTO_TIMEOUT)
+        state.deadline += scaled - DEFAULT_CONNECTOR_TIMEOUT
+        self._engine._report_progress(
+            spec.id,
+            f"input is large; deadline raised to {scaled:.0f}s (set --connector-timeout-seconds to override)",
+        )
 
     def _connector_config(
         self, spec: ConnectorSpec, inherits_approval: bool, dump_key: str
@@ -556,6 +716,10 @@ class _ConnectorRunner:
             cfg["allow_private_origin"] = self._allow_private_origin(spec)
         if spec.label:
             cfg.setdefault("label", spec.label)
+        # The scan-wide gap budget. Private, like _dump_path: it is a scan
+        # option rather than a key each connector documents. A connector that
+        # accepts a public max_coverage_gap, or that is strict, overrides it.
+        cfg["_max_coverage_gap"] = self._config.max_coverage_gap
         if self._dump_directory:
             label = re.sub(r"[^A-Za-z0-9_-]", "_", spec.id)[:80] or "connector"
             cfg["_dump_path"] = os.path.join(self._dump_directory, f"{dump_key}-{label}.jsonl")
@@ -575,6 +739,7 @@ class _ConnectorRunner:
             resolved = _hook_failure(spec.name, "inherits_instance_credentials_approval()", exc)
             hooks, inherits_approval = _hooks(resolved), True
         cfg = self._connector_config(spec, inherits_approval, dump_key)
+        self._extend_deadline_for_large_input(spec, hooks, state)
         identity_key = self._run_identity_key if hooks.uses_run_identity_key else None
         ctx = ConnectorContext(
             config=cfg,
@@ -586,6 +751,8 @@ class _ConnectorRunner:
             gateway_identity_key=identity_key,
             gateway_identity_key_stable=identity_key is not None and self._identity_key_stable,
         )
+        ctx.partial_sink = state.register_partial
+        state.hooks = hooks
         fs: list[Finding] = []
         started_at = now_iso()
         origin_token = set_allow_private_origin(self._allow_private_origin(spec))
@@ -672,6 +839,10 @@ class _ConnectorRunner:
             fs.extend(cached_findings)
             if cache.snapshot(spec, check_deadline=ctx.check_deadline, deadline=ctx.deadline) == snapshot:
                 ctx.check_deadline()
+                if ctx.partial_sink is not None:
+                    # A reused root is as complete as an analysed one, so an
+                    # expiry in a later root of the same job reports it too.
+                    ctx.partial_sink(fs)
                 self._engine._report_progress(spec.id, f"{len(fs)} findings (unchanged input; cached)")
                 return st, True
             fs.clear()
@@ -802,7 +973,7 @@ def _scanned_roots(specs: list[ConnectorSpec]) -> list[tuple[str, Path]]:
         try:
             # Built-in connectors only: this lookup never imports a plugin outside a job's deadline.
             declared = _hooks(get_connector_class(spec.name)).scanned_local_paths(spec.config)
-        except Exception:  # noqa: BLE001 - an unknown or unapproved connector declares no tree
+        except Exception:  # noqa: BLE001, S112 - an unknown or unapproved connector declares no tree; its own job reports the lookup failure
             continue
         roots += [(path, Path(os.path.realpath(path))) for path in declared]
     return roots
@@ -946,20 +1117,31 @@ class _Supervisor:
         if future.running():
             self._engine.abandoned_workers.append(spec.id)
             self._engine._abandoned_futures.append(future)
-        self.completed[number] = (
-            spec,
-            [],
-            ScanStats(
-                connector=spec.id,
-                started_at=state.started_at or self._started_at,
-                finished_at=now_iso(),
-                incomplete=True,
-                skipped=True,
-                skip_reason=_TIMEOUT_MESSAGE,
-                errors=[_TIMEOUT_MESSAGE],
-                warnings=[_TIMEOUT_WARNING],
-            ),
+        # Findings the worker completed before the deadline are real
+        # observations. Dropping them turned an overrun into an empty report
+        # that reads as clean on every surface except the exit code; the scan
+        # stays incomplete either way.
+        stats = ScanStats(
+            connector=spec.id,
+            started_at=state.started_at or self._started_at,
+            finished_at=now_iso(),
+            incomplete=True,
+            skipped=True,
+            skip_reason=_TIMEOUT_MESSAGE,
+            errors=[_TIMEOUT_MESSAGE],
+            warnings=[_TIMEOUT_WARNING],
+            # Named here: no connector context records this diagnostic, and the
+            # exit-3 explanation reads the reasons, not the messages.
+            incomplete_reasons={"timeout": 1},
         )
+        partial = _surrender(spec, state, stats)
+        stats.findings = len(partial)
+        if partial:
+            stats.warnings.append(
+                f"{spec.id}: {len(partial)} finding(s) completed before the deadline are reported; "
+                "they are a subset of what a full run would find, never a clean result"
+            )
+        self.completed[number] = (spec, partial, stats)
 
     def _capacity_exhausted(self) -> bool:
         # A timed-out worker can still be running inside an SDK or
@@ -991,6 +1173,9 @@ class _Supervisor:
                         skipped=True,
                         skip_reason="no worker capacity remains after connector timeouts",
                         errors=["connector not started: all worker slots remain occupied by timed-out calls"],
+                        # Other connectors' deadlines left it unstarted; raising the
+                        # deadline (or the parallelism) is what lets it run.
+                        incomplete_reasons={"timeout": 1},
                     ),
                 )
                 pending.remove(future)
@@ -1458,6 +1643,8 @@ class Engine:
         for number, spec in jobs:
             _, fs, st = completed[number]
             findings.extend(fs)
+            # The configured id (``st.connector``) may be a label; the name joins findings to it.
+            st.name = spec.name
             stats.append(st)
             offline |= _offline_record_ids(spec, fs)
         export_entries = exports.entries(jobs, timed_out) if dump_directory else []

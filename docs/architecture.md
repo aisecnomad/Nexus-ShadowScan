@@ -57,7 +57,7 @@ classes (`reporters/cyclonedx.py`).
 
 ## Scan pipeline
 
-A scan runs these stages in order. The CLI (`shadowscan/cli.py`) reads the
+A scan runs these stages in order. The CLI (`shadowscan/cli/`) reads the
 configuration in step 1 and renders the reports in step 7; `Engine.run()` in
 `shadowscan/engine.py` runs the rest. Setup refuses an invalid or unsafe
 configuration before anything is collected: the command exits 1 with no
@@ -203,9 +203,10 @@ Options are keys under `options:`; most also have a command-line flag.
 | option | default | what it bounds |
 |---|---|---|
 | `parallel` | 4 | worker threads shared by all connector jobs |
-| `connector_timeout_seconds` | 120 | each connector's completion deadline; an expired job's results are discarded and the scan is incomplete ([deadlines and parallelism](scanning.md#connector-deadlines-and-parallelism)) |
+| `connector_timeout_seconds` | 120; when omitted, a connector may raise it to fit its input | each connector's completion deadline; a value you set, 120 included, is used unchanged; an expired job reports the findings it had already produced (every root's, cache hits included), copied from its worker and prepared as a completed job's, discards the rest of its result, and the scan is incomplete ([deadlines and parallelism](scanning.md#connector-deadlines-and-parallelism)) |
 | `job_deadline_seconds`, `--job-deadline-seconds` | off | the CLI process and its output from the moment the deadline is armed: the flag while the command line is parsed, the option once the configuration is read; expiry exits 3 |
 | `plugin_execution` | `process` | each allowlisted plugin runs in a spawned worker that is killed at its deadline; `thread` runs plugins in-process; built-in connectors always use threads ([plugin execution](connectors.md#third-party-plugin-execution)) |
+| `plugin_env` | `[]` | credential-shaped environment variables (`*_TOKEN`, `*_SECRET`, `*_KEY`, `*_PASSWORD`, the cloud SDK credential variables) are removed from a spawned plugin worker before the plugin is imported; this lists, by exact name, the ones an approved plugin reads itself and keeps |
 | `allow_private_origin` | `false` | HTTPS clients refuse loopback, link-local, private and cloud-metadata destinations (`utils/http.py`); every connector accepts the same key to grant itself the exception alone, which the engine prefers over this scan-wide setting; `--deny-private-origin` (`ScanConfig.deny_private_origin`) overrides both ([threat model](security/threat-model.md)) |
 | `allow_credential_mixing` | `false` | repository scans and live tenant collection run as separate scans |
 | `allow_instance_credentials` | `false` | cloud connectors use an explicit audit identity, not instance or managed-identity credentials |
@@ -248,7 +249,7 @@ reports (`--format json`). None contacts a provider except
 | `shadowscan/triage.py` | opt-in, advisory LLM triage of the highest-risk findings |
 | `shadowscan/endpoint.py` | well-known AI client configuration locations that `shadowscan endpoint` reads through `code.filesystem` |
 | `shadowscan/errors.py` | `SetupError`: setup failures whose messages are credential-free and printed verbatim by the CLI |
-| `shadowscan/cli.py` | `scan`, `run`, `code`, `gateway`, `jwt`, `endpoint`, `connectors`, `signatures`, `inventory`, `mcp-registry`, `diff`, `merge`, `dashboard`, `controls` |
+| `shadowscan/cli/` | the `shadowscan` command: `__init__.py` holds the shared options, scan runner and report output, and one module per command group registers `scan`, `run`, `code`, `gateway` (`_scan.py`), `jwt`, `endpoint`, `connectors`, `signatures`, `inventory`, `mcp-registry`, `diff`, `merge`, `dashboard` and `controls`; commands reach the consoles, the scan runner and connector discovery through the package, so replacing one there reaches every command |
 
 ### Detection, inventory and assessment
 
@@ -299,7 +300,7 @@ The diagram is generated from the connector registry by `python -m tools.readme_
 | `connectors/lowcode/` | `lowcode.power-platform`, `lowcode.salesforce`, `lowcode.servicenow`, `lowcode.n8n`, `lowcode.make`, `lowcode.zapier`, `lowcode.workato` | the four automation platforms share `automation.py` |
 | `connectors/saas/` | `saas.slack`, `saas.microsoft-teams`, `saas.github-apps`, `saas.atlassian`, `saas.notion`, `saas.zoom`, `saas.generic` | one module per provider; `generic.py` reads any CSV or JSON app inventory |
 | `connectors/cloud/` | `cloud.aws`, `cloud.gcp`, `cloud.azure`, `cloud.oci`, `cloud.kubernetes`, `cloud.openshift` | `aws_registry.py` and `gcp_registry.py` read vendor agent registries; `credentials.py` holds the instance-credential policy; `kubernetes.py` serves both workload inventories |
-| `connectors/endpoint/` | `endpoint.inventory`, `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models`, `endpoint.ebpf` | `catalog.py` lists what `endpoint.inventory` looks for; `runtime.py` holds the offline host and runtime inventories; `a2a.py` is the opt-in A2A Agent Card probe of `endpoint.mcp` |
+| `connectors/endpoint/` | `endpoint.inventory`, `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models`, `endpoint.ebpf` | `catalog.py` lists what `endpoint.inventory` looks for and the local runtime names `endpoint.host` recognizes; `runtime.py` holds the offline host and runtime inventories; `a2a.py` is the opt-in A2A Agent Card probe of `endpoint.mcp` |
 | `connectors/network/` | `network.logs` | DNS, TLS SNI and flow records |
 | `connectors/runtime/` | `runtime.processes` | process inventories or `/proc`; command lines are never kept |
 
@@ -313,7 +314,7 @@ splitting the connector class itself.
 
 | module | responsibility |
 |---|---|
-| `filesystem.py` | the connector: tree walk, coverage accounting, file dispatch, ownership and finding construction |
+| `filesystem.py` | the connector: tree walk, coverage accounting, file dispatch and finding construction |
 | `walk.py` | bounded, non-recursive directory walking that never follows links; project-root markers |
 | `path_context.py` | path-derived evidence context: test, documentation, example, generated and CI-pipeline paths, and the discounts they apply |
 | `project_evidence.py` | how a project's observations count toward its finding: corroboration, weak mentions, env-only and model-ids-only capping |
@@ -331,7 +332,7 @@ splitting the connector class itself.
 | `javascript_dispatch.py`, `javascript_reachability.py`, `javascript_tool_attribution.py` | JavaScript Responses dispatch, literal dead-branch exclusion, tool registrations linked to their execution sites |
 | `polyglot_bindings.py`, `go_semantics.py`, `dotnet_semantics.py`, `java_semantics.py` | bounded lexical import and scope checks for LangChainGo constructors, .NET automatic tool invocation and Spring AI annotated tools; no general cross-file type resolution (a Spring AI tool class is matched by its qualified name across the project) |
 | `catalogs.py`, `rule_packs.py` | data files that name technologies without using them, and detection-rule packs, so neither counts as an integration |
-| `ownership.py` | CODEOWNERS glob matching without backtracking regular expressions |
+| `ownership.py` | the `OwnershipResolver` collaborator (CODEOWNERS rules read on the collection's descriptor, per-root lookup budgets, opt-in git history) and bounded CODEOWNERS glob matching without backtracking regular expressions |
 
 ### Utilities
 

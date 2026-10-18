@@ -134,6 +134,12 @@ class FakeClient:
             raise value
         return value
 
+    def list_tags_for_resource(self, *, resourceArn: str) -> Any:
+        # Every AgentCore control-plane resource is taggable; these registry
+        # tests set no tags, so the runtime's owner stays unresolved.
+        self.calls.append(("list_tags_for_resource", {"resourceArn": resourceArn}))
+        return {"tags": {}}
+
     def get_registry(self, *, registryId: str) -> Any:
         self.calls.append(("get_registry", {"registryId": registryId}))
         return self._answer(self.registries, registryId)

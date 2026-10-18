@@ -134,7 +134,9 @@ def test_endpoint_denied_configuration_is_incomplete(tmp_path: Path, monkeypatch
     monkeypatch.setattr(module, "_exists_without_links", denied)
     result = CliRunner().invoke(main, ["endpoint", "--home", str(tmp_path), "--format", "json"])
     assert result.exit_code == 3, result.output
-    assert json.loads(result.output)["summary"]["complete"] is False
+    # stdout is the report; stderr carries the exit-3 explanation (reason categories only).
+    assert json.loads(result.stdout)["summary"]["complete"] is False
+    assert "scan incomplete (exit 3)" in result.stderr
     assert "private configuration" not in result.output
 
 

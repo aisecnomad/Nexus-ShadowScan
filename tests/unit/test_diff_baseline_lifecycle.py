@@ -22,6 +22,7 @@ from click.testing import CliRunner
 from shadowscan.cli import main
 from shadowscan.comparison import (
     MAX_BASELINE_AGE_DAYS,
+    MAX_REPORT_DEPTH,
     ReportDigestMismatch,
     baseline_age_days,
     baseline_lifecycle_reasons,
@@ -29,6 +30,7 @@ from shadowscan.comparison import (
     load_report,
     load_report_with_digest,
 )
+from shadowscan.comparison import _nests_deeper_than as nests_deeper_than
 from shadowscan.fleet import merge_reports
 from shadowscan.models import Finding, Kind, ScanResult, ScanStats, Surface
 from shadowscan.utils.files import read_policy_bytes
@@ -189,6 +191,36 @@ def test_a_pinned_baseline_must_still_be_a_valid_report(tmp_path, content, messa
     after = _write(tmp_path / "current.json", _report())
     result = CliRunner().invoke(main, ["diff", str(before), str(after), "--baseline-sha256", _sha256(before)])
     assert result.exit_code == 1 and "invalid comparison input" in result.output
+
+
+def _nested(depth: int) -> Any:
+    value: Any = 1
+    for level in range(depth):
+        value = [value] if level % 2 else {"k": value}
+    return value
+
+
+def test_a_report_nested_past_the_limit_is_refused_on_every_interpreter(tmp_path):
+    """Regression: the nesting limit was the interpreter's own. Python 3.11 refuses JSON past
+    about 1,000 levels, 3.12 and 3.13 past about 10,000, and 3.14 bounds it by the stack, so on
+    3.14 CI a 100,000-level baseline parsed and was refused for its type instead. Every
+    interpreter parses 300 levels; the report limit refuses them as nesting on each."""
+    report = _report()
+    report["extra"] = _nested(MAX_REPORT_DEPTH + 44)
+    before = _write(tmp_path / "baseline.json", report)
+    with pytest.raises(ValueError, match="nesting limit"):
+        load_report(before)
+    report["extra"] = _nested(MAX_REPORT_DEPTH - 1)
+    assert load_report(_write(tmp_path / "within.json", report))["findings"] == []
+
+
+def test_nesting_is_measured_through_objects_arrays_and_later_siblings():
+    assert not nests_deeper_than(_nested(5), 5)
+    assert nests_deeper_than(_nested(6), 5)
+    assert not nests_deeper_than("text", 1) and not nests_deeper_than([], 1)
+    # A shallow branch first does not hide a deep one after it.
+    assert nests_deeper_than({"a": [1, [2]], "b": [[[[[[0]]]]]]}, 5)
+    assert not nests_deeper_than({"a": [1, [2]], "b": [[[[0]]]]}, 5)
 
 
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unavailable")

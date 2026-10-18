@@ -76,8 +76,8 @@ package.
 
 1. **Prepare the candidate.** Set the same version in `pyproject.toml`,
    `shadowscan/__init__.py` and `CITATION.cff` (CI checks that they match).
-   Date the release headings in `CHANGELOG.md` and `RELEASE_NOTES.md` and
-   remove "unreleased" from them. Merge through the normal review process.
+   Date the release headings in `CHANGELOG.md`, `docs/engineering-log.md` and
+   `RELEASE_NOTES.md` and remove "unreleased" from them. Merge through the normal review process.
 2. **Review and accept the exact commit**, as the
    [release process](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/GOVERNANCE.md#release-process)
    requires. A green CI run is not that review.

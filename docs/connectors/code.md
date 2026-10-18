@@ -55,6 +55,28 @@ A2A agent cards, M365 declarative agents, LangGraph/CrewAI manifests, exported
 low-code flows, IaC (Terraform, CloudFormation, ARM/Bicep, wrangler) and
 container files, `.env`/CI secret references, provider credentials (redacted).
 
+A JSON, YAML or TOML file with another name is read as an MCP configuration
+when its structure declares servers (an `mcpServers` or `mcp_servers` key, or
+`mcp` with `servers`, within twelve levels of mappings and lists, the first 256
+entries of each). Inside a list only such a key holding a mapping of servers
+counts, so an array of records is not one because a record lists server
+statuses (a session transcript's `mcp_servers`). A document that declares no
+servers, a scalar included, is not one either, even when those keys appear in
+its values (a workflow example whose step writes an MCP configuration with a
+heredoc), and the other passes read it as ordinary configuration. A list that
+does declare them (an Ansible task writing `~/.cursor/mcp.json` from structured
+`content`) is passed to the MCP parser, which rejects its shape (`MCP
+configuration must be an object`), so the scan is incomplete. A
+dedicated MCP configuration name (`.mcp.json`, `mcp.json`, `smithery.yaml`, …)
+is always parsed, so its defects still make the scan incomplete, as does a
+document that declares servers in malformed form or cannot be read at all.
+That holds under a test or fixture path too, where other malformed fixtures
+are discounted (see the [coverage policy](../scanning.md#coverage-policy)): an MCP configuration is
+reported at full weight there, so a NUL byte or a syntax error that hides
+one is a gap.
+Workflows under `.github/workflows/` are read for the MCP configurations their
+agent steps take as inputs.
+
 Python and common JavaScript/TypeScript constructors are resolved against imports,
 including aliases, namespaces and ordinary CommonJS bindings. Generic loops,
 subprocess calls and repeated weak idioms cannot independently establish an agent.
@@ -97,8 +119,10 @@ establish agent behavior, workload capabilities or an MCP server. Notebook cells
 are parsed separately: an unparsed cell does not remove the bound evidence or
 registered tools of other cells. In a test path the scan discounts
 (`include_tests` off), source that does not parse, often a deliberately invalid
-fixture, is a warning that leaves coverage complete unless `strict_coverage` is
-set, as for a test file over the binder's budget. Python 2 modules, templates
+fixture, is a warning that leaves coverage complete unless the accounting is
+strict (`strict_coverage`, or a gap budget of 0; see
+[strict accounting](../scanning.md#coverage-budget-and-strict-accounting)), as
+for a test file over the binder's budget. Python 2 modules, templates
 (`{{cookiecutter.slug}}/main.py`, Jinja-rendered `.py` files) and other files
 that are not Python 3 but carry a `.py` name stay a gap elsewhere: list them in
 `exclude` to leave them out of the scan, and use an interpreter that supports
@@ -282,7 +306,7 @@ dynamic factories, repeated assignments, unnamed calls or uncertain control
 flow. Unsupported identities remain visible in project metadata. Renaming a
 file or binding changes the identity. Review inventory stubs and rebuild
 comparison baselines when switching modes; see
-[migration](../production.md#unreleased-review-migration).
+[migration](../production-migrations.md#unreleased-review-migration).
 
 ### Construction and capability evidence
 
@@ -465,6 +489,32 @@ provider finding. Imports, dependencies and code patterns in tests still
 anchor (tagged `test-code-only`). A project dropped for this reason is named
 in a note, like one whose evidence is only uncorroborated patterns.
 
+A `secret` finding follows the same contexts: under a test path it keeps half
+weight and the `test-code-only` tag; under a documentation, example or
+generated path it keeps that context's weight and confidence cap and the
+`docs-only`, `example-code-only` or `generated-code-only` tag
+(`metadata.negative_contexts`, `metadata.confidence_cap`). The generic
+assigned-credential rule (`heuristic.inline-credential`) never reports a value
+shaped like the name of another variable (`self.api_key = resolved_api_key`,
+`include_tracing_api_key=include_tracing_api_key`, `BuildConfig.OPENAI_API_KEY`)
+or a translated placeholder (`sua_chave_openai`). In an env or credential
+file (`.env`, `.env.local`, `.netrc`; not a template such as `.env.example`
+or `.env.sample`) the name test applies to token names only (`API_KEY`,
+`ACCESS_TOKEN`, `CLIENT_SECRET`): a PASSWORD or CREDENTIAL value there
+(`POSTGRES_PASSWORD=TrustNoOneEverAgain`, `POSTGRES_PASSWORD =
+PostgresProd2024Secure`) cannot name a variable and is reported unless it is
+a placeholder or a label: every word of it is label vocabulary, a function
+word or a word of the name, and every number is the name's
+(`KeycloakAdminPassword`, `svc1_local_dev_password` under
+`SVC1_DB_PASSWORD`); a year or any other word (`LocalAdmin2024Strong`,
+`snout_dev_thump_bloom`) makes it a password. A key pasted in place of an
+environment variable's name (`process.env.<KEY>`) is reported as a
+credential, by the same test that withholds it from evidence. In other
+configuration, documentation and templates a password's value may name a
+setting or a secret (`adminPassword: useExistingSecretKey`) and is read as
+in source code; see
+[scanning](../scanning.md#test-and-fixture-code).
+
 An `image:` line in a CI pipeline (`.github/workflows/`, `.gitlab-ci.yml`,
 `.circleci/`, `azure-pipelines.yml`, `bitbucket-pipelines.yml`, `.drone.yml`,
 `.woodpecker*`, `.buildkite/`, `.gitlab/`, `Jenkinsfile`) runs a job in that
@@ -482,8 +532,35 @@ Include=... />`, `<PackageReference Update=... />`) and project files whose
 `PackageReference` items carry no version of their own.
 
 Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
-`max_notebook_size`, `max_ast_nodes`, `agent_granularity`, `scan_secrets`, `strict_coverage`, `include_tests`, `triage`, `use_git`, `label`. When using labeled `paths`, supply unique
+`max_notebook_size`, `max_ast_nodes`, `agent_granularity`, `scan_secrets`, `strict_coverage`, `include_tests`, `profile`, `triage`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
+
+`profile: ci` (`--profile ci`) declares the coverage gaps a source gate accepts
+in advance: unread symbolic links, non-regular entries, unparsed content,
+analysis limits and, while `scan_secrets` is off, oversize files under test,
+fixture, documentation, example and generated paths are warnings that leave
+the scan complete and are counted in the report's `declared_omissions`; every
+other gap is judged by the coverage budget as without the profile. With
+credential detection on, an oversize file there is not declared: credentials
+are never declared without a read. Documentation and example directories count below the file's
+project root, so a project under `demo/` or `examples/svc/` with its own
+manifest keeps its gaps. A template's directory (template syntax such as
+`{{cookiecutter.slug}}`, `{%` or `${` in its path) and one none of whose JSON
+or TOML manifests parses as its tool reads it (npm and Composer accept a
+repeated key, not a `NaN`) are not projects for this rule: a template under a
+documentation or example path (`templates/{{cookiecutter.slug}}/`) keeps its
+unparsed manifest and sources declared. A template at the repository root, as
+in a cookiecutter repository (`{{cookiecutter.slug}}/src/`), is judged from the
+root, where no profile path applies, so its gaps are judged as without the
+profile. Every declared entry
+is counted, each skipped link included, though one warning per root names the
+links. A file whose findings keep their full weight wherever it lies (an MCP
+configuration, a coding-agent instruction, rule or settings file, an agent
+manifest or card) is never declared, and neither is a credential limit. The
+profile is refused under strict accounting (`strict_coverage`, or a gap budget
+of 0). See
+[the `ci` profile](../scanning.md#the-ci-profile) and the reason categories in
+`incomplete_reasons` that explain an exit 3.
 
 `max_entries` defaults to 1,000,000 filesystem entries inspected during
 enumeration. It counts directories, skipped files and entries revisited by
@@ -523,11 +600,17 @@ them to `exclude` unless that is intended); version-control metadata (`.git`,
 `.hg`, `.svn`) is never scanned, since its index and objects are binary. The
 same option is accepted by `code.github` and `code.gitlab` and forwarded to the
 scan of each checkout.
-Unread oversized source files and symlinks leaving the root make a scan incomplete
-by default, as do binary content (NUL bytes that are not stray ones in text, see
-[scan semantics](../scanning.md)) in an analyzable file, non-regular
-entries named like configuration files, and directory nesting deeper than the
-walker supports; `strict_coverage` promotes their diagnostics to errors. Declared
+An incidental source or data file over `max_file_size`, a dangling symbolic
+link or one to a single file, and a non-regular entry named like analyzable
+content are coverage gaps of one entry each, charged to the
+[budget](../scanning.md#coverage-budget-and-strict-accounting). Binary content
+(NUL bytes that are not stray ones in text, see
+[scan semantics](../scanning.md)) in an analyzable file outside discounted test
+code, a link to a directory, and configuration its name selects (an MCP
+configuration, a coding-agent instruction, rule or settings file, a manifest,
+an agent card) that is over `max_file_size`, a link to a file the walk does not
+scan, or a FIFO, socket or device, make the scan incomplete at once, whatever
+the budget allows; `strict_coverage` promotes their diagnostics to errors. Declared
 oversize skip globs remain visible omissions, and directories skipped by the
 default excludes (`build`, `vendor`, `external`, …) are listed in one warning per
 root that does not affect completeness. Incomplete coverage is reserved for
@@ -541,14 +624,66 @@ also matches source files a scanned repository names freely
 analyzable file, prose and fixtures included, so while `scan_secrets` is on
 (the default) an oversize `README.md`, `CHANGELOG.md` or recorded cassette is
 a coverage gap like any other unread file:
-a key planted in it is never lost to an exit 0. With `scan_secrets: false`
+a key planted in it is never lost to an exit 0. A file is analyzable when its
+name selects an analysis: a source extension, a text configuration extension
+(`.json`, `.yaml`, `.toml`, `.ini`, `.cfg`, `.conf`, `.properties`, `.xml`,
+`.sh`, …), a `.env*` name, a dependency manifest, a name without any suffix
+(`Dockerfile`, `Makefile`, `credentials`), a file-name signature, or one of
+the tool credential files that exist only to hold a token or password:
+`.npmrc`, `.yarnrc`, `.netrc`, `_netrc`, `.pypirc`, `.git-credentials`,
+`.boto` and `.s3cfg`. Those credential files are read for the credential pass
+alone. No other analysis reads them: the provider host of a netrc `machine`
+entry is where a credential is sent, not evidence that the provider is used.
+No excerpt is cut from them either, since their lines are their secrets: a
+credential finding in one names the file and line, its count and formats,
+with an empty snippet. A credential in one is reported where a credential
+rule recognizes it, as in any other file (a provider key, an assignment such
+as `aws_secret_access_key = …`); a netrc password or a registry token that no
+rule recognizes is not reported, so the findings do not inventory the file.
+With `scan_secrets: false` or `--triage` these files are not opened. Their
+names are evidence in every mode, as any file name is: `.codex/.netrc` or
+`.claude/hooks/.netrc` establishes the coding agent whose directory holds it,
+with no content or snippet from the file.
+Wherever their syntax appears in report text (a Dockerfile that writes a
+`.netrc`, a CI script, a PowerShell `Set-Content` with `` `n `` escapes), the
+passwords, accounts and macros of netrc entries, with keywords in any case
+as curl reads them, including an entry in a comment (a comment in a string
+with `\n` escapes ends at the next one; a netrc file's own comment runs to
+the end of its line, a Windows path in it included), and Yarn 1's
+`name value` registry credentials are withheld (see
+[what is redacted](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-is-redacted),
+and [what can remain](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-can-remain)
+for the netrc forms it does not read, a commented-out token outside an
+entry among them).
+A file whose name selects no analysis (`*.jsonl`, `*.bak`,
+`*.j2`, binary and media suffixes) is never opened, so it is neither scanned
+for credentials nor counted as a coverage gap; name such files in a file-name
+signature pack to read them. A file's credential finding carries at most
+five credentials per credential format (`metadata.count` counts them, one per
+credential however many patterns or lines match it: a credential repeated on
+another line, such as one password in each service of a compose file or one
+key in each document of a manifest, is reported once, at its first line, and
+counts once). A reference to a credential
+(`api_key = settings.API_KEY`), a documentation placeholder
+(`OPENAI_API_KEY=sk-your-key-here-1a2b`, which becomes example evidence) and
+a short `sk-` value that does not look random take no place in that quota,
+so a `.env.example` of sample keys is complete. A file
+holding more credentials of one format is reported with that quota's worth of
+evidence, `metadata.secrets_limited` naming the formats, and the diagnostic
+`credential quota limit reached: more than 5 credentials matched <format>;
+credential evidence incomplete`, which makes the scan incomplete
+(`incomplete_reasons.analysis-limit`): the count is a lower bound, never a
+complete inventory that happens to stop at five. The quota is the only
+limit: every candidate match is read and judged, so no candidate cap hides
+a credential behind rejected references. With `scan_secrets: false`
 two more kinds are skipped with a warning and the scan stays complete: a
 documentation file (`.md`, `.mdc`, `.mdx`, `.txt` that is not a manifest, a
 coding-agent instruction document such as `CLAUDE.md` or `AGENTS.md`, an
 agent definition under `.claude/agents/` and the like, or a file a file-name
 signature selects), whose body the technology passes never read (warning
 `documentation is matched by file name only and credential detection is
-off`), and, when `include_tests` is false and `strict_coverage` is not set, a
+off`), and, when `include_tests` is false and the accounting is not strict
+(neither `strict_coverage` nor a gap budget of 0), a
 file under a test or fixture path (a recorded cassette under
 `tests/cassettes/`, a `pkg/fixtures/*.json`), whose evidence is discounted and
 cannot establish a deployment (warning `skipped oversize test fixture`; the
@@ -609,11 +744,12 @@ that needs more, which ordinary code does not, is treated like one that imports
 a signature's library. Any other Python module over `max_ast_nodes` (default
 50000) keeps its lexical evidence without import-bound analysis: a warning in
 test code, an error elsewhere. A call into a signature's library is analyzed
-from its first 8,192 characters in Python, JavaScript and TypeScript alike. A
-longer JavaScript or TypeScript call (a Genkit flow body, an agent with long
-instructions) keeps its construction evidence, as does the rest of the file's
-import-bound evidence, but an option past that point is unread: the scan
-records `import-bound call at line N analyzed from its first 8192
+from its first 65,536 characters in Python, JavaScript and TypeScript alike;
+agent constructions carry their instructions and tool definitions inline and
+routinely pass the 8,192 characters this limit used to be. A longer JavaScript
+or TypeScript call keeps its construction evidence, as does the rest of the
+file's import-bound evidence, but an option past that point is unread: the
+scan records `import-bound call at line N analyzed from its first 65536
 characters; options after them were not read, so coverage is incomplete` and
 is incomplete (exit 3), a warning in test code as for the other binder limits.
 
@@ -1049,6 +1185,23 @@ them. The check walks the checkout through open directory descriptors and follow
 no link; a directory nested more than 64 levels below the repository root, or an
 entry replaced while it is read, means the clone could not be checked.
 API mode reports LFS pointer files the same way.
+The partial coverage gaps of each checkout (a clone, an API snapshot or an
+offline clone) are charged to that repository's own coverage budget
+(`--max-coverage-gap`, 2% of the entries the repository examined, at most 100
+weighted entries) and judged after the last repository, as each root of a
+`code.filesystem` scan of several `paths` is: the scan is incomplete when any
+repository is over its own budget, and the verdict names it. A large clean
+repository therefore cannot dilute a small one's gaps, and an organisation of
+repositories each within its budget stays complete. The published
+`stats[].coverage` combines the repositories that recorded a gap; its
+`allowance` is the sum of theirs, `parts_over_budget` counts the repositories
+over their own budget, `tolerated_gap_entries` the entries the others
+tolerated, and its `details` list the gaps of the repositories that left the
+scan incomplete first. Blinding gaps (an LFS pointer, a gitlink,
+a directory link) fail closed without a budget, `profile: ci` declarations
+are counted apart, and with `--max-coverage-gap 0`
+([strict accounting](../scanning.md#coverage-budget-and-strict-accounting))
+any gap makes the scan incomplete.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 `clone_max_bytes` (default 256 MiB) first checks the provider's repository
@@ -1090,7 +1243,8 @@ made for it, and the other projects in the listing are still scanned.
 The group listing is ordered by project `id`, read to the end before the first
 project is cloned, and compared with the `X-Total` / `X-Total-Pages` totals GitLab
 reports (it omits them for very large groups); a mismatch makes the scan
-incomplete. LFS pointer files are reported as for GitHub.
+incomplete. LFS pointer files are reported, and checkout coverage gaps
+budgeted, as for GitHub.
 GitLab clones use the same observed `clone_max_bytes` and timeout behavior,
 address pinning and fallback as GitHub clones above. GitLab's reported size is a preflight estimate in bytes;
 it does not replace a filesystem/container disk quota.
@@ -1198,13 +1352,14 @@ same suffix in the same project and test classification (`latest.gguf` to
 `model-q4.gguf`) loses nothing, since the target is inventoried at its real
 path, and leaves coverage complete; a link to an artifact outside the root, in
 an excluded directory, under a test path or with another suffix is an unscanned
-symbolic link (coverage incomplete). Headers are an inventory aid, not a guarantee that an artifact
+symbolic link (a coverage gap of one entry). Headers are an inventory aid, not a guarantee that an artifact
 is safe to load. No deserializer, inference engine or scanned executable runs.
 
 Known limitation: a Hugging Face cache (`snapshots/<revision>/model.safetensors`
 linked to an extensionless file under `blobs/`) is not inventoried through its
 links, because inventory symlinks are never followed. Each link is reported as
-an unscanned symbolic link (coverage incomplete). A GGUF blob is still
+an unscanned symbolic link (a coverage gap of one entry; enough of them
+exhaust the budget). A GGUF blob is still
 inventoried at its `blobs/` path by its magic; a safetensors blob has no magic
 and is read as an ordinary extensionless file, so its binary content is
 reported as unreadable. Scan a materialised copy instead, such as a download

@@ -9,14 +9,18 @@ sanctioned inventory) whether it is a *shadow* agent.
 
 from __future__ import annotations
 
+import datetime as _datetime
+import decimal
 import hashlib
 import json
 import math
+import uuid
 from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
+from shadowscan.coverage import tolerated_gap_entries
 from shadowscan.utils.redaction import (
     SanitizationLimitError,
     _check_sanitization_structure,
@@ -24,6 +28,7 @@ from shadowscan.utils.redaction import (
     sanitize,
 )
 from shadowscan.utils.redaction_entropy import withhold_random_literals
+from shadowscan.utils.redaction_rules import _MAX_SANITIZATION_NODES
 
 FINDING_IDENTITY_SCHEMA = "shadowscan.finding-identity/v2"
 LEGACY_FINDING_IDENTITY_SCHEMA = "shadowscan.finding-identity/v1"
@@ -165,13 +170,14 @@ class Kind(str, Enum):
     AGENT_CONFIG = "agent-config"  # coding-agent / declarative agent configuration file
     OAUTH_GRANT = "oauth-grant"  # an OAuth grant / consented application
     SERVICE_IDENTITY = "service-identity"  # service principal, service account, M2M client
-    TOKEN = "token"  # analysed JWT / API token
+    TOKEN = "token"  # analysed JWT / API token  # noqa: S105 - a finding kind, not a credential
     GATEWAY_CALLER = "gateway-caller"  # principal calling an LLM API observed in logs
     WORKFLOW = "workflow"  # low-code flow / scenario / recipe with AI steps
     BOT_APP = "bot-app"  # SaaS bot / app installation
     CLOUD_RESOURCE = "cloud-resource"  # managed AI resource (endpoint, deployment, function...)
     IAM_GRANT = "iam-grant"  # IAM role / policy enabling LLM or agent access
-    SECRET = "secret"  # credential for an LLM provider found in code / config
+
+    SECRET = "secret"  # an LLM credential in code / config  # noqa: S105 - a finding kind, not a credential
     INFRA = "infra"  # IaC or container definitions provisioning AI agents
     AI_APP = "ai-app"  # AI assistant application or editor/browser extension installed on an endpoint
     LOCAL_MODEL = "local-model"  # model weights stored for a local runtime (Ollama, LM Studio...)
@@ -380,10 +386,17 @@ class Finding:
         engine passes it for every plugin finding: a plugin can set any id (``id=`` or
         ``dataclasses.replace`` of a finding built under another name), and only the id derived
         from the plugin's own name can never be a built-in finding's.
+
+        A connector name or id that is already the very text it would be set to is left in
+        place, so a finding that already carries them stays verified clean. Anything else,
+        including a ``str`` subclass that compares equal, is replaced with the plain text.
         """
         if self.connector != connector or derive_id:
-            self.connector = connector
-            self.id = self.compute_id()
+            if type(self.connector) is not str or self.connector != connector:
+                self.connector = connector
+            derived = self.compute_id()
+            if type(self.id) is not str or self.id != derived:
+                self.id = derived
 
     def sanitize(self, *, credential_context: Any = None) -> None:
         """Remove credentials from every persisted/reportable field in place.
@@ -563,6 +576,12 @@ class Finding:
                 raise ValueError(f"finding {name} is required")
         d = {name: d[name] for name in _FINDING_FIELDS if name in d}
         _validate_shapes(d)
+        # The add_* methods keep these lists free of repeats; a report, cache
+        # entry or plugin result is canonicalized the same way at import, so a
+        # repeated tag cannot count twice in risk scoring, merging or diffs.
+        for name in _TEXT_LIST_FIELDS:
+            if name in d:
+                d[name] = list(dict.fromkeys(d[name]))
         if "metadata" in d:
             d["metadata"] = {k: v for k, v in d["metadata"].items() if k not in DERIVED_METADATA_KEYS}
         # Reading an old report preserves its identity rather than silently
@@ -572,35 +591,7 @@ class Finding:
         d["kind"] = Kind(d["kind"])
         d["likelihood"] = Likelihood(d.get("likelihood", "weak"))
         _validate_number(d.get("confidence", 0.0), "confidence", minimum=0, maximum=1)
-        risk = d.get("risk")
-        if risk is None:
-            risk = {}
-        if not isinstance(risk, dict):
-            raise ValueError("finding risk must be an object")
-        _validate_number(risk.get("score", 0), "risk score", minimum=0, maximum=100)
-        factors = risk.get("factors", [])
-        if not isinstance(factors, list) or any(not isinstance(factor, dict) for factor in factors):
-            raise ValueError("finding risk factors must be objects")
-        for factor in factors:
-            if not isinstance(factor.get("id"), str) or not isinstance(factor.get("description"), str):
-                raise ValueError("finding risk factors must have a string id and description")
-            _validate_number(factor.get("weight"), "risk factor weight")
-        _validate_number(risk.get("danger_score", 0), "risk danger score", minimum=0, maximum=100)
-        d["risk"] = Risk(
-            score=risk.get("score", 0),
-            level=RiskLevel(risk.get("level", "info")),
-            danger_score=risk.get("danger_score", 0),
-            factors=[
-                RiskFactor(
-                    **{
-                        name: value
-                        for name, value in factor.items()
-                        if name in {"id", "description", "weight"}
-                    }
-                )
-                for factor in factors
-            ],
-        )
+        d["risk"] = _risk_from_dict(d.get("risk"))
         evidence = d.get("evidence", [])
         if not isinstance(evidence, list) or any(not isinstance(item, dict) for item in evidence):
             raise ValueError("finding evidence must be objects")
@@ -629,6 +620,35 @@ class Finding:
         return cls(**d)
 
 
+_RISK_FACTOR_FIELDS = frozenset({"id", "description", "weight"})
+
+
+def _risk_from_dict(risk: Any) -> Risk:
+    """A finding's imported ``risk`` object, validated; an absent one is the zero risk."""
+    if risk is None:
+        risk = {}
+    if not isinstance(risk, dict):
+        raise ValueError("finding risk must be an object")
+    _validate_number(risk.get("score", 0), "risk score", minimum=0, maximum=100)
+    factors = risk.get("factors", [])
+    if not isinstance(factors, list) or any(not isinstance(factor, dict) for factor in factors):
+        raise ValueError("finding risk factors must be objects")
+    for factor in factors:
+        if not isinstance(factor.get("id"), str) or not isinstance(factor.get("description"), str):
+            raise ValueError("finding risk factors must have a string id and description")
+        _validate_number(factor.get("weight"), "risk factor weight")
+    _validate_number(risk.get("danger_score", 0), "risk danger score", minimum=0, maximum=100)
+    return Risk(
+        score=risk.get("score", 0),
+        level=RiskLevel(risk.get("level", "info")),
+        danger_score=risk.get("danger_score", 0),
+        factors=[
+            RiskFactor(**{name: value for name, value in factor.items() if name in _RISK_FACTOR_FIELDS})
+            for factor in factors
+        ],
+    )
+
+
 # Public model fields, in declaration order. The verified-clean marker is
 # private state: never accepted from a report, serialized, or sanitized.
 _EVIDENCE_FIELDS = tuple(attr.name for attr in fields(Evidence) if attr.name != "_clean_digest")
@@ -636,6 +656,167 @@ _FINDING_FIELDS = tuple(attr.name for attr in fields(Finding) if attr.name != "_
 _FINDING_SCALAR_FIELDS = tuple(
     name for name in _FINDING_FIELDS if name not in {"surface", "kind", "likelihood", "risk", "evidence"}
 )
+
+# The leaf values a sanitize() pass leaves in a finding: text, numbers, None and the
+# standard scalars it keeps (see shadowscan.utils.redaction). Each is immutable, so a
+# detached copy shares it. Matched by the identity of the exact type, which neither a
+# subclass nor a class with its own metaclass can imitate, and which runs no code of theirs.
+_DETACHED_LEAF_TYPES = frozenset(
+    id(kind)
+    for kind in (
+        type(None),
+        str,
+        int,
+        float,
+        bool,
+        _datetime.date,
+        _datetime.datetime,
+        _datetime.time,
+        _datetime.timedelta,
+        decimal.Decimal,
+        uuid.UUID,
+    )
+)
+# The sanitizer's nesting limit (see _check_sanitization_structure).
+_DETACHED_MAX_DEPTH = 64
+_EVIDENCE_TEXT = ("location", "snippet", "signature")
+
+
+class _Detacher:
+    """Copy the plain data of one finding, within the sanitizer's own size and nesting limits.
+
+    Containers are exact dicts with text keys, lists and tuples; each is read once
+    with a single C-level copy, so a holder appending meanwhile is seen before or
+    after its change. Every occurrence of an aliased container counts, as in
+    ``_check_sanitization_structure``, so an alias graph cannot cost more here than
+    sanitizing it would.
+    """
+
+    def __init__(self) -> None:
+        self.nodes = 0
+
+    def copy(self, value: Any, depth: int = 0) -> Any:
+        self.nodes += 1
+        if self.nodes > _MAX_SANITIZATION_NODES or depth > _DETACHED_MAX_DEPTH:
+            raise SanitizationLimitError("finding exceeds the sanitizer's limits; not copied")
+        kind = type(value)
+        if id(kind) in _DETACHED_LEAF_TYPES:
+            return value
+        if kind is dict:
+            copied = {}
+            for key, child in list(value.items()):
+                if type(key) is not str:
+                    raise ValueError("finding holds a mapping key that is not text")
+                copied[key] = self.copy(child, depth + 1)
+            return copied
+        if kind is list or kind is tuple:
+            children = [self.copy(child, depth + 1) for child in list(value)]
+            return children if kind is list else tuple(children)
+        raise ValueError("finding holds a value that is not plain data")
+
+    def text(self, value: Any, name: str) -> str:
+        copied = self.copy(value)
+        if type(copied) is not str:
+            raise ValueError(f"finding {name} must be text")
+        return copied
+
+
+def _detached_marker(marker: Any) -> _CleanState | None:
+    """A source's verified-clean marker when it has the shape ``sanitize()`` writes, else none.
+
+    It is only ever compared with the digest of the copy's own content, so a marker
+    that no longer matches costs a full pass and is never trusted.
+    """
+    if type(marker) is tuple and len(marker) == 2 and type(marker[0]) is bytes and type(marker[1]) is tuple:
+        return marker
+    return None
+
+
+def _detached_evidence(evidence: Any, detacher: _Detacher) -> list[Evidence]:
+    if type(evidence) is not list:
+        raise ValueError("finding evidence must be a list")
+    copies = []
+    for item in list(evidence):
+        if type(item) is not Evidence:
+            raise ValueError("finding evidence must be Evidence objects")
+        values = {name: detacher.copy(getattr(item, name)) for name in _EVIDENCE_FIELDS}
+        # The shapes Finding.from_dict accepts for imported evidence.
+        if type(values["signal"]) is not str or type(values["description"]) is not str:
+            raise ValueError("finding evidence must have a string signal and description")
+        if any(values[name] is not None and type(values[name]) is not str for name in _EVIDENCE_TEXT):
+            raise ValueError("finding evidence location, snippet and signature must be text or null")
+        if type(values["attributes"]) is not dict:
+            raise ValueError("finding evidence attributes must be an object")
+        _validate_number(values["weight"], "evidence weight", minimum=0, maximum=1)
+        copy = object.__new__(Evidence)
+        for name, value in values.items():
+            object.__setattr__(copy, name, value)
+        object.__setattr__(copy, "_clean_digest", _detached_marker(item._clean_digest))
+        copies.append(copy)
+    return copies
+
+
+def _detached_risk(risk: Any, detacher: _Detacher) -> Risk:
+    if type(risk) is not Risk or type(risk.level) is not RiskLevel or type(risk.factors) is not list:
+        raise ValueError("finding risk must be a Risk")
+    factors = []
+    for factor in list(risk.factors):
+        if type(factor) is not RiskFactor:
+            raise ValueError("finding risk factors must be RiskFactor objects")
+        weight = detacher.copy(factor.weight)
+        _validate_number(weight, "risk factor weight")
+        factors.append(
+            RiskFactor(
+                id=detacher.text(factor.id, "risk factor id"),
+                description=detacher.text(factor.description, "risk factor description"),
+                weight=weight,
+            )
+        )
+    score, danger = detacher.copy(risk.score), detacher.copy(risk.danger_score)
+    _validate_number(score, "risk score", minimum=0, maximum=100)
+    _validate_number(danger, "risk danger score", minimum=0, maximum=100)
+    return Risk(score=score, level=risk.level, factors=factors, danger_score=danger)
+
+
+def detached_copy(finding: Any) -> Finding:
+    """A copy of ``finding`` that shares no mutable state with it, safe while another thread holds it.
+
+    Only what a ``sanitize()`` pass leaves is read: exact ``Finding``, ``Evidence``,
+    ``Risk`` and ``RiskFactor`` objects, the model's enums, and dicts with text keys,
+    lists, tuples, text, numbers, None and the standard scalars the sanitizer keeps.
+    No code that a value's own class defines runs, so the holder can neither change
+    the copy nor act through it. Anything else raises ``ValueError``, as do the field
+    shapes ``from_dict`` refuses; nesting deeper, or an alias graph larger, than the
+    sanitizer accepts raises ``SanitizationLimitError``, and a container the holder
+    resizes while it is read can raise ``RuntimeError``.
+
+    The copy keeps the source's verified-clean marker. Its next ``sanitize()`` checks
+    that marker against the copy's own content, so a finding nobody changed since
+    its last full pass costs a digest, not another pass, while a changed one is
+    sanitized in full. Callers sanitize the copy before reporting it.
+    """
+    if type(finding) is not Finding:
+        raise ValueError("not a Finding")
+    detacher = _Detacher()
+    values = {name: detacher.copy(getattr(finding, name)) for name in _FINDING_SCALAR_FIELDS}
+    _validate_shapes(values)
+    for name in ("connector", "title", "resource", "resource_type"):
+        if type(values[name]) is not str or not values[name].strip():
+            raise ValueError(f"finding {name} is required")
+    _validate_number(values["confidence"], "confidence", minimum=0, maximum=1)
+    enums = {"surface": finding.surface, "kind": finding.kind, "likelihood": finding.likelihood}
+    if type(enums["surface"]) is not Surface or type(enums["kind"]) is not Kind:
+        raise ValueError("finding surface and kind must be the model's")
+    if type(enums["likelihood"]) is not Likelihood:
+        raise ValueError("finding likelihood must be the model's")
+    values.update(enums)
+    values["evidence"] = _detached_evidence(finding.evidence, detacher)
+    values["risk"] = _detached_risk(finding.risk, detacher)
+    copy = object.__new__(Finding)
+    for name, value in values.items():
+        object.__setattr__(copy, name, value)
+    object.__setattr__(copy, "_clean_digest", _detached_marker(finding._clean_digest))
+    return copy
 
 
 @dataclass(slots=True)
@@ -651,6 +832,29 @@ class ScanStats:
     skip_reason: str | None = None
     cached: bool = False
     incomplete: bool = False
+    #: Unread content this connector accounted for, whether or not it changed
+    #: ``incomplete``. Published so that a tolerated gap is never invisible.
+    #: See :mod:`shadowscan.coverage`.
+    coverage: dict[str, Any] | None = None
+    # Why the scan is incomplete: a count per reason category (see
+    # ``shadowscan.connectors.base.INCOMPLETE_REASONS``) of the diagnostics that
+    # left it so. Empty when the scan is complete; the diagnostics themselves
+    # are in ``errors`` and ``warnings``.
+    incomplete_reasons: dict[str, int] = field(default_factory=dict)
+    # Coverage omissions a profile declared in advance (warnings that leave the
+    # scan complete), so a complete scan under a profile is never read as a
+    # scan that read everything.
+    declared_omissions: int = 0
+    #: Where those omissions lie, one path per omission in the order declared,
+    #: at most ``shadowscan.coverage.MAX_DECLARED_PATHS``: a count above the
+    #: list's length leaves the rest unlocated, so ``shadowscan diff`` holds
+    #: back every missing project finding of the connector.
+    declared_paths: list[str] = field(default_factory=list)
+    #: The connector this record accounts for, as its findings name it
+    #: (``Finding.connector``). ``connector`` is the configured id, which is
+    #: the label when one is set, so only this joins findings to their
+    #: record. None for the engine's own records.
+    name: str | None = None
 
 
 @dataclass(slots=True)
@@ -693,6 +897,10 @@ class ScanResult:
                 providers[p] = providers.get(p, 0) + 1
             if f.shadow:
                 shadow += 1
+        reasons: dict[str, int] = {}
+        for s in self.stats:
+            for reason, count in s.incomplete_reasons.items():
+                reasons[reason] = reasons.get(reason, 0) + count
         return {
             "complete": self.complete,
             "status": "complete" if self.complete else "incomplete",
@@ -704,6 +912,14 @@ class ScanResult:
             "frameworks": dict(sorted(frameworks.items(), key=lambda kv: -kv[1])),
             "model_providers": dict(sorted(providers.items(), key=lambda kv: -kv[1])),
             "errors": sum(len(s.errors) for s in self.stats),
+            # Why an incomplete scan is incomplete, by reason category, most frequent first. A
+            # timed-out connector, and one left unstarted by timed-out workers, counts `timeout`;
+            # one that failed or was skipped before it recorded a diagnostic has no entry.
+            "incomplete_reasons": dict(sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))),
+            "declared_omissions": sum(s.declared_omissions for s in self.stats),
+            # Entries left unread that a run's coverage budget tolerated: a complete
+            # scan that skipped content says so, as a profile scan's omissions do.
+            "tolerated_gaps": sum(tolerated_gap_entries(s.coverage) for s in self.stats),
         }
 
     def to_dict(self) -> dict[str, Any]:

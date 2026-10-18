@@ -1,5 +1,8 @@
 """JavaScript and TypeScript source ranges: JSX text is masked, TSX generics are not JSX, and a slash is
 a regular expression or a division exactly where the language says it is."""
+# Timing guards here measure CPU time, not wall time: they bound algorithmic
+# cost, and wall time additionally measures whatever else the machine is doing,
+# which failed honest code under a parallel run. See tests/perf.py.
 
 from __future__ import annotations
 
@@ -448,6 +451,17 @@ def test_string_line_continuation_over_crlf_does_not_hide_following_code() -> No
     assert _masked(source) == ['"abc\\\r\ndef"', '"openai"']
 
 
+@pytest.mark.parametrize("quote", ['"', "'"])
+@pytest.mark.parametrize("prefix", ["", "const s = ", "x = f(a, "])
+def test_string_ending_in_a_backslash_does_not_run_past_the_end_of_the_text(prefix: str, quote: str) -> None:
+    # The backslash steps over the next character, which is not there. The span used to end one past
+    # the text (found by the coverage-guided fuzzing in #259): every reader of the spans
+    # may rely on them lying inside it.
+    source = f"{prefix}{quote}abc\\"
+    ignored, _ = noncode_ranges(source, "javascript", ".js")
+    assert ignored == [(len(prefix), len(source))]
+
+
 @pytest.mark.parametrize("terminator", ["\r", LS, PS], ids=["cr", "line-separator", "paragraph-separator"])
 def test_line_comment_does_not_hide_the_code_of_a_file_node_runs(tmp_path: Path, terminator: str) -> None:
     source = f"// note{terminator}" + EVASION_PAYLOAD.replace("; ", f";{terminator}")
@@ -484,22 +498,22 @@ HOSTILE = {
 
 @pytest.mark.parametrize("source, outcome", HOSTILE.values(), ids=HOSTILE.keys())
 def test_hostile_jsx_ends_quickly_as_a_limit_or_an_incomplete_lexing(source: str, outcome: str) -> None:
-    started = time.perf_counter()
+    started = time.process_time()
     if outcome == LIMIT:
         with pytest.raises(MatchTimeoutError, match="look-ahead budget"):
             noncode_ranges(source, "javascript", ".tsx", jsx=True)
     else:
         _, ambiguous = noncode_ranges(source, "javascript", ".tsx", jsx=True)
         assert ambiguous is (outcome == AMBIGUOUS)
-    assert time.perf_counter() - started < 5
+    assert time.process_time() - started < 5
 
 
 def test_hostile_jsx_file_is_an_incomplete_scan_and_keeps_the_other_findings(tmp_path: Path) -> None:
     (tmp_path / "evil.tsx").write_text("<A>(" * 62_500)
     (tmp_path / "ok.js").write_text(EVASION_PAYLOAD)
-    started = time.perf_counter()
+    started = time.process_time()
     result = CliRunner().invoke(main, ["code", str(tmp_path), "--format", "json"])
-    assert time.perf_counter() - started < 20
+    assert time.process_time() - started < 20
     assert result.exit_code == 3, result.output
     report = json.loads(result.stdout)
     assert not report["summary"]["complete"]
@@ -551,9 +565,9 @@ def test_large_realistic_tsx_file_lexes_fast_and_unambiguously() -> None:
         parts.append(_realistic_component(len(parts)))
         size += len(parts[-1])
     source = "\n".join(parts)
-    started = time.perf_counter()
+    started = time.process_time()
     ignored, ambiguous = noncode_ranges(source, "javascript", ".tsx", jsx=True)
-    assert time.perf_counter() - started < 5
+    assert time.process_time() - started < 5
     assert not ambiguous
     assert not any(start <= source.index("useState<string>") < end for start, end in ignored)
     assert any(start <= source.index("pick one of") < end for start, end in ignored)
@@ -640,9 +654,9 @@ def test_regex_literal_beyond_the_bound_is_still_ambiguous_and_masks_only_its_li
 def test_unterminated_long_regex_scan_is_linear_and_stays_on_its_line() -> None:
     # No closing slash anywhere: one failed scan per line, and the rest of that line is skipped.
     source = ("x = /" + "a" * 1_000 + "\n") * 2_000 + "x = /" + "a" * 600_000
-    started = time.perf_counter()
+    started = time.process_time()
     ignored, ambiguous = noncode_ranges(source, "javascript", ".js")
-    assert time.perf_counter() - started < 5
+    assert time.process_time() - started < 5
     assert ambiguous
     assert len(ignored) == 2_001
 

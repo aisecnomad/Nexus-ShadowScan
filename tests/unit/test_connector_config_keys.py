@@ -29,7 +29,7 @@ PACKAGE = Path(shadowscan.connectors.__file__).resolve().parent
 CONNECTORS = sorted(builtin_connector_names())
 KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 # Injected by the engine for its own bookkeeping; never user configuration.
-ENGINE_PRIVATE_KEYS = {"_dump_path", "_shared_label_roots", "_root_id"}
+ENGINE_PRIVATE_KEYS = {"_dump_path", "_shared_label_roots", "_root_id", "_max_coverage_gap"}
 # Consumed by ConnectorContext (input_path) rather than by the connector class.
 CONTEXT_KEYS = {"input"}
 # Offline input is a code checkout, bounded by the scanner's own limits.

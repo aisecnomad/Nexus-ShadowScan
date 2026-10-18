@@ -37,7 +37,7 @@ as your first contribution.
 
 ## Getting started
 
-Use Python 3.11, 3.12, or 3.13 and Git on a POSIX system. Linux and macOS are
+Use Python 3.11, 3.12, 3.13, or 3.14 and Git on a POSIX system. Linux and macOS are
 CI-validated development and test targets; Linux x86_64 is the only validated
 deployment target for the production runtime lock. On Windows use WSL,
 because the scanner's confined file reader needs `O_NOFOLLOW`/`dir_fd` and the
@@ -66,7 +66,7 @@ Run `make help` for a quick reference of all development commands.
 
 | Path | What lives there |
 |---|---|
-| [`shadowscan/`](shadowscan/) | The scanner package: CLI (`cli.py`), engine, finding model, risk and autonomy scoring, inventory reconciliation, reporters and redaction. [docs/architecture.md](docs/architecture.md#package-layout) describes each module's responsibility. |
+| [`shadowscan/`](shadowscan/) | The scanner package: CLI (`cli/`), engine, finding model, risk and autonomy scoring, inventory reconciliation, reporters and redaction. [docs/architecture.md](docs/architecture.md#package-layout) describes each module's responsibility. |
 | [`shadowscan/connectors/`](shadowscan/connectors/) | One subpackage per discovery surface (`code`, `identity`, `gateway`, `lowcode`, `saas`, `cloud`, `endpoint`, `network`, `runtime`); each connector implements `collect()` and `analyze()`. |
 | [`shadowscan/signatures/data/`](shadowscan/signatures/data/), [`shadowscan/mappings/data/`](shadowscan/mappings/data/) | YAML signature packs and the threat and control mapping catalogs. |
 | [`tests/`](tests/) | The pytest suite. Unit tests sit in [`tests/unit/`](tests/unit/), named after the module they exercise; offline, sanitized fixtures sit under [`tests/fixtures/`](tests/fixtures/); `tests/test_repository_policy.py` and `tests/test_repository_consistency.py` are the `make policy` gates. Other top-level `tests/test_*.py` modules test repository tooling: release, governance, evaluation, canaries and benchmark entry points. Find a module's tests with `git grep -l shadowscan.connectors.identity.okta tests`. |
@@ -86,13 +86,13 @@ Dependabot and the tests read them from there:
 | `Makefile` | Every development command; `make help` lists them by section |
 | `requirements.lock` | Hash-locked runtime and cloud SDK set for deployments, CI and the image |
 | `requirements-build.lock` | Hash-locked build backend for `--no-build-isolation` builds |
-| `requirements-ci.lock` | Hash-locked development and test toolchain (CPython 3.11 to 3.13) |
+| `requirements-ci.lock` | Hash-locked development and test toolchain (CPython 3.11 to 3.14) |
 | `requirements-ci-constraints.txt` | Reviewed inputs that `requirements-ci.lock` is generated from; never installed directly |
 | `requirements-docs.lock` | Hash-locked MkDocs toolchain for `make docs` and the Docs workflow |
 | `mkdocs.yml` | Documentation site configuration and navigation |
 | `Dockerfile`, `.dockerignore` | The worker image and its build-context allow-list |
 | `agent-card.yaml` | Sample Agent Capability Card used by the offline demo, the quick start and the image |
-| `CHANGELOG.md`, `RELEASE_NOTES.md` | Engineering change log, and the operator summary of what changes on upgrade |
+| `CHANGELOG.md`, `docs/engineering-log.md`, `RELEASE_NOTES.md` | One line per change, the detailed engineering log, and the operator summary of what changes on upgrade |
 | `AGENTS.md` | Rules for coding agents working in this repository |
 | `CITATION.cff`, `NOTICE`, `LICENSE`, `CODEOWNERS` | Citation metadata, attribution, licence and review ownership |
 
@@ -119,7 +119,7 @@ changes only that module.
 Existing Make targets provide the next steps:
 
 ```bash
-make check-fast      # lint, format, types, validators, secrets and policy; no tests
+make check-fast      # lint, format, types, validators, OCSF, complexity, secrets and policy; no tests
 make test-fast       # full test suite without coverage, stop at first failure
 make test            # full suite with line and branch coverage and the overall floor
 make coverage-gate   # connector coverage; run after make test
@@ -169,6 +169,8 @@ exact supported Python matrix and dependency pins.
 | Connectors | `make coverage-gate` (after tests) | ≥ 75% for every module under `shadowscan/connectors/`, statements and branches |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
 | Mappings | `python -m shadowscan.mappings.validate` | All valid |
+| OCSF schema | `python -m tools.ocsf_schema --check` | The vendored OCSF requirements match the version the reporter emits |
+| Complexity | `python -m tools.complexity_gate` | No function new above cyclomatic complexity 15, none above its allowance in `tools/complexity_baseline.json` |
 | Secrets | `make secrets` | Every tracked file is scanned; only exact reviewed synthetic-value approvals are accepted |
 | Audit | `make audit` | No known vulnerabilities in the environment or any hash lock |
 | Repository policy | `make policy` | Action pins, permissions, links, anchors, Makefile and hook parity with CI |
@@ -181,11 +183,21 @@ suite untraced on the others; `pyproject.toml` enables branch coverage.
 Ruff enforces a 110-column line length outside `tests/`,
 `tools/benchmark/*_cases.py` and `benchmarks/*/corpus.py`, flags loop
 variables captured by closures (B023), flags a broad `except` that does not
-re-raise (BLE), and rejects `noqa` directives that suppress nothing (RUF100).
-Suppress an intentional broad `except` with `# noqa: BLE001 - <reason>`; a
-repository test requires the reason. Mypy requires annotated definitions
+re-raise (BLE), and rejects `noqa` directives that suppress nothing (RUF100)
+or name no codes (PGH004). Suppress an intentional broad `except` with
+`# noqa: BLE001 - <reason>`; a repository test requires the reason. Mypy requires annotated definitions
 (`disallow_untyped_defs`) and reports unused `type: ignore` comments.
 `pyproject.toml` holds the complete rule sets.
+
+The complexity gate (`make complexity`) measures ruff's C901 against a target
+of 15 and compares the result with `tools/complexity_baseline.json`, which
+records the debt that predates the gate. Each allowance is keyed by the file
+and the function's qualified name (`path::Class.method`, a nested function
+under the function that encloses it), so a method never inherits the allowance
+of another one with its name. A function the gate reports is to be split.
+`python -m tools.complexity_gate --update` records only decreases and
+removals; an increase takes `--update --allow-increase` and shows in the
+baseline's diff for review.
 
 The same gates as individual commands:
 
@@ -193,6 +205,8 @@ The same gates as individual commands:
 make install
 python -m shadowscan.signatures.validate
 python -m shadowscan.mappings.validate
+python -m tools.ocsf_schema --check
+python -m tools.complexity_gate
 make secrets
 ruff check shadowscan tests tools benchmarks
 ruff format --check shadowscan tests tools benchmarks
@@ -251,13 +265,18 @@ repository contains no secrets.
    changing the approved commit. The requirements below apply to the final commit.
 
 - Target `main`. Do not push reviewed security changes directly.
-- Keep findings fail-closed: a limit, malformed export, or denied API must mark
-  the scan incomplete (exit 3) rather than look empty.
+- Keep findings fail-closed: a malformed export, a denied API, an expired
+  deadline or any limit whose remainder the scanner cannot count must mark the
+  scan incomplete (exit 3) rather than look empty. A gap it *can* count --
+  one unreadable entry, one file over a size cap -- goes through
+  `ctx.coverage_gap()`, which charges it to the budget and reports it either
+  way; see `shadowscan/coverage.py` for which is which.
 - Do not log raw credentials, JWTs, or unsanitized connector configuration.
 - Pin GitHub Actions by full commit SHA. Do not leave `persist-credentials`
   enabled on checkouts that do not need to push.
-- Update `CHANGELOG.md` under Unreleased and `docs/production.md` when a change
-  affects rollout, finding identity, or credential policy.
+- Add a detailed entry under Unreleased in `docs/engineering-log.md`, name it in
+  a line under Unreleased in `CHANGELOG.md`, and update `docs/production.md`
+  when a change affects rollout, finding identity, or credential policy.
 - Include regression tests for bug fixes.
 - Use the PR template checklist; it covers the main gates. `make check` runs
   every local gate; CI also builds the documentation, audits each lock file and

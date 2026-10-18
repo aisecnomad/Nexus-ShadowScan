@@ -9,7 +9,7 @@ description = "Nexus ShadowScan: discover shadow AI agents across code, identity
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11,<3.15"
 authors = [{ name = "Nexus ShadowScan contributors" }]
 keywords = ["ai-agents", "shadow-ai", "security", "discovery", "langchain", "mcp", "agentic"]
 classifiers = [
@@ -22,6 +22,7 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Security",
   "Topic :: System :: Systems Administration",
   "Typing :: Typed",
@@ -96,17 +97,30 @@ exclude = [
 # BLE: a broad `except` that does not re-raise is flagged; an intentional one
 # carries `# noqa: BLE001 - <reason>` (tests/test_repository_consistency.py
 # requires the reason). RUF100: a `noqa` that suppresses nothing is flagged.
-select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "BLE", "RUF100"]
+# PGH004: a `noqa` must name its codes; a blanket one would silence every
+# rule on its line, or in its file, without the reason the tests require.
+# S (flake8-bandit): a security scanner should be held to the rule set it
+# would apply to anything it scans. Every suppression in the package carries
+# a reason, so each is a reviewed decision rather than an unexamined gap, and
+# a new occurrence fails CI. S101 is off because `assert` is how the tests
+# assert; the rest are scoped to the shipped package below, since test and
+# tooling code legitimately holds fake credentials, runs the CLI as a
+# subprocess, writes to temp paths and uses `random` for fixture data.
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "BLE", "S", "RUF100", "PGH004"]
 # Deliberate ignores, not debt. SIM102/SIM103/SIM105/SIM108 and C408 only
 # propose equivalent rewrites (collapsed guards, `return cond`,
 # contextlib.suppress, ternaries, dict literals); the longer forms stay.
 # UP042 is not behaviour-preserving: StrEnum changes what `str()` and
 # f-strings yield for the models.py enums, which serialise via `.value`.
-ignore = ["SIM108", "SIM102", "SIM103", "C408", "SIM105", "UP042"]
+ignore = ["SIM108", "SIM102", "SIM103", "C408", "SIM105", "UP042", "S101"]
 
 [tool.ruff.lint.per-file-ignores]
 # Tests hold long literal fixtures (source snippets, tokens, JSON records).
-"tests/**" = ["E501"]
+# The bandit rules target shipped code: a test's hard-coded token is the
+# point of the test, and the harnesses run the CLI as a subprocess by design.
+"tests/**" = ["E501", "S"]
+"tools/**" = ["S"]
+"benchmarks/**" = ["S"]
 # Benchmark case templates embed source files from other languages verbatim.
 "tools/benchmark/*_cases.py" = ["E501"]
 "benchmarks/*/corpus.py" = ["E501"]

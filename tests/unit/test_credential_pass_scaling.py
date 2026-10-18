@@ -64,6 +64,9 @@ def _best_time(source: str, repeats: int = 3) -> float:
         "--user=a://",
         "--api-key=$A#",  # a reference before the next option
         "-u=%K%:",
+        "apiKey: v, // a8f3c91d ",  # a comment after a credential's value, on one long line
+        'apiKey = "\\',  # escaped quotes before any comment
+        "token = v; #",
     ],
 )
 def test_context_named_credential_passes_scale_linearly(unit):
@@ -238,6 +241,72 @@ def test_a_word_of_many_options_is_withheld_past_the_limit():
     assert secret not in safe and safe.endswith(f"{REDACTED} --model gpt-4o")
     assert safe.count("--key=#") == redaction._CLI_WORD_OPTIONS
     assert sanitize_text(safe) == safe
+
+
+# The markup tag pattern before its quantifiers were made possessive. Name
+# characters could belong to the tag or to the attributes, so an unterminated
+# tag was retried at every split of its name run.
+_BACKTRACKING_XML_TAG = re.compile(
+    r"<(?P<tag>[A-Za-z_][\w.:-]*)(?P<attributes>(?:[^<>\"']|\"[^\"<>\r\n]*\"|'[^'<>\r\n]*')*)>"
+)
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        lambda n: "<a" + "a" * n,  # one tag name that never closes
+        lambda n: "<a " + "a" * n,  # an attribute run that never closes
+        lambda n: "<a" + " b=1" * (n // 4),
+        lambda n: "<password>" + "<a" + "a" * n,  # after a sensitive element
+    ],
+)
+def test_an_unterminated_markup_tag_is_matched_in_linear_time(shape):
+    from shadowscan.utils.redaction_markup import _XML_TAG
+
+    def best(source: str) -> float:
+        fastest = float("inf")
+        for _ in range(3):
+            started = time.perf_counter()
+            list(_XML_TAG.finditer(source))
+            fastest = min(fastest, time.perf_counter() - started)
+        return fastest
+
+    small, large = best(shape(2000)), best(shape(8000))
+    # Four times the input may cost at most ten times the time; the
+    # backtracking pattern cost sixteen times (1.6 s at 8,000 characters).
+    assert large < max(small, 0.02) * 10, (small, large)
+
+
+def test_an_unterminated_markup_tag_keeps_the_whole_pass_linear():
+    # stdlib re runs in C and holds the GIL, so no connector or job deadline
+    # interrupts a slow pattern: the pass itself has to stay linear.
+    small = _best_time("import openai\n# <a" + "a" * 2000 + "\n")
+    large = _best_time("import openai\n# <a" + "a" * 8000 + "\n")
+    assert large < max(small, 0.02) * 10, (small, large)
+
+
+def test_possessive_markup_tag_matches_what_the_backtracking_pattern_matched():
+    from shadowscan.utils.redaction_markup import _XML_TAG
+
+    def matches(pattern: re.Pattern[str], text: str) -> list[tuple[tuple[int, int], dict[str, str | None]]]:
+        return [(match.span(), match.groupdict()) for match in pattern.finditer(text)]
+
+    documents = [
+        "<password>v</password>",
+        '<add key="OpenAIApiKey" value="v"/>',
+        "<entry key='api.key'>v</entry>",
+        '<setting name="ApiKey"><value>v</value></setting>',
+        '<a b="x>y">',
+        '<a b="x\ny">',
+        "<ns:tag a=1 b=\"2\" c='3'/>",
+    ]
+    for document in documents:
+        assert matches(_XML_TAG, document) == matches(_BACKTRACKING_XML_TAG, document), document
+    rng = random.Random(20261017)
+    pieces = ["<", ">", '"', "'", "a", "B", "_", "1", ".", ":", "-", " ", "=", "/", "\n", "\r", "é"]
+    for _ in range(20_000):
+        text = "".join(rng.choice(pieces) for _ in range(rng.randint(0, 24)))
+        assert matches(_XML_TAG, text) == matches(_BACKTRACKING_XML_TAG, text), repr(text)
 
 
 def test_linear_record_and_markup_passes_still_withhold_values():

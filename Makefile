@@ -23,7 +23,7 @@ install-hooks: install-dev ## Install pinned pre-commit hooks
 # requires-python).
 .PHONY: ensure-python
 ensure-python:
-	@python -c 'import sys; sys.exit(None if (3, 11) <= sys.version_info[:2] < (3, 14) else "ShadowScan development needs CPython 3.11 to 3.13; this python is " + sys.version.split()[0] + ". Create a virtual environment with a supported interpreter, for example: python3.12 -m venv .venv")'
+	@python -c 'import sys; sys.exit(None if (3, 11) <= sys.version_info[:2] < (3, 15) else "ShadowScan development needs CPython 3.11 to 3.14; this python is " + sys.version.split()[0] + ". Create a virtual environment with a supported interpreter, for example: python3.12 -m venv .venv")'
 install install-dev: ensure-python
 
 # --- Quality ---------------------------------------------------------------
@@ -49,8 +49,8 @@ test: ## Run test suite with coverage
 	python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
 
 .PHONY: test-fast
-test-fast: ## Run tests without coverage (faster iteration)
-	python -m pytest -q -x
+test-fast: ## Run tests without coverage or the slow timed sweeps (faster iteration)
+	python -m pytest -q -x -m "not slow"
 
 .PHONY: test-parallel
 test-parallel: ## Run tests in parallel with pytest-xdist
@@ -71,6 +71,14 @@ signatures: ## Validate all signature schemas and regexes
 .PHONY: mappings
 mappings: ## Validate the threat and control mapping catalogs
 	python -m shadowscan.mappings.validate
+
+.PHONY: ocsf-schema
+ocsf-schema: ## Check the vendored OCSF requirements match the reporter's version, as CI does
+	python -m tools.ocsf_schema --check
+
+.PHONY: complexity
+complexity: ## Fail on a function new above complexity 15 or above its baseline allowance, as CI does
+	python -m tools.complexity_gate
 
 .PHONY: secrets
 secrets: ## Fail on hardcoded credentials in tracked files, as CI does
@@ -102,7 +110,7 @@ evaluate: ## Run the bundled detection regression corpora (reports go to a tempo
 
 .PHONY: check
 .NOTPARALLEL: check
-check: lint format-check typecheck signatures mappings secrets audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
+check: lint format-check typecheck signatures mappings ocsf-schema complexity secrets audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
 	@echo "All checks passed."
 
 .PHONY: policy
@@ -110,7 +118,7 @@ policy: ## Check repository policy: action pins, permissions, links, anchors, Ma
 	python -m pytest -q tests/test_repository_policy.py tests/test_repository_consistency.py
 
 .PHONY: check-fast
-check-fast: lint format-check typecheck signatures mappings secrets policy ## Offline subset of check for a quick pre-push run (no tests, audit or evaluation)
+check-fast: lint format-check typecheck signatures mappings ocsf-schema complexity secrets policy ## Offline subset of check for a quick pre-push run (no tests, audit or evaluation)
 
 # --- Build -----------------------------------------------------------------
 

@@ -147,6 +147,119 @@ def test_agentcore_gateway_reads_target_detail_for_lambda(index):
     assert not ctx.stats.incomplete
 
 
+class _DeniedTags(Exception):
+    """A botocore ClientError-shaped denial whose message must never reach a diagnostic."""
+
+    def __init__(self) -> None:
+        super().__init__("AccessDeniedException: sensitive-provider-message")
+        self.response = {"Error": {"Code": "AccessDeniedException", "Message": "sensitive-provider-message"}}
+
+
+def _bedrock_agent_client(tags_response):
+    client = Mock()
+    client.get_agent.return_value = {
+        "agent": {
+            "agentId": "A1",
+            "agentArn": f"arn:aws:bedrock:us-east-1:{ACCOUNT}:agent/A1",
+            "agentName": "ops",
+            "agentStatus": "PREPARED",
+        }
+    }
+    # A bound SDK method carries its operation name, which the diagnostic and
+    # the live scope attestation use.
+    client.list_tags_for_resource.__name__ = "list_tags_for_resource"
+    if isinstance(tags_response, Exception):
+        client.list_tags_for_resource.side_effect = tags_response
+    else:
+        client.list_tags_for_resource.return_value = tags_response
+    return client
+
+
+def _collect_one_agent(connector, client):
+    connector._client = lambda service, region: client if service == "bedrock-agent" else Mock()
+    connector._paginate = lambda _client, op, _key, **kw: iter(
+        [{"agentId": "A1"}] if op == "list_agents" else []
+    )
+    return next(r for r in connector._collect_bedrock("us-east-1") if r["_kind"] == "bedrock-agent")
+
+
+def test_bedrock_agent_owner_is_read_through_list_tags_for_resource(index):
+    # Regression: GetAgent and ListAgents carry no tags, so the owner tag the
+    # handler reads was never collected and no live scan could attribute an agent.
+    ctx = context(index)
+    connector = AwsConnector(ctx)
+    client = _bedrock_agent_client({"tags": {"Owner": "platform-eng"}})
+    agent = _collect_one_agent(connector, client)
+    client.list_tags_for_resource.assert_called_once_with(
+        resourceArn=f"arn:aws:bedrock:us-east-1:{ACCOUNT}:agent/A1"
+    )
+    assert agent["tags"] == {"Owner": "platform-eng"}
+    assert connector._h_bedrock_agent(agent).owner == "platform-eng"
+    assert not ctx.stats.incomplete
+
+
+def test_denied_bedrock_tags_keep_the_agent_and_mark_coverage_incomplete(index):
+    ctx = context(index)
+    connector = AwsConnector(ctx)
+    agent = _collect_one_agent(connector, _bedrock_agent_client(_DeniedTags()))
+    assert agent["tags"] == {} and connector._h_bedrock_agent(agent).owner is None
+    assert ctx.stats.incomplete
+    assert ctx.stats.warnings == ["cloud.aws: list_tags_for_resource access denied (AccessDeniedException)"]
+
+
+def test_malformed_bedrock_tags_response_is_reported_and_ignored(index):
+    ctx = context(index)
+    connector = AwsConnector(ctx)
+    client = _bedrock_agent_client({"tags": [{"Key": "owner", "Value": "x"}]})
+    # Collected under the bedrock listing scope, as collect() does, so the call's outcome is attested.
+    collect = connector._collect_bedrock
+    connector._collect_bedrock = lambda region: connector._scoped("bedrock", region, collect(region))
+    agent = _collect_one_agent(connector, client)
+    assert agent["tags"] == {} and connector._h_bedrock_agent(agent).owner is None
+    assert ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "cloud.aws: invalid list_tags_for_resource response; owner coverage incomplete"
+    ]
+    # Regression: the call returned, so it was recorded as ok although its data was rejected.
+    details = ctx.scope_record([])["details"]
+    assert {"service": "bedrock", "operation": "list_tags_for_resource", "outcome": "failed"} in details
+
+
+def test_bedrock_agent_without_an_arn_looks_up_no_tags(index):
+    # A summary-only record (its GetAgent failed, which is already reported) has no ARN to tag.
+    ctx = context(index)
+    connector = AwsConnector(ctx)
+    client = _bedrock_agent_client({"tags": {"owner": "never-read"}})
+    client.get_agent.side_effect = _DeniedTags()
+    agent = _collect_one_agent(connector, client)
+    client.list_tags_for_resource.assert_not_called()
+    assert agent["tags"] == {} and "agentArn" not in agent
+
+
+def test_agentcore_runtime_owner_is_read_through_list_tags_for_resource(index):
+    ctx = context(index)
+    connector = AwsConnector(ctx)
+    runtime_arn = f"arn:aws:bedrock-agentcore:us-east-1:{ACCOUNT}:runtime/support_agent-AbCdE12345"
+    client = Mock()
+    client.get_agent_runtime.return_value = {
+        "agentRuntimeArn": runtime_arn,
+        "agentRuntimeName": "support_agent",
+        "status": "READY",
+        "roleArn": f"arn:aws:iam::{ACCOUNT}:role/support",
+        "ResponseMetadata": {"RequestId": "r"},
+    }
+    client.list_tags_for_resource.return_value = {"tags": {"owner": "cx-eng"}}
+    connector._client = lambda service, region: client
+    connector._paginate = lambda _client, op, _key, **kw: iter(
+        [{"agentRuntimeId": "support_agent-AbCdE12345"}] if op == "list_agent_runtimes" else []
+    )
+    runtime = next(r for r in connector._collect_agentcore("us-east-1") if r["_kind"] == "agentcore-runtime")
+    client.list_tags_for_resource.assert_called_once_with(resourceArn=runtime_arn)
+    finding = connector._h_agentcore_runtime(runtime)
+    assert finding.owner == "cx-eng" and finding.resource == runtime_arn
+    assert not ctx.stats.incomplete
+
+
 def test_disabled_bedrock_actions_and_knowledge_bases_do_not_grant_capabilities(index):
     connector = AwsConnector(context(index))
     finding = connector._h_bedrock_agent(
@@ -184,6 +297,11 @@ def test_bedrock_agent_draft_details_are_a_snapshot_that_survives_export(tmp_pat
                 }
             }
 
+        def list_tags_for_resource(self, resourceArn):
+            # GetAgent carries no tags: the owner tag is only reachable here.
+            assert resourceArn == f"arn:aws:bedrock:us-east-1:{ACCOUNT}:agent/AGENT1"
+            return {"tags": {"owner": "platform-eng", "cost-center": "4711"}}
+
     def paginate(client, op, key, **kwargs):
         return iter(
             [{"agentId": "AGENT1", "agentName": "ops", "agentStatus": "PREPARED"}]
@@ -217,14 +335,20 @@ def test_bedrock_agent_draft_details_are_a_snapshot_that_survives_export(tmp_pat
     assert not ctx.stats.warnings and [f.metadata["version_models"] for f in live] == [
         {"DRAFT": "anthropic.claude-3-haiku-20240307-v1:0"}
     ]
+    # Regression: the owner tag was read from the record but never collected,
+    # so no live scan could attribute a Bedrock agent to its owner.
+    assert live[0].owner == "platform-eng"
     exported = next(json.loads(line) for line in dump.read_text().splitlines() if '"bedrock-agent"' in line)
     assert (
         exported["_version_details"]["DRAFT"]["foundationModel"] == "anthropic.claude-3-haiku-20240307-v1:0"
     )
     assert not any(key.startswith("_") for key in exported["_version_details"]["DRAFT"])
+    assert exported["tags"] == {"owner": "platform-eng", "cost-center": "4711"}
+    assert "tags" not in exported["_version_details"]["DRAFT"]
     offline_ctx = _context(index, input=str(dump))
     offline = AwsConnector(offline_ctx).run()
     assert offline_ctx.stats.incomplete is False and not offline_ctx.stats.warnings
+    assert offline[0].owner == "platform-eng"
     assert offline[0].metadata["version_guardrails"] == {
         "DRAFT": {"guardrailIdentifier": "g1", "guardrailVersion": "1"}
     }
