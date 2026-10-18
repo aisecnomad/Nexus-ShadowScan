@@ -1025,8 +1025,9 @@ def _default_argument(argument: list[_OperandToken], *, positional: bool) -> re.
 def _fallback_credential(value: str, token: re.Match[str]) -> bool:
     """Whether a string literal after a fallback operator is a credential.
 
-    Under a password's, passphrase's or secret's name it is the password
-    whatever its shape (``_password_fallback``). Under any other name it is a
+    Under a password's, passphrase's or secret's name, after an environment
+    read (``_environment_read``), it is the password whatever its shape
+    (``_password_fallback``). Under any other name or read it is a
     key: one plain token that looks random. A token made of words and
     numbers is a mode, a label, a path or a name (``_worded_literal``) there,
     not a key.
@@ -1034,10 +1035,28 @@ def _fallback_credential(value: str, token: re.Match[str]) -> bool:
     body = token["body"]
     if _interpolated_literal(token):
         return False
-    if _password_fallback_name(value):
+    if _password_fallback_name(value) and _environment_read(value):
         return _password_fallback(value, body)
     plain = _FALLBACK_TOKEN.fullmatch(body) is not None
     return plain and not _worded_literal(body) and _high_entropy_credential(value, literal=body)
+
+
+# The words of a reference that read the process environment ('process.env.X',
+# 'os.environ.get', 'os.getenv', 'ENV.fetch', "env('X')", 'GetEnvironmentVariable').
+_ENVIRONMENT_WORDS = frozenset({"env", "environ", "getenv", "getenvironmentvariable", "environment"})
+
+
+def _environment_read(value: str) -> bool:
+    """Whether the reference a match assigns reads the process environment (``_ENVIRONMENT_WORDS``).
+
+    A password's fallback or default after such a read is the password of a
+    deployment that sets none, whatever its shape. After any other read, a
+    message catalog's ('catalog.get("forgot_password", "Forgot password?")')
+    or ConfigParser's ('parser.get("db", "password")'), the literal is
+    judged as a key is: such defaults are labels and option names far more
+    often than passwords.
+    """
+    return not _ENVIRONMENT_WORDS.isdisjoint(re.findall(r"[a-z]+", _assigned_value(value).lower()))
 
 
 def _password_fallback_name(value: str) -> bool:

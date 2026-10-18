@@ -85,3 +85,40 @@ def test_a_uuid_key_given_as_a_settings_default_is_withheld(run_connector, tmp_p
     )
     findings = _scan(run_connector, tmp_path, "src/vector.config.ts", text)
     assert key not in _snippets(findings)
+
+
+def test_message_catalog_defaults_under_password_names_are_not_passwords(run_connector, tmp_path):
+    # Regression: the any-shape password rule took a message catalog's default
+    # ('Forgot password?') for a password, and eight of them filled the quota, so
+    # an ordinary i18n module made the scan incomplete. Main reported five lines
+    # and stayed complete; neither is right.
+    names = ["FORGOT", "LABEL", "CONFIRM", "RESET", "NEW", "OLD", "SHOW", "HIDE"]
+    texts = [
+        "Forgot password?",
+        "Password",
+        "Confirm password",
+        "Reset it",
+        "New one",
+        "Old one",
+        "Show",
+        "Hide",
+    ]
+    text = "".join(
+        f'{name}_PASSWORD = catalog_messages.get("{name.lower()}_password", "{label}")\n'
+        for name, label in zip(names, texts, strict=True)
+    )
+    findings = _scan(run_connector, tmp_path, "app/messages.py", text)
+    assert _secret_lines(findings) == []
+
+
+def test_a_configparser_option_name_is_not_a_password(run_connector, tmp_path):
+    text = 'db_password = config_parser.get("database", "password")\n'
+    assert _secret_lines(_scan(run_connector, tmp_path, "app/settings.py", text)) == []
+
+
+def test_an_environment_read_keeps_its_password_fallback_of_any_shape(run_connector, tmp_path):
+    password = "correct horse " + "battery staple"
+    text = f'export const cfg = {{ dbPassword: process.env.DB_PASSWORD || "{password}" }};\n'
+    findings = _scan(run_connector, tmp_path, "src/db.ts", text)
+    assert _secret_lines(findings) == [1]
+    assert password not in _snippets(findings)
