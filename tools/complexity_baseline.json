@@ -51,7 +51,7 @@
     "shadowscan/connectors/code/source_ranges.py::_JavaScriptLexer._jsx_tag": 16,
     "shadowscan/connectors/code/source_ranges.py::_SourceLexer._code": 26,
     "shadowscan/connectors/code/source_ranges.py::_legacy_fstring_ranges": 35,
-    "shadowscan/connectors/code/source_ranges.py::_python_ranges_from": 20,
+    "shadowscan/connectors/code/source_ranges.py::_python_ranges_from": 18,
     "shadowscan/connectors/code/source_semantics.py::_JavascriptDeclarations.pattern": 18,
     "shadowscan/connectors/code/source_semantics.py::_PythonBindings._function": 19,
     "shadowscan/connectors/code/source_semantics.py::_call_evidence": 17,
@@ -153,9 +153,9 @@
   },
   "modules": {
     "shadowscan/connectors/cloud/aws.py": 3528,
-    "shadowscan/connectors/code/file_scan.py": 2257,
+    "shadowscan/connectors/code/file_scan.py": 2259,
     "shadowscan/connectors/code/source_semantics.py": 2815,
-    "shadowscan/connectors/code/walk.py": 2184,
+    "shadowscan/connectors/code/walk.py": 2191,
     "shadowscan/connectors/gateway/logs.py": 2112,
     "shadowscan/connectors/identity/entra.py": 2162,
     "shadowscan/signatures/matcher.py": 2597

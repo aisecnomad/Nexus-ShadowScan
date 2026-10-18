@@ -302,13 +302,13 @@ def test_a_source_binding_budget_is_counted_under_its_own_reason(
 ):
     # Regression: every budget the binder raised was counted as analysis-limit,
     # although a file's time budget is a timeout, as docs/scanning.md defines it.
-    from shadowscan.connectors.code import filesystem
     from shadowscan.connectors.code.source_semantics import SourceBudgetExceeded
 
     def over_budget(*args, **kwargs):
         raise SourceBudgetExceeded(message)
 
-    monkeypatch.setattr(filesystem, "bound_source_matches", over_budget)
+    # The binder is called by the file scan (ADR-005): patch it where it is looked up.
+    monkeypatch.setattr(file_scan, "bound_source_matches", over_budget)
     (tmp_path / "app.py").write_text("from agents import Agent\na = Agent(name='helper')\n")
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), git_metadata=False)
     assert ctx.stats.incomplete

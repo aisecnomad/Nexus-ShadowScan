@@ -735,7 +735,8 @@ def test_make_test_parallel_is_the_run_of_the_traced_ci_leg() -> None:
     steps = _load(GITHUB / "workflows" / "ci.yml")["jobs"]["test"]["steps"]
     (traced,) = [step for step in steps if "--cov=shadowscan" in step.get("run", "")]
     assert "-n auto --dist worksteal" in traced["run"]
-    assert _make_recipe("test-parallel").strip() == traced["run"].strip()
+    # The workflow step also writes the JUnit report its annotations read; the recipe does not.
+    assert _make_recipe("test-parallel").strip() == _without_junit_report(traced["run"])
 
 
 def test_container_build_is_digest_pinned_hash_locked_and_non_root() -> None:
