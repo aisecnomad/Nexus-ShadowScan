@@ -9,6 +9,7 @@ paths that are not valid UTF-8.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import tomllib
@@ -17,7 +18,6 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from shadowscan.utils.files import open_confined_file
-from shadowscan.utils.safe_json import strict_json_loads
 
 DEFAULT_MAX_WALK_ENTRIES = 1_000_000
 
@@ -74,11 +74,18 @@ _JSON_MANIFESTS = frozenset({"package.json", "composer.json"})
 _TOML_MANIFESTS = frozenset({"pyproject.toml", "Cargo.toml", "Pipfile"})
 
 
+def _refuse_constant(value: str) -> float:
+    raise ValueError(f"JSON constant {value} is not a manifest value")
+
+
 def _manifest_parses(path: Path, name: str) -> bool:
-    """Whether the manifest ``name`` at ``path`` parses as its format.
+    """Whether the manifest ``name`` at ``path`` parses as its tool reads it.
 
     Only JSON and TOML manifests are checked; any other, or one that cannot be
-    read or is over the probe size, counts as parsing.
+    read or is over the probe size, counts as parsing. A JSON manifest is read
+    as npm and Composer read it: a repeated key is accepted (the last counts),
+    ``NaN`` and ``Infinity`` are not. Whether the scanner's own analysis accepts
+    it is another question; it reads manifests strictly and records a gap.
     """
     if name not in _JSON_MANIFESTS and name not in _TOML_MANIFESTS:
         return name != "setup.py" or _packaging_setup_script(path)
@@ -92,7 +99,7 @@ def _manifest_parses(path: Path, name: str) -> bool:
     try:
         text = data.decode("utf-8-sig")
         if name in _JSON_MANIFESTS:
-            strict_json_loads(text)
+            json.loads(text, parse_constant=_refuse_constant)
         else:
             tomllib.loads(text)
     except (UnicodeDecodeError, ValueError, RecursionError):  # TOMLDecodeError is a ValueError

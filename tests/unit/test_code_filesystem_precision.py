@@ -767,6 +767,25 @@ def test_ci_profile_declares_gaps_below_a_manifest_that_does_not_parse(run_conne
     assert [e for e in stats.errors if "docs/blog/post.md" in e]
 
 
+@pytest.mark.parametrize("manifest", ["package.json", "composer.json"])
+def test_ci_profile_reads_a_manifest_with_a_repeated_key_as_a_project(run_connector, tmp_path, manifest):
+    # Regression: npm and Composer read a repeated key (the last one counts), but the
+    # project probe used the strict decoder, which refuses one. A real project's
+    # manifest with a repeated key was "a manifest that does not parse", so the gaps
+    # in that project were declared as the documentation around it.
+    write(tmp_path, "pyproject.toml", '[project]\nname = "root"\nversion = "0.1"\n')
+    write(tmp_path, f"docs/{manifest}", '{"name": "site", "private": true, "name": "site"}\n')
+    (tmp_path / "docs" / "blog").mkdir()
+    (tmp_path / "docs" / "blog" / "post.md").write_bytes(b"a\x00b" * 10)
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert stats.incomplete and stats.declared_omissions == 0
+    assert [e for e in stats.errors if "docs/blog/post.md" in e]
+    # Neither tool reads a NaN, so a manifest holding one still does not parse.
+    write(tmp_path, f"docs/{manifest}", '{"name": "site", "version": NaN}\n')
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert not stats.incomplete and set(stats.declared_paths) == {"docs/blog/post.md", f"docs/{manifest}"}
+
+
 @pytest.mark.parametrize("directory", ["docs/snippets", "examples/basic"])
 def test_ci_profile_still_declares_gaps_in_plain_docs_and_example_trees(run_connector, tmp_path, directory):
     write(tmp_path, "pyproject.toml", '[project]\nname = "root"\nversion = "0.1"\n')
