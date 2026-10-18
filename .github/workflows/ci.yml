@@ -61,7 +61,7 @@ jobs:
           python -m pip install --no-deps --no-build-isolation -e .
           python -m pip check
       - name: Check native file confinement and plugin worker lifecycle
-        run: pytest -q tests/unit/test_confined_file_portability.py tests/unit/test_plugin_process.py
+        run: pytest -q --junitxml="$RUNNER_TEMP/junit-native.xml" tests/unit/test_confined_file_portability.py tests/unit/test_plugin_process.py
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
       - name: Validate threat and control mapping catalogs
@@ -76,7 +76,12 @@ jobs:
       # The full suite without coverage tracing; the Linux coverage leg of the
       # test job enforces both coverage floors. The console entry point is used
       # on purpose: it must import the checkout-only tools packages.
-      - run: pytest -q
+      - run: pytest -q --junitxml="$RUNNER_TEMP/junit-suite.xml"
+      # The checks API shows a failed step only as "exit code 1"; this names each
+      # failing test there, from the JUnit reports above, with messages redacted.
+      - name: Name the failing tests
+        if: failure()
+        run: python -m tools.test_annotations "$RUNNER_TEMP"/junit-*.xml
   test:
     runs-on: ubuntu-latest
     # The coverage-traced 3.11 leg runs the full suite serially and takes about
@@ -162,10 +167,13 @@ jobs:
           done
       - name: Run the test suite
         if: ${{ env.COVERAGE_LEG != 'true' }}
-        run: python -m pytest -q
+        run: python -m pytest -q --junitxml="$RUNNER_TEMP/junit-suite.xml"
       - name: Run the test suite with line and branch coverage
         if: ${{ env.COVERAGE_LEG == 'true' }}
-        run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
+        run: python -m pytest -q --junitxml="$RUNNER_TEMP/junit-suite.xml" --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
+      - name: Name the failing tests
+        if: failure()
+        run: python -m tools.test_annotations "$RUNNER_TEMP"/junit-*.xml
       - name: Enforce per-connector coverage floor
         if: ${{ env.COVERAGE_LEG == 'true' }}
         run: |

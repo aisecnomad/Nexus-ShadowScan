@@ -1184,9 +1184,10 @@ def test_one_linux_leg_enforces_both_coverage_floors_and_every_leg_runs_the_suit
     gate = [step for step in steps if "python -m tools.coverage_gate" in step.get("run", "")]
     assert [step.get("if") for step in gate] == ["${{ env.COVERAGE_LEG == 'true' }}"]
     assert steps.index(gate[0]) > steps.index(traced[0])
-    # Every other leg, and macOS, still runs the whole suite (no selection flags).
+    # Every other leg, and macOS, still runs the whole suite (no selection flags;
+    # a JUnit report for the failure annotations selects nothing).
     untraced = [step for step in pytest_steps if step not in traced]
-    assert [(step.get("if"), step["run"].strip()) for step in untraced] == [
+    assert [(step.get("if"), _without_junit_report(step["run"])) for step in untraced] == [
         ("${{ env.COVERAGE_LEG != 'true' }}", "python -m pytest -q")
     ]
     # macOS runs the whole suite through the console entry point, which must
@@ -1194,7 +1195,23 @@ def test_one_linux_leg_enforces_both_coverage_floors_and_every_leg_runs_the_suit
     macos = [
         step for step in jobs["test-macos"]["steps"] if re.search(r"(?:^|\s)pytest\b", step.get("run", ""))
     ]
-    assert [(step.get("if"), step["run"].strip()) for step in macos][-1] == (None, "pytest -q")
+    assert [(step.get("if"), _without_junit_report(step["run"])) for step in macos][-1] == (None, "pytest -q")
+    # Each job names its failing tests in the checks API from those reports.
+    for job in ("test", "test-macos"):
+        annotate = [
+            step for step in jobs[job]["steps"] if "python -m tools.test_annotations" in step.get("run", "")
+        ]
+        assert [step.get("if") for step in annotate] == ["failure()"]
+        assert jobs[job]["steps"].index(annotate[0]) > max(
+            jobs[job]["steps"].index(step)
+            for step in jobs[job]["steps"]
+            if "--junitxml=" in step.get("run", "")
+        )
+
+
+def _without_junit_report(run: str) -> str:
+    """``run`` without its ``--junitxml`` option, which only writes a report."""
+    return re.sub(r"\s--junitxml=(?:\"[^\"]*\"|\S+)", "", run).strip()
 
 
 def test_coverage_floors_count_branches_and_are_not_lowered() -> None:
