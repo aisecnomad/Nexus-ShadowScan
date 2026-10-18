@@ -441,8 +441,12 @@ no other mismatched sign-off.
 
 The `main` rulesets also require verified commit signatures
 (`required_signatures`). A DCO `Signed-off-by` trailer is not a signature.
-Either sign your commits (SSH or GPG) or expect the maintainer to
-squash-merge, which produces a GitHub-signed commit.
+GitHub signs squash-merge commits, but [its merge eligibility checks](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets#require-signed-commits)
+can still reject unsigned commits in the pull request history. A signed tip
+alone does not repair unsigned ancestors. If GitHub reports this blocker, an
+authorized contributor must recreate the introduced history with verified
+signatures (SSH or GPG), retaining truthful authorship and matching DCO sign-offs.
+A GitHub-signed squash is not a guaranteed substitute for signed PR history.
 
 ## License
 
