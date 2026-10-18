@@ -502,7 +502,7 @@ class _AssignmentScanner:
             # and so may the codec errors Python 3.12+ tokenizers raise for a
             # lone surrogate or a non-ASCII character after a lone '\r'. So may a
             # TokenizerFault, which CPython 3.12's tokenizer causes for a NUL byte after
-            # an indented line (found by the fuzz target in tools/fuzz): an interpreter
+            # an indented line (found by the fuzzing in #259): an interpreter
             # fault, read as any other tokenizer error.
             definitive = not isinstance(
                 exc, (IndentationError, TokenizerFault, UnicodeError)

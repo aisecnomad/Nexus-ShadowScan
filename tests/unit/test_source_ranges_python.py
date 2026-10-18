@@ -137,7 +137,7 @@ def test_short_python_file_does_not_exhaust_the_budget(monkeypatch):
 )
 def test_a_tokenizer_fault_masks_the_rest_of_the_file_and_reports_it_incomplete(monkeypatch, fault):
     # CPython 3.12's tokenizer fails for a NUL byte after an indented line with one of these, whichever
-    # the process's caches make first notice (found by the fuzz target in tools/fuzz). Simulated here so
+    # the process's caches make first notice (found by the fuzzing in #259). Simulated here so
     # every interpreter runs the path.
     real = source_ranges.tokenize.generate_tokens
 

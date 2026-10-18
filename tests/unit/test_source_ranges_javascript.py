@@ -455,7 +455,7 @@ def test_string_line_continuation_over_crlf_does_not_hide_following_code() -> No
 @pytest.mark.parametrize("prefix", ["", "const s = ", "x = f(a, "])
 def test_string_ending_in_a_backslash_does_not_run_past_the_end_of_the_text(prefix: str, quote: str) -> None:
     # The backslash steps over the next character, which is not there. The span used to end one past
-    # the text (found by the coverage-guided fuzz target in tools/fuzz): every reader of the spans
+    # the text (found by the coverage-guided fuzzing in #259): every reader of the spans
     # may rely on them lying inside it.
     source = f"{prefix}{quote}abc\\"
     ignored, _ = noncode_ranges(source, "javascript", ".js")

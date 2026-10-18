@@ -8,7 +8,7 @@ whichever check runs first reports that exception: usually a ``SystemError`` ("r
 an exception set") and, in some processes, an ``AttributeError`` for a name that exists, probably from
 a type lookup that finds the pending exception. The type varies from process to process, so it cannot
 be matched by name, and the same input is fine on 3.11 and an ordinary ``TokenError`` on 3.13. The 3.12
-line receives security fixes only, and 3.12.13 still has the fault. The fuzz targets in ``tools/fuzz``
+line receives security fixes only, and 3.12.13 still has the fault. The fuzz targets of #259
 found it through the source lexer and the redactor.
 
 :func:`generate_tokens` raises :class:`TokenizerFault` for any such failure, so a caller answers it the

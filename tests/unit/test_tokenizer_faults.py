@@ -2,7 +2,7 @@
 
 CPython 3.12's tokenizer fails on a NUL byte after an indented line with an exception that says nothing
 about the text, a SystemError or an AttributeError depending on the process (see
-shadowscan.utils.python_tokens); the coverage-guided fuzz targets in tools/fuzz found it through the source
+shadowscan.utils.python_tokens); the coverage-guided fuzzing in #259 found it through the source
 lexer and the redactor. Those, and the re-export prefilter, answer a source the tokenizer cannot read with
 their fail-closed result instead of an exception: the lexer masks the rest and reports itself incomplete
 (see test_source_ranges_python.py), the redactor withholds the rest of the text, and the prefilter says

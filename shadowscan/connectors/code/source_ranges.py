@@ -506,7 +506,7 @@ def _python_ranges_from(
         return not (isinstance(exc, tokenize.TokenError) and "EOF" in message), None
     except TokenizerFault:
         # The interpreter failed, not the text: CPython 3.12's tokenizer does for a NUL byte after an
-        # indented line (found by the fuzz target in tools/fuzz; see shadowscan.utils.python_tokens),
+        # indented line (found by the fuzzing in #259; see shadowscan.utils.python_tokens),
         # where 3.13 raises TokenError. Nothing past the last token read can be said to be code, so it
         # is masked and the file reported incomplete, as for any other tokenizer error.
         _mask_rest(spans, text, offset(read_to))
