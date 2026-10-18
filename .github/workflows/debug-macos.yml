@@ -1,0 +1,53 @@
+name: Debug macOS failures
+on:
+  push:
+    branches: [ci-debug/macos-failures]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install the hash-locked toolchain
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-ci.lock -r requirements-build.lock -r requirements.lock
+          python -m pip install --no-deps --no-build-isolation -e .
+      - name: Run the failing step and keep the output
+        id: run
+        continue-on-error: true
+        run: |
+          set +e
+          pytest -q tests/unit/test_confined_file_portability.py tests/unit/test_plugin_process.py -rf --tb=short > pytest-out.txt 2>&1
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+          tail -c 4000 pytest-out.txt
+      - name: Annotate the failed test names
+        run: |
+          grep -E "^(FAILED|ERROR) " pytest-out.txt | head -10 | while IFS= read -r line; do
+            printf '::error::%s\n' "$line"
+          done
+      - name: Annotate the failure detail in chunks
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('pytest-out.txt').read_text(errors='replace')
+          # Keep the short tracebacks and the tail summary; drop the dot progress.
+          lines = [l for l in text.splitlines() if not set(l) <= set('.sxF [%]0123456789')]
+          body = '\n'.join(lines)[-28000:]
+          chunks = [body[i:i + 3500] for i in range(0, len(body), 3500)][:8]
+          for index, chunk in enumerate(chunks):
+              encoded = chunk.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+              print(f'::error::CHUNK{index}: {encoded}')
+          PY
+      - name: Report the step status
+        run: exit ${{ steps.run.outputs.status }}
