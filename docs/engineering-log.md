@@ -13,6 +13,29 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### A process-mode plugin's credential identities are labelled `keyed` under the operator's identity key again (October 18)
+
+- Since the plugin-environment change on this branch, a process-mode worker
+  starts without `SHADOWSCAN_IDENTITY_KEY` in its environment. The worker
+  learned whether its key was the operator's stable key from its own
+  `Engine`, which reads that variable, so it now always concluded it was the
+  run's own. The worker still received the operator's key and keyed the
+  plugin's credential identities with it, with the same digests as before,
+  but it labelled them `run`: `credential_identity_scope()` answered `run` and
+  a connector declaring `uses_run_identity_key` got
+  `gateway_identity_key_stable=False`. `diff` cannot match findings whose
+  `metadata.identity_scope` is not `keyed` across scans, so a plugin
+  reporting the scope lost cross-scan matching that `main` had. On `main` the
+  worker inherited the variable, built its `Engine` from it, and only then
+  removed it.
+- The parent now passes the key's stability to the worker with the key
+  itself. `test_a_spawned_plugin_keys_credentials_as_the_scan_does` checks the
+  label and the digest under the operator's key, and the label without it.
+- `docs/production.md` and `docs/production-migrations.md` said the worker
+  never sees the raw key. That is true of its environment, but the worker
+  holds the decoded key in memory, and a plugin can reach it there. Both now
+  say so.
+
 ### A report nested past 256 levels is refused as nesting on every interpreter, not only where the parser runs out of stack (October 18)
 
 - `diff`, `merge`, `dashboard` and `inventory`, the commands that read a

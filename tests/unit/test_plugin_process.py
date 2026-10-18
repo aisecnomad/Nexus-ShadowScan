@@ -106,9 +106,12 @@ class Connector(BaseConnector):
                 import datetime
                 metadata.update(seen=datetime.datetime(2026, 1, 1), scopes={"read"}, raw=b"ab")
             if mode == "identity-env":
+                from shadowscan.utils.credential_identity import credential_identity_scope, keyed_credential_digest
                 metadata.update(
                     env_has_identity_key="SHADOWSCAN_IDENTITY_KEY" in os.environ,
                     ctx_has_identity_key=self.ctx.gateway_identity_key is not None,
+                    identity_scope=credential_identity_scope(),
+                    probe_digest=keyed_credential_digest("probe"),
                 )
             if mode == "credential-env":
                 metadata.update(
@@ -425,7 +428,7 @@ def test_worker_enforces_its_own_deadline_without_parent_supervision(installed_p
     # Leave time for spawn start-up and plugin import before the deadline.
     deadline = time.monotonic() + 4
     process = multiprocessing.get_context("spawn").Process(
-        target=_worker, args=(child, config, [], 1, deadline, b"k" * 32, None), daemon=True
+        target=_worker, args=(child, config, [], 1, deadline, b"k" * 32, False, None), daemon=True
     )
     try:
         process.start()
@@ -1078,6 +1081,39 @@ def test_spawned_plugin_scrubs_identity_key_from_worker_environment(installed_pr
     assert result.complete, result.stats
     assert result.findings[0].metadata["env_has_identity_key"] is False
     assert result.findings[0].metadata["ctx_has_identity_key"] is False
+    _assert_reaped(installed_probe)
+
+
+@pytest.mark.parametrize("stable", [True, False])
+def test_a_spawned_plugin_keys_credentials_as_the_scan_does(installed_probe, monkeypatch, stable):
+    """Regression: the worker learned whether the identity key was the operator's from its own
+    environment, which no longer holds the key. Under SHADOWSCAN_IDENTITY_KEY a process-mode
+    plugin's credential identities were keyed with the operator's key but labelled ``run``, so
+    diff could not match them across scans (metadata.identity_scope), as it did before."""
+    from shadowscan.utils.credential_identity import (
+        keyed_credential_digest,
+        reset_credential_identity_key,
+        set_credential_identity_key,
+    )
+
+    key = bytes(range(32))
+    if stable:
+        monkeypatch.setenv("SHADOWSCAN_IDENTITY_KEY", "hex:" + key.hex())
+    else:
+        monkeypatch.delenv("SHADOWSCAN_IDENTITY_KEY", raising=False)
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "identity-env")
+    result = _engine().run()
+    assert result.complete, result.stats
+    metadata = result.findings[0].metadata
+    assert metadata["env_has_identity_key"] is False
+    assert result.collection_scope["credential_identity_scope"] == ("keyed" if stable else "run")
+    assert metadata["identity_scope"] == result.collection_scope["credential_identity_scope"]
+    if stable:
+        token = set_credential_identity_key(key, stable=True)
+        try:
+            assert metadata["probe_digest"] == keyed_credential_digest("probe")
+        finally:
+            reset_credential_identity_key(token)
     _assert_reaped(installed_probe)
 
 
