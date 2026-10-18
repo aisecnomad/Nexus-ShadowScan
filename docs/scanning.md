@@ -422,8 +422,11 @@ project, and test paths anywhere, are still declared (`docs/docs/` in that
 layout); its own content is not. A template is not such a project: a directory
 with template syntax in its path (`templates/crew/{{cookiecutter.slug}}/`, a
 `{%` or `${` segment), or one none of whose JSON or TOML manifests parses (a
-templated `package.json`), is judged by the project around it, so the template's
-own unparsed manifest and sources are declared. Every other gap, in `src/`, at
+templated `package.json`), is judged by the project around it, so a template
+under a documentation or example path keeps its own unparsed manifest and
+sources declared. A template at the repository root (a cookiecutter
+repository's `{{cookiecutter.slug}}/`) is judged from the root, where no profile
+path applies. Every other gap, in `src/`, at
 the repository root or in a path the profile does not name, is judged as without
 the profile: charged to the budget, or marking the scan incomplete when it is
 blinding, as a connector deadline, a `max_files` or `max_entries` limit and a
