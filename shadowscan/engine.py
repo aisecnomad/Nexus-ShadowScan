@@ -76,7 +76,8 @@ _Resolved = type[BaseConnector] | Exception
 MAX_AUTO_TIMEOUT = 1800.0
 _TIMEOUT_MESSAGE = (
     "connector_timeout completion deadline exceeded; this connector's results are truncated. "
-    "Raise --connector-timeout-seconds (default 120) for a large estate or repository"
+    "Set --connector-timeout-seconds for a large estate or repository (when it is not set, the"
+    " deadline is 120 s, raised up to 1800 s for a large input)"
 )
 _TIMEOUT_WARNING = (
     "Cancellation is cooperative: an in-flight SDK, plugin call, or filesystem "
