@@ -383,14 +383,35 @@ def parse_package_json(text: str, document: Any = None) -> ManifestResult:
     return res
 
 
-_GO_REQUIRE_BLOCK = re.compile(r"require\s*\((.*?)\)", re.S)
-_GO_REQUIRE_LINE = re.compile(r"^[ \t]*require\s+(\S+)\s+(\S+)", re.M)
+_GO_REQUIRE_OPEN = re.compile(r"require\s*\(")
+# One-line form only: blanks, not \s, so a block's "require (" and the module on
+# the next line are never read as a dependency named "(".
+_GO_REQUIRE_LINE = re.compile(r"^[ \t]*require[ \t]+([^\s(]\S*)[ \t]+(\S+)", re.M)
 _GO_MOD_LINE = re.compile(r"^[ \t]*(\S+)\s+(v\S+)", re.M)
+
+
+def _go_require_blocks(text: str) -> Iterator[str]:
+    """The text of each ``require ( ... )`` block, left to right, as ``require\\s*\\((.*?)\\)`` finds them.
+
+    That lazy pattern is quadratic on a file of unclosed ``require(`` openings:
+    from each one it reads to the end before failing. Here each opening is found
+    once and its block ends at the next ``)``; with no ``)`` after an opening,
+    none follows any later one either, so no block remains.
+    """
+    position = 0
+    while (
+        opening := _GO_REQUIRE_OPEN.search(text, position, timeout=_pattern_timeout(), concurrent=False)
+    ) is not None:
+        end = text.find(")", opening.end())
+        if end < 0:
+            return
+        yield text[opening.end() : end]
+        position = end + 1
 
 
 def parse_go_mod(text: str) -> ManifestResult:
     res = ManifestResult()
-    for block in _GO_REQUIRE_BLOCK.findall(text, timeout=_pattern_timeout(), concurrent=False):
+    for block in _go_require_blocks(text):
         for m in _GO_MOD_LINE.finditer(block, timeout=_pattern_timeout(), concurrent=False):
             res.deps.append(Dep("go", m.group(1), m.group(2)))
     for m in _GO_REQUIRE_LINE.finditer(text, timeout=_pattern_timeout(), concurrent=False):

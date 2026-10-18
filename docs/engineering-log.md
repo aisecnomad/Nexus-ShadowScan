@@ -13,6 +13,21 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### go.mod require blocks read in linear time; no dependency named "(" (October 18)
+
+- `code.filesystem` found go.mod `require ( ... )` blocks with the lazy
+  pattern `require\s*\((.*?)\)`, which reads from each unclosed `require(`
+  to the end of the file before failing: quadratic in a file of them. The
+  module-level linearity test measured it within its threshold on Python
+  3.11 to 3.13 and past it on 3.14, which is why the 3.14 CI legs added with
+  #256 failed while no local run reproduced it. Each opening is now found once
+  and its block ends at the next `)`; the blocks are exactly those the
+  pattern found (checked on 3,000 generated texts).
+- The one-line `require` pattern matched a block's `require (` as well,
+  because `\s` spans the line break, so every go.mod with a block reported a
+  dependency named `(` whose version was the block's first module. It now
+  reads only the one-line form.
+
 ### CLI package, reporter protocol, condensed README, identity sign-in clients and API page narratives (#252, #253; October 17)
 
 - `shadowscan/cli.py` is now the `shadowscan/cli/` package: the group and its

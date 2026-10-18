@@ -17,6 +17,7 @@ Notion bots, gateway routes, Kubernetes serving images, n8n HTTP model calls
 and ServiceNow flow names were adjusted), so a later ShadowScan run on that
 estate is in-sample.
 
+- go.mod require blocks read in linear time; no dependency named "(" (October 18)
 - CLI package, reporter protocol, condensed README, identity sign-in clients and API page narratives (#252, #253; October 17)
 - Credential review fixes: env-file passwords, typed reads, pasted names, repeated credentials, labels and cut-read evidence (October 17)
 - Coverage gaps take one decision, judged per root and repository (October 17)
