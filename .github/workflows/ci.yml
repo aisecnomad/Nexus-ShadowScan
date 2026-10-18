@@ -87,9 +87,12 @@ jobs:
         run: python -m tools.test_annotations "$RUNNER_TEMP"/junit-*.xml
   test:
     runs-on: ubuntu-latest
-    # The suite runs on one pytest-xdist worker per CPU. Run serially, the
-    # coverage-traced 3.11 leg took about 40 minutes and the untraced legs about
-    # 20. The limit stays at an hour until the parallel timings are known.
+    # The untraced legs run on one pytest-xdist worker per CPU (10 to 13
+    # minutes; 25 serially). The coverage-traced 3.11 leg runs serially (37 to
+    # 50 minutes): under tracing plus worker contention its wall-clock and
+    # CPU-budget tests (the dashboard budgets, the linear regex scan, the
+    # matcher's input execution budget) report the runner, not the code, and
+    # failed on three of three heads. The limit stays at an hour.
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -183,12 +186,9 @@ jobs:
         run: python -m pytest -q -n auto --dist worksteal --junitxml="$RUNNER_TEMP/junit-suite.xml"
       - name: Run the test suite with line and branch coverage
         if: ${{ env.COVERAGE_LEG == 'true' }}
-        env:
-          # A JUnit report for the annotation step below; the pytest command stays as documented.
-          PYTEST_ADDOPTS: --junitxml=${{ runner.temp }}/pytest.xml
-        # pytest-cov measures in every worker and combines their data before it
-        # checks the floor, so the report and coverage_gate below see the whole suite.
-        run: python -m pytest -q -n auto --dist worksteal --junitxml="$RUNNER_TEMP/junit-suite.xml" --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
+        # Serial, as `make test` runs it: the documented time budgets were
+        # measured this way, and tracing plus worker contention breaks them.
+        run: python -m pytest -q --junitxml="$RUNNER_TEMP/junit-suite.xml" --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
       - name: Name the failing tests
         if: failure()
         run: python -m tools.test_annotations "$RUNNER_TEMP"/junit-*.xml

@@ -54,20 +54,22 @@ operator-run procedure described in [Tenant canaries](canaries.md).
 
 ```bash
 make test-fast      # stop at the first failure, no coverage
-make test           # full suite with line and branch coverage and the 80% aggregate floor
-make test-parallel  # the same run on pytest-xdist workers (-n auto --dist worksteal), as CI runs it
-make coverage-gate  # 75% floor for every connector module; run after make test or make test-parallel
+make test           # full suite, serially, with line and branch coverage and the 80% aggregate floor
+make test-parallel  # the same suite on pytest-xdist workers (-n auto --dist worksteal), no coverage
+make coverage-gate  # 75% floor for every connector module; run after make test
 ```
 
-The suite is long in a single process. CI runs it with `-n auto --dist
-worksteal`, one worker per CPU, and `make test-parallel` does the same locally.
-pytest-cov measures in every worker and combines their data before it checks
-the floor, so `make coverage-gate` reads the whole run either way. The suite
+The suite is long in a single process. CI's untraced legs run it with `-n auto
+--dist worksteal`, one worker per CPU, and `make test-parallel` does the same
+locally. The coverage-traced leg runs serially, as `make test` does: the
+documented time budgets (the dashboard's, the linear regex scan's, the
+matcher's input execution budget) were measured that way, and under tracing
+plus worker contention they report the machine rather than the code. The suite
 has to stay safe to run in parallel: a test may not depend on another test's
 files, ports, environment or ordering.
 
 `make coverage-gate` exports the coverage data recorded by the preceding
-`make test` or `make test-parallel`. Both floors count branches as well as statements, and the
+`make test`. Both floors count branches as well as statements, and the
 per-connector floor covers every module under `shadowscan/connectors/`,
 including the shared `base`, `common` and `offline` modules. The gate also
 requires the report to name every one of those modules as the checkout has

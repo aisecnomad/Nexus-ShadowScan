@@ -21,7 +21,7 @@ estate is in-sample.
 - The credential oracle's slow rows run with a budget that coverage tracing cannot exhaust (October 18)
 - Filesystem connector split into walk, file-scan and findings collaborators (ADR-005 steps 2-5; #259; October 18)
 - A diff-scoped walk reports the connector deadline's remainder against the diff-selected files only; the walk's budget reservation drops an unreachable model-artifact branch (October 18)
-- CI test legs run on pytest-xdist workers (#259; October 17)
+- The untraced CI test legs run on pytest-xdist workers; the coverage-traced leg stays serial, as its time budgets were measured (#259; October 17-18)
 - OpenSSF Best Practices evidence page, claiming no badge (#259; October 17)
 - Release attestation bundles are named `provenance.sigstore.json` and `sbom.sigstore.json` (#259; October 17)
 - Self-scan of the checkout in `make check` and CI, with every exclusion explained (#259; October 17)

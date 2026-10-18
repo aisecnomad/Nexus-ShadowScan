@@ -82,7 +82,7 @@ Counts and figures quoted in an entry are those of its date.
   verified: the live clone and API modes of `code.github` and `code.gitlab`,
   and the 2026-10-01 field scan's repositories.
 
-### CI test legs run on pytest-xdist workers (#259; October 17)
+### The untraced CI test legs run on pytest-xdist workers; the traced leg stays serial (#259; October 17-18)
 
 - The `test` job runs the suite with `-n auto --dist worksteal`, one worker
   per CPU, including the coverage-traced 3.11 leg that took about 40 minutes
@@ -92,6 +92,18 @@ Counts and figures quoted in an entry are those of its date.
   limit is unchanged until the parallel timings are known. The suite has to
   stay safe to run in parallel: no test may depend on another's files, ports,
   environment or ordering.
+
+**October 18, after three heads of #261.** The coverage-traced 3.11 leg failed on
+every head run with `-n auto`: at bb05d72 six tests (both dashboard time
+budgets, the linear unterminated-regex scan, a `MatchTimeoutError` from the
+matcher's 2-second input execution budget, and two import-binding budget
+counts), at cfed5ba the dashboard history budget alone (18.4 s against 16 s).
+The untraced legs passed every time. Those tests measure documented time
+budgets, and under tracing plus one worker per CPU they measure the runner.
+The traced leg therefore runs serially again, as `make test` does and as the
+budgets were measured (37 to 50 minutes); the untraced legs keep the workers
+(10 to 13 minutes instead of 25). `make test-parallel` is now the untraced
+run, without coverage, and the policy test holds both recipes to their legs.
 
 ### OpenSSF Best Practices evidence page, claiming no badge (#259; October 17)
 
