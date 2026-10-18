@@ -9,4 +9,4 @@ Each ADR describes the context, the decision, and its consequences.
 | [002](002-offline-first-connectors.md) | Offline-first connector design | Accepted |
 | [003](003-evidence-based-confidence.md) | Evidence-based confidence scoring | Accepted, amended 2026-09-27 and 2026-10-01 |
 | [004](004-source-parsing-strategy.md) | Source parsing strategy | Proposed |
-| [005](005-code-scanner-module-boundaries.md) | Code scanner module boundaries | Proposed |
+| [005](005-code-scanner-module-boundaries.md) | Code scanner module boundaries | Accepted |

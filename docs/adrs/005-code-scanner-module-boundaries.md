@@ -1,6 +1,6 @@
 # ADR-005: Code scanner module boundaries
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-01
 
 ## Context
@@ -30,7 +30,7 @@ to every module (`redaction.py`, end of file). That kept the tests unchanged,
 but patched names now behave differently depending on which module they are
 set on. This split should not repeat that pattern.
 
-## Decision (proposed)
+## Decision
 
 Split along the four groups into collaborator classes, not mixins:
 
@@ -142,3 +142,80 @@ was checked by the ownership, confinement, git-metadata and gitlink tests, the
 evaluation corpora and the offline demo. The walk, file-scan and
 project-findings moves remain open; the class is about 4,100 lines and 121
 methods, down from 4,250 and 127.
+
+1. **Ownership** moved into `ownership.OwnershipResolver` first, as the paragraph
+   above records: `git_info`, `owner_for` and `owners_for_files` with the
+   private CODEOWNERS readers, their per-root caches, step budgets and git
+   identity limits. `scan_tree` tells the resolver which scan is open
+   (`ownership.scan`) and forgets the root's caches before each walk;
+   CODEOWNERS is still read through the scan root descriptor the walk opened.
+2. **Walk** moved into `walk.TreeWalker`: everything from `_excluded` to
+   `_walk_entries` (root opening, exclusions and `include`, links, oversize and
+   non-regular entries, submodules, deadline scheduling and the fail-closed
+   coverage accounting), with the module-level limits, name tables and helpers
+   it uses (the other groups import those they share from `walk.py`).
+   `walk(scan, scan_file, unread_settings)` replaces `_walk`; the walker calls
+   `scan_file` for each file it schedules. `included`, `model_artifact_name`,
+   `size_limit`, `note_file`, `lockfile_gap`, `check_gitlink_coverage`,
+   `root_listing_incomplete` and `skipped_oversize_test_fixtures` are its
+   interface to the other collaborators and to `remote.py`. Failure isolation
+   (`isolated`) became a function of `walk.py`, the lowest collaborator module.
+   `_root_prefix`, which names the root in a diagnostic when the connector
+   scans several, reads the connector's configuration, so it stays on the
+   façade (configuration reads outside the connector class cannot be attributed
+   to its `config_keys`, `tests/unit/test_connector_config_keys.py`); the
+   walker receives the bound method.
+3. **File scan** moved into the new `file_scan.FileScanner`: `scan_file` (was
+   `_scan_file`) to `_record_special_files`, the record helpers the passes
+   share (`_record`, `_handle_artifact`, `_looks_like_mcp_config` and the
+   others), `_parse_agent_definition`, `_note_ua_mentions` and the post-walk
+   binding of Python re-export consumers (`resolve_reexport_sources`), with the
+   `_Project`, `_SourceFile` and `_MatchedSource` records. `file_errors` (was
+   `_file_errors`) is also used by the findings code.
+4. **Findings** moved into the new `project_findings.ProjectFindings`:
+   `emit_findings` (was `_emit_findings`) and every project, source-agent,
+   coding-agent, MCP, agent-manifest, workflow, IaC and credential finding
+   builder. Like the file scan it receives `_base`, and like the walker
+   `_root_prefix`.
+5. **Shared records** moved out of `file_scan.py` (2,136 lines after step 3)
+   into the new `scan_records.py`, so that no module of the split exceeds 2,000
+   lines: the `_Project`, `_SourceFile` and `_MatchedSource` records,
+   `FindingBase`, `_MCP_TRANSPORTS` (read by the file scan and the findings
+   collaborator) and the file scan's helpers that need no scanner state,
+   `_document_declares_mcp` with `_DEDICATED_MCP_CONFIG_NAMES`,
+   `_bundled_signature` with `_BUNDLED_PACKS` and `_local_module_predicate`
+   with `_on_disk_project`. The module imports none of the collaborators, so
+   `walk.py` imports `_Project` from it rather than from `filesystem.py` under
+   `TYPE_CHECKING`.
+
+`FilesystemConnector` is the façade: configuration and its validation, the
+engine hooks, `collect()`/`analyze()`/`load_offline()`, `scan_tree` with the
+per-root `_ScanState`, label and diff resolution, `_base`, which stamps the
+connector's identity on every finding and is handed to the file scan and the
+findings collaborators (both build findings), and `_root_prefix`, handed to the
+walker and the findings collaborator. The collaborators receive the validated
+options they read when the connector is constructed; `unread_settings` and
+`tree_listing_incomplete`, which `remote.py` sets after construction, are still
+read per root. `tests/unit/test_filesystem_collaborator_wiring.py` checks that
+every collaborator received every option it reads, set to a value that is not
+its default, and that `scan_tree` hands the walker those two settings.
+
+`filesystem.py` still re-exports every name that was importable from it before
+(patch a name in its defining module): those it no longer uses are explicit
+`name as name` imports, pinned with the earlier ones in
+`tests/unit/test_negative_context.py`. Tests patch the collaborator class or
+its module instead of `FilesystemConnector` or `filesystem.py`, with no
+forwarding or module-class replacement.
+
+On this branch the four later moves were made again on the integrated code,
+which the review fixes of #254 to #258 had changed in the same functions:
+each definition #259 moved was merged three ways (the original, this
+branch's version, #259's moved copy), so every fix landed in the module the
+split chose, and the 41 definitions the fixes added were placed by the
+collaborator that reads them. Verification is the repository's own: the
+full test suite on CPython 3.11 and 3.14 (the collaborator wiring test, the
+coverage, credential-oracle and filesystem suites among them), ruff, mypy,
+the complexity gate, the nine evaluation corpora and the self-scan, as the
+engineering log entry for the split records. Not verified: the live clone
+and API modes of `code.github` and `code.gitlab` against real hosts, and the
+public repositories of the 2026-10-01 field scan.

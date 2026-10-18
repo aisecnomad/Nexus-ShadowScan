@@ -309,13 +309,18 @@ The diagram is generated from the connector registry by `python -m tools.readme_
 `code.filesystem` is the largest connector; `code.github` and `code.gitlab`
 reuse it on the checkouts they fetch, in clone or API mode. Its helpers are bounded and conservative:
 each one proves a narrow construct or declines, and none imports or runs
-scanned code. [ADR-005](adrs/005-code-scanner-module-boundaries.md) proposes
-splitting the connector class itself.
+scanned code. [ADR-005](adrs/005-code-scanner-module-boundaries.md) records how
+the connector class itself was split: `filesystem.py` is now the façade, and the
+walk, file scan, findings, shared records and ownership modules below hold the
+rest.
 
 | module | responsibility |
 |---|---|
-| `filesystem.py` | the connector: tree walk, coverage accounting, file dispatch and finding construction |
-| `walk.py` | bounded, non-recursive directory walking that never follows links; project-root markers |
+| `filesystem.py` | the connector façade (ADR-005): configuration, `collect()`/`analyze()`, the per-root scan state and the identity every finding carries; constructs and wires the walk, file scan, findings and ownership collaborators |
+| `walk.py` | the tree walk (`TreeWalker`): root opening, exclusions and `include`, links, oversize and non-regular entries, submodules, deadline scheduling and the fail-closed coverage accounting; bounded, non-recursive directory walking that never follows links; project-root markers |
+| `file_scan.py` | one file's analysis (`FileScanner`): confined reads, notebooks, redacted excerpts, and dispatch to the credential, MCP, manifest, IaC, configuration and source passes; Python re-export consumers bound after the walk |
+| `project_findings.py` | finding construction (`ProjectFindings`): project, source-agent, coding-agent, MCP, agent-manifest, workflow, IaC and credential findings from one walk's observations |
+| `scan_records.py` | the records the collaborators share (`_Project`, `_SourceFile`, `_MatchedSource`), the `FindingBase` protocol of the connector's finding constructor, and file-scan helpers that need no scanner state; imports none of the collaborators |
 | `path_context.py` | path-derived evidence context: test, documentation, example, generated and CI-pipeline paths, and the discounts they apply |
 | `project_evidence.py` | how a project's observations count toward its finding: corroboration, weak mentions, env-only and model-ids-only capping |
 | `model_identifiers.py` | model-identifier literal recognition: vendor stems, id shapes and tooling look-alikes |

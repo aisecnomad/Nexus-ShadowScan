@@ -12,7 +12,7 @@ from unittest.mock import Mock
 import pytest
 
 from shadowscan.connectors.base import ConnectorContext
-from shadowscan.connectors.code import filesystem, remote
+from shadowscan.connectors.code import remote, walk
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector
@@ -151,7 +151,7 @@ def test_ordinary_blank_runs_still_parse():
 
 def test_oversized_declarations_fail_closed(tmp_path, index, monkeypatch):
     _declare(tmp_path)
-    monkeypatch.setattr(filesystem, "MAX_GITMODULES_BYTES", 16)
+    monkeypatch.setattr(walk, "MAX_GITMODULES_BYTES", 16)
     _, stats = _scan(tmp_path, index)
     assert stats.incomplete and "declarations safely" in stats.warnings[0]
 
@@ -302,7 +302,7 @@ def test_gitlink_diagnostics_keep_errno_but_never_exception_text_or_paths(tmp_pa
 def test_unavailable_git_inventory_is_incomplete_and_keeps_findings(tmp_path, index, monkeypatch):
     (tmp_path / ".git").mkdir()
     (tmp_path / "requirements.txt").write_text("langgraph\n")
-    monkeypatch.setattr(filesystem, "read_gitlink_paths", lambda *a, **kw: None)
+    monkeypatch.setattr(walk, "read_gitlink_paths", lambda *a, **kw: None)
     monkeypatch.setattr(OwnershipResolver, "git_info", lambda *a: {})
     findings, stats = _scan(tmp_path, index, use_git=True)
     assert findings and stats.incomplete

@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from shadowscan.connectors.code import filesystem
+from shadowscan.connectors.code import file_scan, filesystem
 from shadowscan.connectors.code.filesystem import _document_declares_mcp
 from shadowscan.utils.text import BINARY_CONTENT_ERROR
 
@@ -107,7 +107,7 @@ def _count_yaml_parses(monkeypatch) -> tuple[list[str], list[str]]:
         loads.append(Loader.__name__)
         return load(stream, Loader=Loader)
 
-    monkeypatch.setattr(filesystem, "_yaml_declares_mcp", counted_check)
+    monkeypatch.setattr(file_scan, "_yaml_declares_mcp", counted_check)
     monkeypatch.setattr(yaml, "load", counted_load)
     return checks, loads
 
