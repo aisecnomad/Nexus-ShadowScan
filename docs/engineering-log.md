@@ -13,6 +13,30 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### A CPython 3.12 tokenizer fault is an unreadable source, not an exception; JavaScript string spans stay inside the text (#259; October 18)
+
+Two fixes carried from #259, whose coverage-guided fuzzing found them. The
+fuzz targets and the rest of #259 are not carried here; #259 overlaps the CLI
+split, the complexity ratchet and the ownership move, and is to be rebased
+after them.
+
+- CPython 3.12's C tokenizer can fail with an exception that says nothing
+  about the text when a NUL byte follows an indented or malformed line
+  (python/cpython#140576): a `SystemError`, or in some processes an
+  `AttributeError`, so it cannot be matched by type. The three places that
+  read Python tokens now go through `shadowscan/utils/python_tokens.py`,
+  which raises one `TokenizerFault`, and answer it as they answer any source
+  the tokenizer rejects. The assignment scanner of `sanitize_text` withholds
+  the rest of the text, the source lexer masks everything after its last
+  token and reports the file incomplete (exit 3), and the re-export
+  prefilter calls the module no import-only shim. No credential was exposed
+  before: the filesystem connector's per-file isolation already recorded the
+  exception as "file analysis incomplete". The outcome is now deterministic.
+- The JavaScript-family lexer stepped over the character after a backslash
+  inside a string even when the text ended on the backslash, so the string's
+  span ended at `len(text) + 1`. The position is clamped to the end of the
+  text, so `"abc\` spans `(0, len(text))` like any other unterminated string.
+
 ### go.mod require blocks read in linear time; no dependency named "(" (October 18)
 
 - `code.filesystem` found go.mod `require ( ... )` blocks with the lazy
