@@ -88,18 +88,12 @@ JSON reports ── diff · merge (fleet) · dashboard · controls · inventory 
 
 Detection knowledge lives in YAML signature packs and threat and control
 references in YAML mapping catalogs, so adding a product is a data change, not
-a code change. Collection and analysis fail closed: an API error, a timeout,
+a code change. 
+
+Collection and analysis fail closed: an API error, a timeout,
 a refused page, an unparseable manifest or a malformed export marks the scan
-incomplete (exit 3) rather than producing a smaller report that looks clean.
-A gap the scanner can bound — a handful of unreadable entries in a large tree
-— is instead charged against a 2% coverage budget (`--max-coverage-gap`,
-`strict_coverage` to disable) and counted in the JSON report's
-`stats[].coverage` whether or not it changes the exit code; the first 50 are
-listed under `stats[].coverage.details`, and `details_truncated` counts the
-rest. Only the opt-in LLM triage is advisory; its failures are warnings and it
-never changes scores. See
-[architecture](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/architecture.md)
-for the pipeline, the package layout and the connector contract.
+incomplete (exit 3)
+
 
 ## Key capabilities
 
@@ -163,16 +157,10 @@ shadowscan jwt --file tokens.txt --jwks-url https://login.example.com/.well-know
 ```
 
 `agent-card.yaml`, `examples/` and the sample exports under `tests/fixtures/`
-come from a repository checkout; the wheel does not ship them. Scanning the
-ShadowScan checkout itself with `shadowscan code .` reports an incomplete scan
+come from a repository checkout; the wheel does not ship them. 
+Scanning the ShadowScan checkout itself with `shadowscan code .` reports an incomplete scan
 (exit 3): a few redaction test files are built to exceed the sanitizer's own
-safety limits, and a finding the sanitizer cannot bound is withheld rather than
-published unredacted — that is unbounded, so no budget applies to it. Its handful
-of unreadable entries, by contrast, stay within the coverage budget. In a
-checkout, `make self-scan` runs `examples/shadowscan.self-scan.yaml`, which
-excludes those paths, each with a documented reason, and completes with exit 0;
-`shadowscan code tests/fixtures/sample_repo --inventory agent-card.yaml`
-scans the bundled sample repository in seconds.
+safety limit.
 
 See the [quick start guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/getting-started/quickstart.md)
 for walkthroughs of each surface and the
@@ -226,22 +214,20 @@ documents every command and option; `shadowscan <command> --help` prints them fo
 | **2** | Scan completed but reached `--fail-on`; `diff` returns 2 with `--fail-on-new` or `--fail-on-drift` |
 | **3** | Scan incomplete (API error, timeout, denied access, limit, malformed export); `diff` returns 3 when reports are not comparable |
 
-Gate CI on any non-zero exit: exit 1 means nothing was scanned, and an
-incomplete scan never reads as clean. On exit 3 the CLI names the reason
-categories on stderr (`scan incomplete (exit 3): oversize-file 2`) and the
-report counts them in `summary.incomplete_reasons`; `shadowscan code --profile ci`
+Gate CI on any non-zero exit: exit 1 means nothing was scanned.
+On exit 3 the CLI names the reason categories on stderr (`scan incomplete (exit 3): oversize-file 2`), and the
+report counts them in `summary.incomplete_reasons`; `shadowscan code --profile ci.`
 declares the gaps a source gate accepts (dangling test certificate links,
 malformed fixtures, generated code) in advance and counts them in
-`summary.declared_omissions`, never one that left a file unread for
-credentials. Exit 0 from a complete
-static scan does not prove that no agent runs; see
+`summary.declared_omissions`.
+Exit 0 from a complete static scan does not prove that no agent runs; see
 [scan semantics](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/scanning.md).
 
 ---
 
 ## Python API reference
 
-The CLI is built on the same Python API. The JSON report (`--format json`) is
+The CLI uses the same Python API. The JSON report (`--format json`) is
 the stable contract; treat the Python objects as unstable between releases
 until 1.0 and pin a reviewed commit.
 
@@ -393,7 +379,8 @@ CVSS score; see [severity](https://github.com/aisecnomad/Nexus-ShadowScan/blob/m
 ### Agent frameworks and SDKs
 
 A check means ShadowScan recognizes the framework's packages in that ecosystem's
-manifests and lockfiles or its imports in that language. *Agent evidence* says what
+manifests and lockfiles or its imports in that language. 
+*Agent evidence* says what
 makes a finding an agent: *any use* of the framework, or *agent constructs* in code,
 such as an agent executor or tool-calling agent, rather than plain LLM calls.
 
@@ -477,28 +464,28 @@ endpoint and runtime connectors are in [Surfaces & connectors](#surfaces--connec
 Offline results from this repository's own benchmarks. The maintainer wrote
 ShadowScan, both corpora, their labels and the harnesses, with AI coding
 assistants (Claude, Codex, Grok, Google Antigravity and others), so these numbers are
-regression evidence about the listed inputs. They are **not** independent review
+regression evidence about the listed inputs. They are **not** independent reviews
 and **not** measured production precision or recall.
 
 | Track (run, version) | Inputs | ShadowScan result | Limits |
 |---|---|---|---|
-| [ShadowBench estate, nine surfaces](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/estate/results/2026-10-11/REPORT.md) (2026-10-11, 0.1.2) | 137 authored vendor-format entities for one fictional estate: 87 positive, 27 control, 23 near-miss | Entity precision / recall / F1 91.2% / 95.4% / 93.3%; 83 of 87 positives found; 8 of 50 controls and near-misses flagged | Authored artifacts; frozen after one label-completeness pass in which every runnable tool ran once (it added one secondary anchor and one tolerated pair and changed no label); later ShadowScan runs on it are in-sample (below) |
-| [Shadow AI discovery, code surface](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadow-ai-discovery/results/2026-10-09/REPORT.md) (2026-10-09, 0.1.2+7bdea5300551) | 87 public repositories pinned by SHA: 65 positive, 10 control, 12 near-miss; 839 expected facts | Fact precision / recall / F1 99.8% / 94.8% / 97.2% **after** tuning on this corpus (92.2% F1 before, in the [2026-10-08 run](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadow-ai-discovery/README.md#results-shadowscan-after-the-benchmark-driven-changes-2026-10-09)); 65 of 65 positive repositories flagged; 0 of 22 controls and near-misses flagged (4 of those 22 runs incomplete) | In-sample: the detection changes were driven by this corpus's errors, so these numbers measure fit to it, not field accuracy. 43 of 87 runs were incomplete (exit 3): fact counts are a lower bound, and an incomplete clean run is not a clean result |
+| [ShadowBench estate, nine surfaces](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/estate/results/2026-10-11/REPORT.md) (2026-10-11, 0.1.2) | 137 authored vendor-format entities for one fictional estate: 87 positive, 27 control, 23 near-miss | Entity precision/recall / F1 91.2% / 95.4% / 93.3%; 83 of 87 positives found; 8 of 50 controls and near-misses flagged | Authored artifacts; frozen after one label-completeness pass in which every runnable tool ran once (it added one secondary anchor and one tolerated pair and changed no label); later ShadowScan runs on it are in-sample (below) |
+| [Shadow AI discovery, code surface](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadow-ai-discovery/results/2026-10-09/REPORT.md) (2026-10-09, 0.1.2+7bdea5300551) | 87 public repositories pinned by SHA: 65 positive, 10 control, 12 near-miss; 839 expected facts | Fact precision/recall / F1 99.8% / 94.8% / 97.2% **after** tuning on this corpus (92.2% F1 before, in the [2026-10-08 run](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadow-ai-discovery/README.md#results-shadowscan-after-the-benchmark-driven-changes-2026-10-09)); 65 of 65 positive repositories flagged; 0 of 22 controls and near-misses flagged (4 of those 22 runs incomplete) | In-sample: the detection changes were driven by this corpus's errors, so these numbers measure fit to it, not field accuracy. 43 of 87 runs were incomplete (exit 3): fact counts are a lower bound, and an incomplete clean run is not a clean result |
 
 Each report also runs other open-source tools on their declared scope, which is
-narrower than nine surfaces; compare their in-scope columns in the report, not
-these headline numbers. After the 2026-10-11 estate run, ShadowScan's
-detection rules were changed with that run's errors in view (ambiguous Gemini
-names, Notion bots, gateway `/api/chat` and `/generate` routes, Kubernetes
+narrower than nine surfaces; compare their in-scope columns in the report,
+After the 2026-10-11 estate run, ShadowScan's detection rules were changed with that run's errors in view 
+(ambiguous Gemini names, Notion bots, gateway `/api/chat` and `/generate` routes, Kubernetes
 serving-engine images, n8n HTTP model calls, ServiceNow flow names, and the
-Wudpecker note-taker). A ShadowScan run on the estate after those changes is
+Wudpecker note-taker). 
+A ShadowScan run on the estate after those changes is
 in-sample: fewer errors on it are not evidence of better field accuracy.
 ShadowScan's weakest surfaces in the
 [cases run](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/cases/results/2026-10-11/REPORT.md)
 are identity (57% entity precision at 97% recall) and SaaS (51% at 88%)
 against decoy-heavy exports, so read the per-surface tables before relying
-on any single surface. The
-[benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md)
+on any single surface. 
+The [benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md)
 lists every benchmark with its protocol and limits.
 
 <p align="center">
