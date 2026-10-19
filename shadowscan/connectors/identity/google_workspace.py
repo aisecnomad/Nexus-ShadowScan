@@ -29,7 +29,7 @@ from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
 from shadowscan.connectors.common import failure_summary, finalize
-from shadowscan.connectors.identity.common import assess_app, summarize_scopes
+from shadowscan.connectors.identity.common import app_product_or_hint, assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.identity import google_customer_id
@@ -307,7 +307,7 @@ class GoogleWorkspaceConnector(BaseConnector):
             metadata={"identity_unresolved": True} if self._customer_id is None else {},
         )
         assess_app(self.index, f, name=name, scopes=scopes, client_id=agg["clientId"])
-        interesting = bool(f.frameworks) or any(t.startswith("policy.") for t in f.tags)
+        interesting = app_product_or_hint(f) or any(t.startswith("policy.") for t in f.tags)
         if not interesting:
             return None
         users = agg["users"]

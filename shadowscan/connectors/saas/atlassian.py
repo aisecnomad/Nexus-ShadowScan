@@ -19,7 +19,7 @@ from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import finalize
-from shadowscan.connectors.identity.common import assess_app
+from shadowscan.connectors.identity.common import app_product_or_hint, assess_app
 from shadowscan.connectors.offline import OfflineInputBudget
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
@@ -189,7 +189,7 @@ class AtlassianConnector(BaseConnector):
             urls=[get_path(p, "vendor.link"), get_path(p, "links.self")],
             scopes=[s for s in (p.get("scopes") or []) if isinstance(s, str)],
         )
-        if not f.frameworks:
+        if not app_product_or_hint(f):
             return None
         f.add_evidence(
             Evidence(

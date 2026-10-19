@@ -161,7 +161,7 @@ _GITHUB_ACTIONS = {
         ),
     ],
 )
-def test_github_actions_run_started_by_an_ai_agent_keeps_its_agent_claims(
+def test_github_actions_actor_name_claims_keep_only_provisional_product_hints(
     index: SignatureIndex, claim: dict, framework: str
 ):
     finding = _analyze(index, {**_GITHUB_ACTIONS, **claim})
@@ -169,7 +169,8 @@ def test_github_actions_run_started_by_an_ai_agent_keeps_its_agent_claims(
     assert finding.metadata["identity_type"] == "workload"
     assert finding.metadata["agent_claims"] == agent_claims
     assert "agent-claims" in finding.tags
-    assert framework in finding.frameworks
+    assert framework not in finding.frameworks
+    assert framework in finding.metadata["potential_frameworks"]
 
 
 @pytest.mark.parametrize(
@@ -405,7 +406,7 @@ def test_okta_decoy_name_with_ai_scopes_is_still_reported(run_connector, tmp_pat
 
 
 def test_okta_real_ai_app_with_oidc_scopes_still_reported(run_connector, tmp_path):
-    """A recognised AI product (Fireflies, ChatGPT…) must not be suppressed even with only OIDC scopes."""
+    """A product name with only OIDC scopes remains a provisional hint for review."""
     export = tmp_path / "okta.json"
     export.write_text(
         json.dumps(
@@ -421,8 +422,10 @@ def test_okta_real_ai_app_with_oidc_scopes_still_reported(run_connector, tmp_pat
     )
     findings, ctx = run_connector("identity.okta", input=str(export), org_url="https://acme.okta.com")
     assert not ctx.stats.errors
-    assert findings, "Fireflies.ai should still be reported (known AI product)"
-    assert "identity-app.meeting-notetakers" in findings[0].frameworks
+    assert findings, "Fireflies.ai should remain visible as a provisional product-name hint"
+    assert findings[0].frameworks == []
+    assert "identity-app.meeting-notetakers" in findings[0].metadata["potential_frameworks"]
+    assert findings[0].confidence <= 0.35
 
 
 def test_entra_decoy_name_with_only_oidc_scopes_is_suppressed(run_connector, tmp_path):

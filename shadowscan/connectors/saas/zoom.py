@@ -13,7 +13,7 @@ from typing import Any, ClassVar
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import failure_summary, finalize
-from shadowscan.connectors.identity.common import assess_app, summarize_scopes
+from shadowscan.connectors.identity.common import app_product_or_hint, assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient
 
@@ -160,7 +160,7 @@ class ZoomConnector(BaseConnector):
             ],
             scopes=scopes,
         )
-        if not f.frameworks and not any(t.startswith("policy.") for t in f.tags):
+        if not app_product_or_hint(f) and not any(t.startswith("policy.") for t in f.tags):
             return None
         category = app.get("_type")
         if not isinstance(category, str):

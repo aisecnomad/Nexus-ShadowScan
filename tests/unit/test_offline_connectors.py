@@ -221,8 +221,9 @@ def test_teams_github_apps_atlassian_notion_zoom_generic(run_connector, fixtures
     assert (
         "all-repositories" in cr.tags
         and "write-access" in cr.tags
-        and "coding-agent.pr-review-bots" in cr.frameworks
+        and "coding-agent.pr-review-bots" in cr.metadata["potential_frameworks"]
     )
+    assert cr.frameworks == [] and cr.confidence <= 0.35
     findings, _ = run_connector(
         "saas.atlassian",
         input=str(fixtures / "saas" / "atlassian_plugins.json"),
@@ -234,9 +235,10 @@ def test_teams_github_apps_atlassian_notion_zoom_generic(run_connector, fixtures
     findings, _ = run_connector("saas.zoom", input=str(fixtures / "saas" / "zoom_apps.json"))
     assert (
         len(findings) == 1
-        and "identity-app.meeting-notetakers" in findings[0].frameworks
+        and "identity-app.meeting-notetakers" in findings[0].metadata["potential_frameworks"]
         and findings[0].metadata["users"] == 214
     )
+    assert findings[0].frameworks == [] and findings[0].confidence <= 0.35
     findings, _ = run_connector(
         "saas.generic",
         input=str(fixtures / "saas" / "generic_apps.csv"),

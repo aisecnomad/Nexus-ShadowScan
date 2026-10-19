@@ -25,7 +25,7 @@ from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import failure_summary, finalize
-from shadowscan.connectors.identity.common import assess_app, summarize_scopes
+from shadowscan.connectors.identity.common import app_product_or_hint, assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.text import get_path, parse_timestamp, to_iso
@@ -504,7 +504,7 @@ class SlackConnector(BaseConnector):
             client_id=app_id,
         )
         interesting = (
-            bool(f.frameworks) or any(t.startswith("policy.") for t in f.tags) or status == "requested"
+            app_product_or_hint(f) or any(t.startswith("policy.") for t in f.tags) or status == "requested"
         )
         if not interesting and not (bot and scope_names):
             return None

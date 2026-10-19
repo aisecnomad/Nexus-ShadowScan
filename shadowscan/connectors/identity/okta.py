@@ -25,6 +25,7 @@ from requests import RequestException
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import config_boolean, failure_summary, finalize
 from shadowscan.connectors.identity.common import (
+    app_product_or_hint,
     assess_app,
     identity_kind_for,
     only_ai_name_hint,
@@ -204,13 +205,15 @@ class OktaConnector(BaseConnector):
                     weight=0.2,
                 )
             )
-        if (
-            app.get("signOnMode") not in {"OPENID_CONNECT", "SAML_2_0", "SAML_1_1", "WS_FEDERATION"}
-            and not f.frameworks
-        ):
+        if app.get("signOnMode") not in {
+            "OPENID_CONNECT",
+            "SAML_2_0",
+            "SAML_1_1",
+            "WS_FEDERATION",
+        } and not app_product_or_hint(f):
             # bookmark / SWA apps without AI signals are noise
             return None
-        if not f.frameworks and not machine and not scopes:
+        if not app_product_or_hint(f) and not machine and not scopes:
             return None
         # A sign-in client with OpenID Connect scopes only and no AI hint, or
         # one from a common word ("Insurance Agent Desk", "Copilot Money"),

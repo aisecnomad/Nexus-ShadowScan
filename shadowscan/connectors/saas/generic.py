@@ -16,7 +16,7 @@ from typing import Any, ClassVar
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import config_boolean, finalize, whole_value_placeholder
-from shadowscan.connectors.identity.common import assess_app, summarize_scopes
+from shadowscan.connectors.identity.common import app_product_or_hint, assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.credential_identity import credential_identity_scope, keyed_credential_digest
@@ -275,9 +275,7 @@ class GenericSaaSConnector(BaseConnector):
         scopes = _scope_values(safe["scopes"])
         urls = safe["url"]
         url_list = (
-            [str(u) for u in urls if u not in (None, "")]
-            if isinstance(urls, list)
-            else [u.strip() for u in re.split(r"[,;\s]+", str(urls or "")) if u.strip()]
+            [str(u) for u in urls if u not in (None, "")] if isinstance(urls, list) else [str(urls or "")]
         )
         f = Finding(
             surface=Surface.SAAS,
@@ -301,7 +299,7 @@ class GenericSaaSConnector(BaseConnector):
             scopes=scopes,
             client_id=str(safe["id"]) if safe["id"] else None,
         )
-        interesting = bool(f.frameworks) or any(t.startswith("policy.") for t in f.tags)
+        interesting = app_product_or_hint(f) or any(t.startswith("policy.") for t in f.tags)
         if not interesting and not self.keep_all:
             return None
         users = safe["users"]

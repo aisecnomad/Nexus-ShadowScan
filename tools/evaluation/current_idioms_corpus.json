@@ -3,11 +3,7 @@
   "metadata": {
     "name": "Current SDK idioms, October 2026",
     "type": "synthetic",
-    "provenance": "Short snippets written from scratch for this regression suite (AI-assisted) in the shape the current SDK documentation uses: AI SDK 7, OpenAI Agents SDK, Claude Agent SDK, LangGraph, LangChain 1.0, Google ADK, Pydantic AI, smolagents, Strands, Microsoft Agent Framework and Mastra, with hard negatives. No copied third party code, live repositories, independent labels or field accuracy claims.",
-    "known_gap_policy": {
-      "max_count": 1,
-      "expires_on": "2026-12-31"
-    }
+    "provenance": "Short snippets written from scratch for this regression suite (AI-assisted) in the shape the current SDK documentation uses: AI SDK 7, OpenAI Agents SDK, Claude Agent SDK, LangGraph, LangChain 1.0, Google ADK, Pydantic AI, smolagents, Strands, Microsoft Agent Framework and Mastra, with hard negatives. No copied third party code, live repositories, independent labels or field accuracy claims."
   },
   "cases": [
     {
@@ -131,18 +127,26 @@
     {
       "id": "ai-sdk7-single-step-imported-tool",
       "family": "vercel-ai-sdk",
-      "description": "One generateText step with an imported tool whose execute runs when the model selects it: model-selected dispatch, as for an inline executable tool. Known gap: without a stop condition the scanner only recognizes inline tool({ execute }) definitions and does not follow imported tool definitions across files, so this is reported as SDK usage.",
+      "description": "One generateText step with an imported tool whose explicit execute callback runs when the model selects it: model-selected dispatch, as for an inline executable tool. The original fixture omitted its root alias configuration; tsconfig.json now explicitly binds @/* to ./* instead of assuming that mapping. Explicit relative and configured aliases have separate positive controls.",
       "files": {
         "package.json": "{\n  \"name\": \"lumen-support-chat\",\n  \"private\": true,\n  \"scripts\": { \"dev\": \"next dev\", \"build\": \"next build\", \"start\": \"next start\" },\n  \"dependencies\": {\n    \"@ai-sdk/openai\": \"^3.0.4\",\n    \"ai\": \"7.0.12\",\n    \"next\": \"16.0.3\",\n    \"react\": \"19.2.0\",\n    \"zod\": \"^4.1.0\"\n  }\n}\n",
         "lib/status.ts": "import { openai } from \"@ai-sdk/openai\";\nimport { generateText } from \"ai\";\nimport { lookupOrder } from \"@/lib/tools/orders\";\n\n// One step: the model may call lookupOrder once; its result is returned, not fed back.\nexport async function orderStatus(question: string) {\n  const result = await generateText({\n    model: openai(\"gpt-5-mini\"),\n    prompt: question,\n    tools: { lookupOrder },\n  });\n  return result.toolResults;\n}\n",
-        "lib/tools/orders.ts": "import { tool } from \"ai\";\nimport { z } from \"zod\";\nimport { db } from \"@/lib/db\";\n\nexport const lookupOrder = tool({\n  description: \"Find an order by its number and return its status and items\",\n  inputSchema: z.object({ orderNumber: z.string().regex(/^LL-[0-9]{6}$/) }),\n  execute: async ({ orderNumber }) => {\n    const order = await db.order.findUnique({ where: { number: orderNumber }, include: { items: true } });\n    return order ?? { error: `no order ${orderNumber}` };\n  },\n});\n"
+        "lib/tools/orders.ts": "import { tool } from \"ai\";\nimport { z } from \"zod\";\nimport { db } from \"@/lib/db\";\n\nexport const lookupOrder = tool({\n  description: \"Find an order by its number and return its status and items\",\n  inputSchema: z.object({ orderNumber: z.string().regex(/^LL-[0-9]{6}$/) }),\n  execute: async ({ orderNumber }) => {\n    const order = await db.order.findUnique({ where: { number: orderNumber }, include: { items: true } });\n    return order ?? { error: `no order ${orderNumber}` };\n  },\n});\n",
+        "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"paths\": { \"@/*\": [\"./*\"] }\n  }\n}\n"
       },
       "target": {
         "kind": "agent",
         "signature": "framework.vercel-ai-sdk"
       },
       "present": true,
-      "known_gap": true
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.vercel-ai-sdk"
+          }
+        ]
+      }
     },
     {
       "id": "openai-agents-python-runner",
@@ -706,6 +710,84 @@
             "capabilities": [
               "tool-use"
             ]
+          }
+        ],
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "ai-sdk7-configured-imported-tool",
+      "family": "vercel-ai-sdk",
+      "description": "A single model step selects an executable imported tool whose project-local @/ alias is explicitly declared by tsconfig.json.",
+      "files": {
+        "package.json": "{\n  \"name\": \"lumen-support-chat\",\n  \"private\": true,\n  \"scripts\": { \"dev\": \"next dev\", \"build\": \"next build\", \"start\": \"next start\" },\n  \"dependencies\": {\n    \"@ai-sdk/openai\": \"^3.0.4\",\n    \"ai\": \"7.0.12\",\n    \"next\": \"16.0.3\",\n    \"react\": \"19.2.0\",\n    \"zod\": \"^4.1.0\"\n  }\n}\n",
+        "lib/status.ts": "import { openai } from \"@ai-sdk/openai\";\nimport { generateText } from \"ai\";\nimport { lookupOrder } from \"@/lib/tools/orders\";\n\n// One step: the model may call lookupOrder once; its result is returned, not fed back.\nexport async function orderStatus(question: string) {\n  const result = await generateText({\n    model: openai(\"gpt-5-mini\"),\n    prompt: question,\n    tools: { lookupOrder },\n  });\n  return result.toolResults;\n}\n",
+        "lib/tools/orders.ts": "import { tool } from \"ai\";\nimport { z } from \"zod\";\nimport { db } from \"@/lib/db\";\n\nexport const lookupOrder = tool({\n  description: \"Find an order by its number and return its status and items\",\n  inputSchema: z.object({ orderNumber: z.string().regex(/^LL-[0-9]{6}$/) }),\n  execute: async ({ orderNumber }) => {\n    const order = await db.order.findUnique({ where: { number: orderNumber }, include: { items: true } });\n    return order ?? { error: `no order ${orderNumber}` };\n  },\n});\n",
+        "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"baseUrl\": \".\",\n    \"paths\": {\n      \"@/*\": [\n        \"./*\"\n      ]\n    }\n  }\n}\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.vercel-ai-sdk"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.vercel-ai-sdk",
+            "capabilities": [
+              "tool-use"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "ai-sdk7-relative-imported-tool",
+      "family": "vercel-ai-sdk",
+      "description": "A single model step selects an executable imported tool through an explicit relative import in the same manifest project.",
+      "files": {
+        "package.json": "{\n  \"name\": \"lumen-support-chat\",\n  \"private\": true,\n  \"scripts\": { \"dev\": \"next dev\", \"build\": \"next build\", \"start\": \"next start\" },\n  \"dependencies\": {\n    \"@ai-sdk/openai\": \"^3.0.4\",\n    \"ai\": \"7.0.12\",\n    \"next\": \"16.0.3\",\n    \"react\": \"19.2.0\",\n    \"zod\": \"^4.1.0\"\n  }\n}\n",
+        "lib/status.ts": "import { openai } from \"@ai-sdk/openai\";\nimport { generateText } from \"ai\";\nimport { lookupOrder } from \"./tools/orders\";\n\n// One step: the model may call lookupOrder once; its result is returned, not fed back.\nexport async function orderStatus(question: string) {\n  const result = await generateText({\n    model: openai(\"gpt-5-mini\"),\n    prompt: question,\n    tools: { lookupOrder },\n  });\n  return result.toolResults;\n}\n",
+        "lib/tools/orders.ts": "import { tool } from \"ai\";\nimport { z } from \"zod\";\nimport { db } from \"@/lib/db\";\n\nexport const lookupOrder = tool({\n  description: \"Find an order by its number and return its status and items\",\n  inputSchema: z.object({ orderNumber: z.string().regex(/^LL-[0-9]{6}$/) }),\n  execute: async ({ orderNumber }) => {\n    const order = await db.order.findUnique({ where: { number: orderNumber }, include: { items: true } });\n    return order ?? { error: `no order ${orderNumber}` };\n  },\n});\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.vercel-ai-sdk"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.vercel-ai-sdk",
+            "capabilities": [
+              "tool-use"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "ai-sdk7-imported-schema-without-execute",
+      "family": "vercel-ai-sdk",
+      "description": "An imported SDK tool declares an input schema but no execute callback; its model request does not establish automatic action dispatch.",
+      "files": {
+        "package.json": "{\n  \"name\": \"lumen-support-chat\",\n  \"private\": true,\n  \"scripts\": { \"dev\": \"next dev\", \"build\": \"next build\", \"start\": \"next start\" },\n  \"dependencies\": {\n    \"@ai-sdk/openai\": \"^3.0.4\",\n    \"ai\": \"7.0.12\",\n    \"next\": \"16.0.3\",\n    \"react\": \"19.2.0\",\n    \"zod\": \"^4.1.0\"\n  }\n}\n",
+        "lib/status.ts": "import { openai } from \"@ai-sdk/openai\";\nimport { generateText } from \"ai\";\nimport { lookupOrder } from \"@/lib/tools/orders\";\n\n// One step: the model may call lookupOrder once; its result is returned, not fed back.\nexport async function orderStatus(question: string) {\n  const result = await generateText({\n    model: openai(\"gpt-5-mini\"),\n    prompt: question,\n    tools: { lookupOrder },\n  });\n  return result.toolResults;\n}\n",
+        "lib/tools/orders.ts": "import { tool } from \"ai\";\nexport const lookupOrder = tool({ description: \"Describe an order\", inputSchema: { type: \"object\" } });\n",
+        "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"baseUrl\": \".\",\n    \"paths\": {\n      \"@/*\": [\n        \"./*\"\n      ]\n    }\n  }\n}\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.vercel-ai-sdk"
+      },
+      "present": false,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.vercel-ai-sdk"
           }
         ],
         "max_agent_findings": 0

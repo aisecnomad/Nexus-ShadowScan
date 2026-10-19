@@ -1,0 +1,11 @@
+# Inert scanner fixture: the image belongs to this Kubernetes workload.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workflow
+spec:
+  template:
+    spec:
+      containers:
+        - name: workflow
+          image: n8nio/n8n:1.0.0

@@ -29,7 +29,7 @@ from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import cap_confidence, config_boolean, failure_summary, finalize
-from shadowscan.connectors.identity.common import assess_app, summarize_scopes
+from shadowscan.connectors.identity.common import app_product_or_hint, assess_app, summarize_scopes
 from shadowscan.connectors.offline import OfflineInputBudget
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
@@ -471,7 +471,7 @@ class GitHubAppsConnector(BaseConnector):
             last_seen=pat.get("token_last_used_at"),
         )
         assess_app(self.index, f, name=name, scopes=[s.split("/", 1)[-1] for s in scopes])
-        if not f.frameworks and not any(t.startswith("policy.") for t in f.tags):
+        if not app_product_or_hint(f) and not any(t.startswith("policy.") for t in f.tags):
             return None
         f.add_evidence(
             Evidence(

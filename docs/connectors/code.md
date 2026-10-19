@@ -15,6 +15,35 @@ See the [shared connector entry guide](../connectors.md#connector-entry-guide)
 for the common modes, permissions, options, fail-closed and evidence-limit
 references.
 
+## Cross-file tool dispatch
+
+The code scanner resolves a bounded subset of local tool dispatch from files
+already read inside the same manifest project. Python provider feedback loops
+must connect an import-bound client response to a verified dispatcher, then
+return its result and tool-call identifier to the same message history. A typed
+client parameter alone is insufficient: a visible call must supply the matching
+constructed SDK client. Supported local dispatcher helpers use literal handler
+tables for file readers or literal-name branches with import-bound HTTP clients.
+Other dynamic or unproven dispatch remains supporting evidence.
+
+For JavaScript/TypeScript AI SDK calls, a stable local named import must resolve
+to an explicitly exported `const` initialized by import-bound `ai.tool` with an
+executable callback. Relative imports, explicit one-target tsconfig/jsconfig
+path mappings and bounded named re-export chains are supported. The scanner
+does not guess `@/` aliases, execute code, or read omitted files to complete a
+proof.
+Ambiguous paths, changed bindings and schema-only tools cannot establish an agent.
+An AI SDK import must also remain external: a configuration that can remap the
+`ai` module or shadow it through its base directory, or an unreadable or
+inherited relevant tsconfig/jsconfig, leaves that SDK proof unresolved.
+Cross-file analysis shares the scan's deadlines and bounded source budgets;
+limits that prevent a requested proof leave the scan incomplete.
+
+An n8n container image supplies n8n infrastructure evidence through its
+dedicated product signature. Its image establishes a Kubernetes workload only
+inside a parsed built-in workload declaration, so Compose and Dockerfile images
+do not duplicate the generic Kubernetes/container signature.
+
 ## `code.filesystem`
 
 Optional `diff_base` (`shadowscan code PATH --diff-base REF`) accepts a local
@@ -102,6 +131,47 @@ bindings under the existing conservative whole-file policy. Property keys and
 initializer references do not declare names. Unsupported binding syntax retains
 usage evidence without proving an imported constructor; analysis limits make
 coverage incomplete. Scanned source is never executed.
+
+Provider-bound Python tool loops can establish an agent without an agent-framework
+dependency. The supported proof connects a constructed SDK client, its model
+response, a model-selected dispatch, and that dispatch's result and matching call
+identifier in the same message history. An imported dispatcher can qualify when
+both the selected name and arguments reach it and its result is fed back; its
+implementation and external effects remain unobserved. A dispatcher imported
+from a local module whose source the scan has read must additionally prove the
+dispatch in that source; a local source that proves nothing withholds it.
+Dispatcher provenance, including source-proven local helpers, is limited to
+unshadowed, unconditional module imports preceding the dispatch; an import in
+another function or conditional branch cannot establish it. A local helper's annotated
+SDK parameter is usable only when its observed direct call sites pass agreeing,
+constructed SDK clients. An annotation, a generic loop, argument parsing or an
+unrelated callback is insufficient.
+
+JavaScript/TypeScript model calls can use executable tools imported from the same
+manifest project. The bounded static resolver follows supported named exports
+with a proven `ai` tool factory and an executable callback, including named
+re-exports. It reads only source snapshots already admitted by the confined
+scanner. Relative imports and explicit root `tsconfig.json` / `jsconfig.json`
+path mappings are supported. Wildcard substitution precedes parent-path
+normalization, and the resulting target must remain within the project.
+Package imports, inherited configurations and an
+assumed `@/` convention are not. Ambiguous or unresolved targets retain SDK
+usage evidence. Default/namespace tool imports and exporter modules without
+complete semicolon-terminated statements remain unresolved. The resolver retains
+at most 4,096 module summaries, 64 KiB per module, 256 exports or path mappings,
+and 16 re-export links; pending source uses the existing 4,096-file / 16 MiB queue.
+Resolution limits mark coverage incomplete; no sampled source, configuration or
+module is executed.
+
+Container images retain product-specific infrastructure evidence in Compose and
+Dockerfiles. The Kubernetes workload image signature additionally requires the
+image to occur in a recognized built-in Kubernetes workload's container,
+init-container or ephemeral-container declaration. An image in another YAML
+document, a comment, descriptive scalar or CI job cannot establish that
+relationship. Unparsed templates and custom controllers do not provide that
+structural proof. A static workload manifest does not prove the container is
+deployed or running.
+
 Confidence groups cap repeated observations of the same technology. Python also
 resolves absolute `from local_shim import Alias` imports through already-read
 `.py` files at the same manifest project root (or scan root without a manifest).

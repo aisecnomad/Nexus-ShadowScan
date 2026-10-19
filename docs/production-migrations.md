@@ -7,6 +7,26 @@ revision; at release time they fold into the release notes. The
 [candidate change history](history/production-change-history.md) keeps the
 full dated log.
 
+## October 18 application and static-tool attribution (Unreleased)
+
+- Display names, publisher labels and descriptions no longer establish an AI
+  product by themselves. Retained name-only app records carry provisional
+  `metadata.potential_*` hints, omit vendor-specific capabilities and stay at
+  possible confidence. Preserve human triage for those hints; a lower score does
+  not demonstrate that an integration was removed. JWT client-name hints likewise
+  cannot promote a human/delegated identity to an agent by themselves.
+- Supported Python provider loops and locally imported executable JavaScript
+  tools can now be classified as agents. Unknown JavaScript aliases remain
+  unresolved; configure their actual project paths rather than assuming `@/`.
+- Compose/Dockerfile product findings remain available without Kubernetes-specific
+  image attribution. Kubernetes attribution requires a parsed, recognized workload.
+
+Review the evidence changes and establish a fresh baseline for the exact pinned
+revision. The scanner-source fingerprint changes, invalidating incremental caches.
+These authored regression fixes do not supply live-tenant or independent holdout
+acceptance. See [code](connectors/code.md) and
+[identity](connectors/identity.md#ambiguous-product-names) for the supported bounds.
+
 ## October 17 coverage semantics migration (Unreleased)
 
 Which unread content leaves a scan incomplete is decided by one rule

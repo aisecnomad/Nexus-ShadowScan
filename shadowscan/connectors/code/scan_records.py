@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
+import yaml
+
 from shadowscan.connectors.base import incomplete_reason
 from shadowscan.connectors.code.excerpts import _ExcerptSource, _Snippet
 from shadowscan.connectors.code.import_provenance import local_module_conflict
@@ -29,7 +31,7 @@ from shadowscan.connectors.code.instruction_content import ContentHit
 from shadowscan.connectors.code.manifests import Dep
 from shadowscan.connectors.code.mcp_config import mcp_server_holders
 from shadowscan.connectors.code.skill_audit import InstructionAudit
-from shadowscan.connectors.code.source_text import _CellSpans
+from shadowscan.connectors.code.source_text import _YAML_SUFFIXES, _CellSpans
 from shadowscan.models import Finding, Kind
 from shadowscan.signatures import Match, Signature
 from shadowscan.signatures.loader import builtin_signature_dir
@@ -259,3 +261,113 @@ _READ_ISSUE_REASONS = {
 def _read_issue_reason(issue: str) -> str:
     """The ``INCOMPLETE_REASONS`` category of a read failure the reader described as ``issue``."""
     return _READ_ISSUE_REASONS.get(issue) or incomplete_reason(issue)
+
+
+# Words that make an env file's name a template's (.env.example, .env.sample,
+# config/.env.template, .env.dist): its values are samples to replace.
+_ENV_TEMPLATE_WORDS = frozenset({"example", "sample", "template", "tmpl", "dist", "default", "defaults"})
+
+
+def _env_values_file(name: str) -> bool:
+    """Whether a file holds environment or tool credential values themselves, not a template of them.
+
+    A ``.env`` file (``.env``, ``.env.local``, ``prod.env``) other than a
+    template, or a tool credential file (``CREDENTIAL_FILE_NAMES``). Only
+    there is a PASSWORD value never the name of another setting.
+    """
+    lower = name.lower()
+    if lower in CREDENTIAL_FILE_NAMES:
+        return True
+    if not (lower.startswith(".env") or lower.endswith(".env")):
+        return False
+    return _ENV_TEMPLATE_WORDS.isdisjoint(re.split(r"[._-]", lower))
+
+
+def _escaped_key(key: str) -> str:
+    """A pattern for ``key`` with any of its characters written as a JSON or TOML ``\\u`` escape."""
+    parts = []
+    for character in key:
+        digits = "".join(f"[{d.lower()}{d.upper()}]" if d.isalpha() else d for d in f"{ord(character):02x}")
+        parts.append(f"(?:{re.escape(character)}|\\\\(?:u00|U000000){digits})")
+    return "".join(parts)
+
+
+_TABLE_KEYS = f"(?:{_escaped_key('mcpServers')}|{_escaped_key('mcp_servers')})"
+
+
+# A key, not text: an unescaped double quote opens it (inside a JSON string every
+# quote is escaped) and a colon follows its closing quote.
+_JSON_TABLE_KEY = re.compile(rf'(?<!\\)"{_TABLE_KEYS}"\s*:')
+
+
+_JSON_MCP_KEY = re.compile(rf'(?<!\\)"{_escaped_key("mcp")}"\s*:')
+
+
+_JSON_SERVERS_KEY = re.compile(rf'(?<!\\)"{_escaped_key("servers")}"\s*:')
+
+
+# A TOML key at the start of a line or after an inline table's brace or comma: a
+# table header (``[mcp_servers.e]``, ``[tool.mcp_servers]``), a dotted key
+# (``mcp_servers.e.command =``) or an inline table (``mcp_servers = {``), bare or quoted.
+_TOML_TABLE_KEY = re.compile(
+    # A dotted prefix starts with a key character, so it cannot also take the
+    # blanks before it: one way to read each line, linear in its length.
+    r"(?:^|[{,])[ \t]*(?:\[\[?[ \t]*)?(?:[^\n=#\[\]{},\s][^\n=#\[\]{},]*\.[ \t]*)?"
+    rf"[\"']?{_TABLE_KEYS}[\"']?[ \t]*[.=\]]",
+    re.MULTILINE,
+)
+
+
+_YAML_SCAN_LOADER: Any = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+def _yaml_names_mcp_key(text: str) -> bool:
+    """Whether a YAML mapping key in ``text`` names a server table, however the key is quoted or escaped.
+
+    Read from the scanner's tokens, which undo quoting and escapes as the
+    loader does, so a key is told from text in a string value (a heredoc, an
+    OpenAPI description quoting a client's configuration). Text the scanner
+    cannot read is taken to name one.
+    """
+    keys: set[str] = set()
+    key = False
+    try:
+        for token in yaml.scan(text, Loader=_YAML_SCAN_LOADER):
+            if key and isinstance(token, yaml.ScalarToken):
+                if token.value in ("mcpServers", "mcp_servers"):
+                    return True
+                keys.add(token.value)
+            key = isinstance(token, yaml.KeyToken)
+    except yaml.YAMLError:
+        return True
+    return {"mcp", "servers"} <= keys
+
+
+def _names_mcp_key(rel: str, text: str) -> bool:
+    """Whether ``text`` spells a server table key as a key, not as text in a string value.
+
+    The check of a document whose parse the walk's bounds cut
+    (``mcp_server_holders``): a JSON key opened by an unescaped quote and
+    followed by a colon, a YAML mapping key (``_yaml_names_mcp_key``), a TOML
+    key, any of them with its characters written as escapes. A key past the
+    bounds keeps the file MCP configuration, so its unread table is recorded;
+    an issue export or an OpenAPI document that quotes a client's
+    configuration in a string is not.
+    """
+    if rel.endswith(_YAML_SUFFIXES):
+        return _yaml_names_mcp_key(text)
+    if rel.endswith(".toml"):
+        return _TOML_TABLE_KEY.search(text) is not None
+    return _JSON_TABLE_KEY.search(text) is not None or (
+        _JSON_MCP_KEY.search(text) is not None and _JSON_SERVERS_KEY.search(text) is not None
+    )
+
+
+@dataclass(frozen=True)
+class _UndecodableFile:
+    """A binary or undecodable file whose gap is discounted or declared, read for credentials only.
+
+    ``on_disk`` is its name below the open scan root, as ``_read_source`` read it.
+    """
+
+    on_disk: PurePosixPath
