@@ -94,7 +94,9 @@ JSON reports ── diff · merge (fleet) · dashboard · controls · inventory 
 
 Detection knowledge lives in YAML signature packs and threat and control
 references in YAML mapping catalogs, so adding a product is a data change, not
-a code change. Collection and analysis fail closed: an API error, a timeout,
+a code change.
+
+Collection and analysis fail closed: an API error, a timeout,
 a refused page, an unparseable manifest or a malformed export marks the scan
 incomplete (exit 3) rather than producing a smaller report that looks clean.
 A gap the scanner can bound — a handful of unreadable entries in a large tree
@@ -235,7 +237,7 @@ documents every command and option; `shadowscan <command> --help` prints them fo
 
 Gate CI on any non-zero exit: exit 1 means nothing was scanned, and an
 incomplete scan never reads as clean. On exit 3 the CLI names the reason
-categories on stderr (`scan incomplete (exit 3): oversize-file 2`) and the
+categories on stderr (`scan incomplete (exit 3): oversize-file 2`), and the
 report counts them in `summary.incomplete_reasons`; `shadowscan code --profile ci`
 declares the gaps a source gate accepts (dangling test certificate links,
 malformed fixtures, generated code) in advance and counts them in
@@ -248,7 +250,7 @@ static scan does not prove that no agent runs; see
 
 ## Python API reference
 
-The CLI is built on the same Python API. The JSON report (`--format json`) is
+The CLI uses the same Python API. The JSON report (`--format json`) is
 the stable contract; treat the Python objects as unstable between releases
 until 1.0 and pin a reviewed commit.
 
