@@ -19,5 +19,5 @@ Detection is signature driven: see :mod:`shadowscan.signatures`. The scan pipeli
 :class:`shadowscan.engine.Engine`; ``docs/architecture.md`` describes the package layout.
 """
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 __all__ = ["__version__"]

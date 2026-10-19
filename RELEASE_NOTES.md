@@ -8,12 +8,24 @@ records each in detail, and the
 [deployment and migration guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md)
 has the full upgrade steps.
 
-## Unreleased
+## 0.1.3 — 2026-10-20
 
-Changes on `main` since 0.1.2, for operators. They are not published or
-tagged; pin a reviewed commit SHA to use them. Details:
-[CHANGELOG.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md)
-and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md).
+The first release since the repository was renamed to
+`aisecnomad/Nexus-ShadowScan`, and the first built as a source distribution
+and a wheel from it. It carries every change on `main` since 0.1.2:
+budgeted coverage gaps, capability interactions in risk scores, agent
+registry and A2A Agent Card sources, drift classes, the fleet dashboard,
+threat and control references, and the detection, redaction and hardening
+work the sections below describe. These notes prepare the release; confirm
+publication on [PyPI](https://pypi.org/project/NexusShadowScan/0.1.3/) and
+the [GitHub release](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.3)
+before installing this version from the production index. No independent
+human review is recorded in this release preparation. Publication and
+artifact attestations do not establish deployment acceptance. Details:
+[CHANGELOG.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md),
+the [migration notes](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production-migrations.md)
+and the
+[candidate change history](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/history/production-change-history.md).
 
 ### Before you upgrade
 
@@ -283,7 +295,7 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   download with `gh attestation verify --bundle` as the
   [publishing runbook](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/operations/publishing.md)
   shows; a script that downloaded the old names needs the new ones.
-- The next release uploads a source distribution beside the universal
+- This release uploads a source distribution beside the universal
   `py3-none-any` wheel. The release workflow builds the wheel from that sdist
   with `python -m build`, checks that both carry the same metadata and package
   files, attests both and publishes both through PyPI trusted publishing. 0.1.2

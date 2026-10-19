@@ -1,9 +1,12 @@
-# Pending migration notes (Unreleased)
+# Migration notes for 0.1.3
 
-Per-change migration and behavior notes for changes on `main` that are not
-in a tagged release yet. Read them together with the
-[production deployment guide](production.md) when pinning a reviewed
-revision; at release time they fold into the release notes. The
+Per-change migration and behavior notes for the changes between 0.1.2 and
+0.1.3, written while each change was unreleased; the section headings keep
+the labels they were written under, so links to them stay valid. Read them
+together with the [production deployment guide](production.md) when
+upgrading or pinning a reviewed revision. The
+[release notes](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/RELEASE_NOTES.md)
+summarise them for operators, and the
 [candidate change history](history/production-change-history.md) keeps the
 full dated log.
 
