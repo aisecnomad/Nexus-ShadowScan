@@ -78,3 +78,10 @@ def merge(findings: list[Finding]) -> list[Finding]:
         cur.last_seen = max((x for x in (cur.last_seen, f.last_seen) if x), default=None)
         cur.recompute_confidence()
     return list(by_id.values())
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "merge",
+]

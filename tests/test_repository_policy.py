@@ -53,6 +53,8 @@ WRITE_SCOPES = {
     ("docs.yml", "deploy"): {"pages", "id-token"},
     ("stale.yml", "stale"): {"issues", "pull-requests"},
     ("labels.yml", "sync"): {"issues"},
+    # Runs no repository code; only opens or updates the drift tracking issue.
+    ("connector-inventory.yml", "report"): {"issues"},
 }
 # The aggregate floor AGENTS.md and CONTRIBUTING.md document.
 COVERAGE_FLOOR = 80.0

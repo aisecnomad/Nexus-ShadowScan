@@ -1050,3 +1050,12 @@ def correlate_lifecycle(
                 )
             )
         f.metadata["lifecycle"] = lifecycle
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "correlate",
+    "correlate_lifecycle",
+    "correlate_runtime",
+]

@@ -587,3 +587,41 @@ def _approves(record: RegistryRecord, policy: TrustedRegistry) -> bool:
     if record.status == "approved":
         return record.approval_mode == "manual" or policy.allow_auto_approved
     return record.status == "registered" and policy.allow_registered_only
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "APPROVAL_MODES",
+    "BINDABLE_RESOURCE_TYPES",
+    "COVERAGE_VALUES",
+    "DESCRIPTOR_TYPES",
+    "EVIDENCE_GROUP",
+    "EVIDENCE_WEIGHT",
+    "LISTING_SCOPES",
+    "MAX_BINDINGS",
+    "MAX_IDENTIFIER_LENGTH",
+    "MAX_LINKS",
+    "MAX_TRUSTED_REGISTRIES",
+    "OFFLINE_WITHHELD",
+    "RECONCILED_KINDS",
+    "RECONCILIATION_KEY",
+    "RECONCILIATION_STATUSES",
+    "RECORD_KEY",
+    "RECORD_SCHEMA",
+    "RECORD_STATUSES",
+    "REGISTERING_STATUSES",
+    "REGISTRY_TYPES",
+    "RegistryBinding",
+    "RegistryRecord",
+    "TRUSTED_SOURCE_PREFIX",
+    "TrustedApprovals",
+    "TrustedRegistry",
+    "UNTRUSTABLE_REGISTRY_TYPES",
+    "parse_registry_record",
+    "prune_reconciliation_links",
+    "reconcile_registries",
+    "registry_evidence",
+    "registry_record",
+    "shown_registry_id",
+]

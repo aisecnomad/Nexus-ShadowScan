@@ -739,3 +739,29 @@ def load_history(directory: str | Path) -> dict[str, Any]:
     }
     cleaned: dict[str, Any] = sanitize(summary)
     return cleaned
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "AMBIGUOUS_REGISTRATION",
+    "AUTONOMY_STATUSES",
+    "HistoryError",
+    "INVENTORY_SCHEMA",
+    "INVENTORY_STATUSES",
+    "MAX_DIAGNOSTICS",
+    "MAX_DIAGNOSTIC_MESSAGES",
+    "MAX_HISTORY",
+    "MAX_HISTORY_FILES",
+    "NOT_COLLECTED",
+    "PRIORITY_FLOOR",
+    "REFERENCE_NOTE",
+    "UNKNOWN",
+    "build_inventory",
+    "coverage_cell",
+    "inventory_status",
+    "is_priority",
+    "load_history",
+    "parse_instant",
+    "render_inventory_json",
+]

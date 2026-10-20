@@ -1516,3 +1516,17 @@ _RedactionNamespace._binders = _binding_modules()
 # other passes keep the object they imported, so a patched rule or limit would
 # apply to some passes and silently not to others.
 sys.modules[__name__].__class__ = _RedactionNamespace
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "REDACTED",
+    "SanitizationLimitError",
+    "credential_id",
+    "policy_token",
+    "sanitize",
+    "sanitize_excerpt",
+    "sanitize_text",
+    "sanitize_text_excerpt",
+]

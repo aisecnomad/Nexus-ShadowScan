@@ -1,0 +1,1163 @@
+{
+  "schema": "shadowscan.python-api/v1",
+  "generated_by": "python -m tools.public_api",
+  "modules": {
+    "shadowscan": {
+      "__version__": {"kind": "constant", "type": "str"}
+    },
+    "shadowscan.autonomy": {
+      "APPLICABLE_KINDS": {"kind": "constant", "type": "frozenset"},
+      "BOUNDS": {"kind": "constant", "type": "tuple"},
+      "INITIATION_VALUES": {"kind": "constant", "type": "tuple"},
+      "LEVELS": {"kind": "constant", "type": "tuple"},
+      "Level": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(number: int, name: str, label: str) -> None",
+        "fields": {
+          "number": "int",
+          "name": "str",
+          "label": "str"
+        },
+        "members": {
+          "title": {"kind": "property"}
+        }
+      },
+      "MAX_BASIS": {"kind": "constant", "type": "int"},
+      "MAX_LEVEL": {"kind": "constant", "type": "int"},
+      "MIN_LEVEL": {"kind": "constant", "type": "int"},
+      "OVERSIGHT_VALUES": {"kind": "constant", "type": "tuple"},
+      "RULES": {"kind": "constant", "type": "dict"},
+      "SCHEMA": {"kind": "constant", "type": "str"},
+      "UNDERSTATED_TAG": {"kind": "constant", "type": "str"},
+      "applicable": {"kind": "function", "signature": "(finding: Finding) -> bool"},
+      "apply_autonomy": {"kind": "function", "signature": "(finding: Finding, entry: InventoryEntry | None = None) -> None"},
+      "classify": {"kind": "function", "signature": "(finding: Finding) -> dict[str, Any] | None"},
+      "level_title": {"kind": "function", "signature": "(number: int) -> str"},
+      "merge_autonomy": {"kind": "function", "signature": "(finding: Finding, sources: Sequence[Any]) -> None"},
+      "merged_autonomy": {"kind": "function", "signature": "(finding: Finding, sources: Sequence[Any]) -> tuple[dict[str, Any] | None, bool]"},
+      "observed_floor": {"kind": "function", "signature": "(finding: Finding) -> int | None"},
+      "valid_autonomy": {"kind": "function", "signature": "(value: Any) -> bool"}
+    },
+    "shadowscan.comparison": {
+      "DRIFT_CLASSES": {"kind": "constant", "type": "tuple"},
+      "IDENTITY_KEY_ENV": {"kind": "constant", "type": "str"},
+      "MAX_BASELINE_AGE_DAYS": {"kind": "constant", "type": "int"},
+      "MAX_REPORT_BYTES": {"kind": "constant", "type": "int"},
+      "MAX_REPORT_DEPTH": {"kind": "constant", "type": "int"},
+      "ReportDigestMismatch": {
+        "kind": "exception",
+        "bases": ["builtins.ValueError"],
+        "members": {}
+      },
+      "baseline_age_days": {"kind": "function", "signature": "(baseline: dict[str, Any], *, now: datetime | None = None) -> int | None"},
+      "baseline_lifecycle_reasons": {"kind": "function", "signature": "(baseline: dict[str, Any], current: dict[str, Any], *, max_age_days: int | None, now: datetime | None = None) -> list[str]"},
+      "build_collection_scope": {"kind": "function", "signature": "(config: ScanConfig, index: SignatureIndex, specs: list[ConnectorSpec], *, identity_key: bytes | None = None, live_records: Sequence[Mapping[str, Any] | None] | None = None) -> dict[str, Any]"},
+      "compare_reports": {"kind": "function", "signature": "(baseline: dict[str, Any], current: dict[str, Any], *, max_baseline_age_days: int | None = None, now: datetime | None = None) -> dict[str, Any]"},
+      "drift_counts": {"kind": "function", "signature": "(baseline: dict[str, Any], current: dict[str, Any], *, max_baseline_age_days: int | None = None, now: datetime | None = None) -> dict[str, Any]"},
+      "load_report": {"kind": "function", "signature": "(path: str | Path) -> dict[str, Any]"},
+      "load_report_with_digest": {"kind": "function", "signature": "(path: str | Path, *, expected_sha256: str | None = None) -> tuple[dict[str, Any], str]"}
+    },
+    "shadowscan.config": {
+      "ConfigValidationError": {
+        "kind": "exception",
+        "bases": ["shadowscan.errors.SetupError", "builtins.ValueError"],
+        "signature": "(message: object = '', *args: object) -> None",
+        "members": {}
+      },
+      "ConnectorSpec": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(name: str, config: dict[str, Any] = <factory>, enabled: bool = True, label: str | None = None) -> None",
+        "fields": {
+          "name": "str",
+          "config": "dict[str, Any]",
+          "enabled": "bool",
+          "label": "str | None"
+        },
+        "members": {
+          "id": {"kind": "property"}
+        }
+      },
+      "DEFAULT_CONNECTOR_TIMEOUT": {"kind": "constant", "type": "shadowscan.config._DefaultConnectorTimeout"},
+      "MAX_PLUGIN_ENV": {"kind": "constant", "type": "int"},
+      "MinConfidenceError": {
+        "kind": "exception",
+        "bases": ["shadowscan.config.ConfigValidationError"],
+        "signature": "(message: object = '', *args: object) -> None",
+        "members": {}
+      },
+      "PATH_KEYS": {"kind": "constant", "type": "tuple"},
+      "SHARED_BOOLEAN_CONNECTOR_KEYS": {"kind": "constant", "type": "frozenset"},
+      "SHARED_CONNECTOR_KEYS": {"kind": "constant", "type": "frozenset"},
+      "ScanConfig": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(connectors: list[ConnectorSpec] = <factory>, inventory: list[str] = <factory>, signature_dirs: list[str] = <factory>, min_confidence: float = 0.0, fail_on: str | None = None, dump_records: str | None = None, workdir: str | None = None, parallel: int = 4, incremental: bool = False, state_dir: str | None = None, plugins: list[str] = <factory>, plugin_execution: str = 'process', plugin_env: list[str] = <factory>, allow_signature_override: bool = False, allow_private_origin: bool = False, allow_instance_credentials: bool = False, allow_credential_mixing: bool = False, connector_timeout_seconds: float = 120.0, max_coverage_gap: float = 0.02, job_deadline_seconds: float | None = None, risk_basis: str = 'combined', risk_weights: dict[str, Any] | None = <factory>, llm_triage: TriageSettings = <factory>, trusted_registries: list[TrustedRegistry] = <factory>, mcp_registries: list[McpRegistrySource] = <factory>, source: str | None = None, *, deny_private_origin: bool = False, connector_timeout: InitVar[float | None] = None) -> None",
+        "fields": {
+          "connectors": "list[ConnectorSpec]",
+          "inventory": "list[str]",
+          "signature_dirs": "list[str]",
+          "min_confidence": "float",
+          "fail_on": "str | None",
+          "dump_records": "str | None",
+          "workdir": "str | None",
+          "parallel": "int",
+          "incremental": "bool",
+          "state_dir": "str | None",
+          "plugins": "list[str]",
+          "plugin_execution": "str",
+          "plugin_env": "list[str]",
+          "allow_signature_override": "bool",
+          "allow_private_origin": "bool",
+          "deny_private_origin": "bool",
+          "allow_instance_credentials": "bool",
+          "allow_credential_mixing": "bool",
+          "connector_timeout_seconds": "float",
+          "max_coverage_gap": "float",
+          "job_deadline_seconds": "float | None",
+          "risk_basis": "str",
+          "risk_weights": "dict[str, Any] | None",
+          "llm_triage": "TriageSettings",
+          "trusted_registries": "list[TrustedRegistry]",
+          "mcp_registries": "list[McpRegistrySource]",
+          "source": "str | None"
+        },
+        "members": {
+          "connector_timeout": {"kind": "attribute", "annotation": "InitVar[float | None]"},
+          "enabled_connectors": {"kind": "method", "signature": "(self) -> list[ConnectorSpec]"},
+          "from_dict": {"kind": "classmethod", "signature": "(data: dict[str, Any], source: str | None = None) -> ScanConfig"},
+          "from_yaml": {"kind": "classmethod", "signature": "(path: str | Path) -> ScanConfig"},
+          "validate_connector_isolation": {"kind": "method", "signature": "(self, specs: list[ConnectorSpec]) -> None"},
+          "validate_connector_specs": {"kind": "method", "signature": "(self) -> None"},
+          "validate_security_options": {"kind": "method", "signature": "(self) -> None"}
+        }
+      },
+      "accepted_connector_keys": {"kind": "function", "signature": "(name: str) -> frozenset[str] | None"},
+      "argv_credential_keys": {"kind": "function", "signature": "(config: dict[str, Any]) -> list[str]"},
+      "connector_boolean": {"kind": "function", "signature": "(value: Any, name: str) -> bool"},
+      "connector_timeout_is_default": {"kind": "function", "signature": "(value: object) -> bool"},
+      "expand_env": {"kind": "function", "signature": "(value: Any) -> Any"},
+      "normalize_connector_config": {"kind": "function", "signature": "(name: str, config: Mapping[Any, Any]) -> dict[str, Any]"},
+      "parse_set_options": {"kind": "function", "signature": "(items: list[str]) -> dict[str, Any]"},
+      "plugin_names": {"kind": "function", "signature": "(entries: list[str]) -> set[str]"},
+      "validate_connector_config": {"kind": "function", "signature": "(name: str, config: Mapping[Any, Any]) -> None"},
+      "validate_connector_timeout": {"kind": "function", "signature": "(value: Any) -> float"},
+      "validate_connector_timeout_seconds": {"kind": "function", "signature": "(value: Any) -> float"},
+      "validate_job_deadline_seconds": {"kind": "function", "signature": "(value: Any) -> float | None"},
+      "validate_mcp_registries": {"kind": "function", "signature": "(value: Any, base: Path | None = None) -> list[McpRegistrySource]"},
+      "validate_min_confidence": {"kind": "function", "signature": "(value: Any) -> float"},
+      "validate_plugin_env": {"kind": "function", "signature": "(value: Any) -> list[str]"},
+      "validate_plugins": {"kind": "function", "signature": "(value: Any) -> list[str]"},
+      "validate_trusted_registries": {"kind": "function", "signature": "(value: Any) -> list[TrustedRegistry]"}
+    },
+    "shadowscan.connectors": {
+      "BaseConnector": {
+        "kind": "class",
+        "bases": ["abc.ABC"],
+        "signature": "(ctx: ConnectorContext) -> None",
+        "members": {
+          "analyze": {"kind": "method", "signature": "(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]"},
+          "attests_live_scope": {"kind": "attribute", "annotation": "ClassVar[bool]"},
+          "cache_roots_separately": {"kind": "classmethod", "signature": "(roots: list[Any], root_ids: Any, *, labelled: bool) -> bool"},
+          "check_requirements": {"kind": "method", "signature": "(self) -> None"},
+          "collect": {"kind": "method", "signature": "(self) -> Iterable[dict[str, Any]]"},
+          "config_keys": {"kind": "attribute", "annotation": "ClassVar[dict[str, str]]"},
+          "coverage_gap_override": {"kind": "method", "signature": "(self) -> float | None"},
+          "coverage_is_strict": {"kind": "method", "signature": "(self) -> bool"},
+          "description": {"kind": "attribute", "annotation": "ClassVar[str]"},
+          "emits_registry_records": {"kind": "attribute", "annotation": "ClassVar[bool]"},
+          "estimate_timeout_seconds": {"kind": "classmethod", "signature": "(config: dict[str, Any], default: float) -> float | None"},
+          "inherits_instance_credentials_approval": {"kind": "classmethod", "signature": "() -> bool"},
+          "live_collection": {"kind": "attribute", "annotation": "ClassVar[bool]"},
+          "load_offline": {"kind": "method", "signature": "(self, path: str) -> Iterator[dict[str, Any]]"},
+          "name": {"kind": "attribute", "annotation": "ClassVar[str]"},
+          "offline": {"kind": "property"},
+          "offline_formats": {"kind": "attribute", "annotation": "ClassVar[str]"},
+          "provider": {"kind": "attribute", "annotation": "ClassVar[str | None]"},
+          "registry_record_types": {"kind": "attribute", "annotation": "ClassVar[frozenset[str]]"},
+          "requires": {"kind": "attribute", "annotation": "ClassVar[list[str]]"},
+          "run": {"kind": "method", "signature": "(self) -> list[Finding]"},
+          "scanned_local_paths": {"kind": "classmethod", "signature": "(config: dict[str, Any]) -> list[str]"},
+          "scope_options": {"kind": "attribute", "annotation": "ClassVar[frozenset[str]]"},
+          "shared_config_keys": {"kind": "attribute", "annotation": "ClassVar[dict[str, str]]"},
+          "surface": {"kind": "attribute", "annotation": "ClassVar[Surface]"},
+          "uses_run_identity_key": {"kind": "attribute", "annotation": "ClassVar[bool]"}
+        }
+      },
+      "ConnectorContext": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(config: dict[str, Any] | None = None, index: SignatureIndex | None = None, logger: logging.Logger | None = None, input_path: str | None = None, workdir: str | None = None, deadline: float | None = None, cancelled: Event | None = None, publication_lock: LockType | None = None, gateway_identity_key: bytes | None = None, gateway_identity_key_stable: bool = False) -> None",
+        "members": {
+          "add_coverage_examined": {"kind": "method", "signature": "(self, delta: int = 1) -> None"},
+          "attest_operation": {"kind": "method", "signature": "(self, service: str, operation: str, partition: str | None, outcome: str, *, enumeration: bool = True) -> None"},
+          "attest_partition": {"kind": "method", "signature": "(self, name: str, values: Iterable[str]) -> None"},
+          "attest_principal": {"kind": "method", "signature": "(self, provider: str, kind: str, value: str, verified_by: str) -> None"},
+          "begin_coverage_part": {"kind": "method", "signature": "(self, label: str) -> None"},
+          "check_deadline": {"kind": "method", "signature": "(self) -> None"},
+          "checked_records": {"kind": "method", "signature": "(self, records: Iterable[dict[str, Any]]) -> Iterator[dict[str, Any]]"},
+          "count_declared_omissions": {"kind": "method", "signature": "(self, entries: int = 1) -> None"},
+          "count_incomplete": {"kind": "method", "signature": "(self, reason: str, entries: int = 1) -> None"},
+          "coverage_gap": {"kind": "method", "signature": "(self, msg: str, *, path: str = '', entries: int = 1, blinding: bool = False, quiet: bool = False, full_weight: bool = False, reason: str | None = None, relevance: str | None = None) -> None"},
+          "coverage_policy": {"kind": "property"},
+          "diagnostics_recorded": {"kind": "method", "signature": "(self) -> int"},
+          "error": {"kind": "method", "signature": "(self, msg: str, *, reason: str | None = None) -> None"},
+          "examined": {"kind": "method", "signature": "(self, n: int = 1) -> None"},
+          "finalize_coverage": {"kind": "method", "signature": "(self) -> None"},
+          "get": {"kind": "method", "signature": "(self, key: str, default: Any = None, env: str | None = None) -> Any"},
+          "note_coverage_examined": {"kind": "method", "signature": "(self, count: int) -> None"},
+          "publish_replace": {"kind": "method", "signature": "(self, source: str | Path, target: str | Path) -> None"},
+          "require": {"kind": "method", "signature": "(self, key: str, env: str | None = None) -> Any"},
+          "sanitize_message": {"kind": "method", "signature": "(self, msg: str) -> str"},
+          "scope_record": {"kind": "method", "signature": "(self, options: Iterable[str]) -> dict[str, Any]"},
+          "secret_env": {"kind": "method", "signature": "(self, name: str) -> str | None"},
+          "set_coverage_policy": {"kind": "method", "signature": "(self, policy: CoveragePolicy) -> None"},
+          "warn": {"kind": "method", "signature": "(self, msg: str, incomplete: bool = True, *, reason: str | None = None, declared: bool = False, path: str | None = None) -> None"}
+        }
+      },
+      "ConnectorError": {
+        "kind": "exception",
+        "bases": ["builtins.RuntimeError"],
+        "members": {}
+      },
+      "PluginDiagnostic": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(entry: str | None, rule: str, message: str) -> None",
+        "fields": {
+          "entry": "str | None",
+          "rule": "str",
+          "message": "str"
+        },
+        "members": {}
+      },
+      "PluginRegistryError": {
+        "kind": "exception",
+        "bases": ["shadowscan.connectors.base.ConnectorError"],
+        "signature": "(diagnostic: PluginDiagnostic) -> None",
+        "members": {}
+      },
+      "available_connectors": {"kind": "function", "signature": "() -> dict[str, str]"},
+      "builtin_connector_names": {"kind": "function", "signature": "() -> frozenset[str]"},
+      "connectors_for_surface": {"kind": "function", "signature": "(surface: Surface | str) -> list[str]"},
+      "get_connector_class": {"kind": "function", "signature": "(name: str, *, allowed_plugins: Sequence[str] | None = None) -> type[BaseConnector]"},
+      "plugin_registry_errors": {"kind": "function", "signature": "() -> tuple[PluginDiagnostic, ...]"}
+    },
+    "shadowscan.connectors.base": {
+      "BaseConnector": {
+        "kind": "class",
+        "bases": ["abc.ABC"],
+        "signature": "(ctx: ConnectorContext) -> None",
+        "members": {
+          "analyze": {"kind": "method", "signature": "(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]"},
+          "attests_live_scope": {"kind": "attribute", "annotation": "ClassVar[bool]"},
+          "cache_roots_separately": {"kind": "classmethod", "signature": "(roots: list[Any], root_ids: Any, *, labelled: bool) -> bool"},
+          "check_requirements": {"kind": "method", "signature": "(self) -> None"},
+          "collect": {"kind": "method", "signature": "(self) -> Iterable[dict[str, Any]]"},
+          "config_keys": {"kind": "attribute", "annotation": "ClassVar[dict[str, str]]"},
+          "coverage_gap_override": {"kind": "method", "signature": "(self) -> float | None"},
+          "coverage_is_strict": {"kind": "method", "signature": "(self) -> bool"},
+          "description": {"kind": "attribute", "annotation": "ClassVar[str]"},
+          "emits_registry_records": {"kind": "attribute", "annotation": "ClassVar[bool]"},
+          "estimate_timeout_seconds": {"kind": "classmethod", "signature": "(config: dict[str, Any], default: float) -> float | None"},
+          "inherits_instance_credentials_approval": {"kind": "classmethod", "signature": "() -> bool"},
+          "live_collection": {"kind": "attribute", "annotation": "ClassVar[bool]"},
+          "load_offline": {"kind": "method", "signature": "(self, path: str) -> Iterator[dict[str, Any]]"},
+          "name": {"kind": "attribute", "annotation": "ClassVar[str]"},
+          "offline": {"kind": "property"},
+          "offline_formats": {"kind": "attribute", "annotation": "ClassVar[str]"},
+          "provider": {"kind": "attribute", "annotation": "ClassVar[str | None]"},
+          "registry_record_types": {"kind": "attribute", "annotation": "ClassVar[frozenset[str]]"},
+          "requires": {"kind": "attribute", "annotation": "ClassVar[list[str]]"},
+          "run": {"kind": "method", "signature": "(self) -> list[Finding]"},
+          "scanned_local_paths": {"kind": "classmethod", "signature": "(config: dict[str, Any]) -> list[str]"},
+          "scope_options": {"kind": "attribute", "annotation": "ClassVar[frozenset[str]]"},
+          "shared_config_keys": {"kind": "attribute", "annotation": "ClassVar[dict[str, str]]"},
+          "surface": {"kind": "attribute", "annotation": "ClassVar[Surface]"},
+          "uses_run_identity_key": {"kind": "attribute", "annotation": "ClassVar[bool]"}
+        }
+      },
+      "ConnectorContext": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(config: dict[str, Any] | None = None, index: SignatureIndex | None = None, logger: logging.Logger | None = None, input_path: str | None = None, workdir: str | None = None, deadline: float | None = None, cancelled: Event | None = None, publication_lock: LockType | None = None, gateway_identity_key: bytes | None = None, gateway_identity_key_stable: bool = False) -> None",
+        "members": {
+          "add_coverage_examined": {"kind": "method", "signature": "(self, delta: int = 1) -> None"},
+          "attest_operation": {"kind": "method", "signature": "(self, service: str, operation: str, partition: str | None, outcome: str, *, enumeration: bool = True) -> None"},
+          "attest_partition": {"kind": "method", "signature": "(self, name: str, values: Iterable[str]) -> None"},
+          "attest_principal": {"kind": "method", "signature": "(self, provider: str, kind: str, value: str, verified_by: str) -> None"},
+          "begin_coverage_part": {"kind": "method", "signature": "(self, label: str) -> None"},
+          "check_deadline": {"kind": "method", "signature": "(self) -> None"},
+          "checked_records": {"kind": "method", "signature": "(self, records: Iterable[dict[str, Any]]) -> Iterator[dict[str, Any]]"},
+          "count_declared_omissions": {"kind": "method", "signature": "(self, entries: int = 1) -> None"},
+          "count_incomplete": {"kind": "method", "signature": "(self, reason: str, entries: int = 1) -> None"},
+          "coverage_gap": {"kind": "method", "signature": "(self, msg: str, *, path: str = '', entries: int = 1, blinding: bool = False, quiet: bool = False, full_weight: bool = False, reason: str | None = None, relevance: str | None = None) -> None"},
+          "coverage_policy": {"kind": "property"},
+          "diagnostics_recorded": {"kind": "method", "signature": "(self) -> int"},
+          "error": {"kind": "method", "signature": "(self, msg: str, *, reason: str | None = None) -> None"},
+          "examined": {"kind": "method", "signature": "(self, n: int = 1) -> None"},
+          "finalize_coverage": {"kind": "method", "signature": "(self) -> None"},
+          "get": {"kind": "method", "signature": "(self, key: str, default: Any = None, env: str | None = None) -> Any"},
+          "note_coverage_examined": {"kind": "method", "signature": "(self, count: int) -> None"},
+          "publish_replace": {"kind": "method", "signature": "(self, source: str | Path, target: str | Path) -> None"},
+          "require": {"kind": "method", "signature": "(self, key: str, env: str | None = None) -> Any"},
+          "sanitize_message": {"kind": "method", "signature": "(self, msg: str) -> str"},
+          "scope_record": {"kind": "method", "signature": "(self, options: Iterable[str]) -> dict[str, Any]"},
+          "secret_env": {"kind": "method", "signature": "(self, name: str) -> str | None"},
+          "set_coverage_policy": {"kind": "method", "signature": "(self, policy: CoveragePolicy) -> None"},
+          "warn": {"kind": "method", "signature": "(self, msg: str, incomplete: bool = True, *, reason: str | None = None, declared: bool = False, path: str | None = None) -> None"}
+        }
+      },
+      "ConnectorError": {
+        "kind": "exception",
+        "bases": ["builtins.RuntimeError"],
+        "members": {}
+      },
+      "LIVE_SCOPE_SCHEMA": {"kind": "constant", "type": "str"},
+      "SCOPE_OUTCOMES": {"kind": "constant", "type": "tuple"},
+      "failure_summary": {"kind": "function", "signature": "(exc: BaseException) -> str"},
+      "incomplete_reason": {"kind": "function", "signature": "(message: str, *, path: str = '') -> str"},
+      "known_incomplete_reasons": {"kind": "function", "signature": "(reasons: dict[str, int]) -> dict[str, int]"}
+    },
+    "shadowscan.connectors.common": {
+      "MAX_PAGES": {"kind": "constant", "type": "int"},
+      "TECH_CATEGORIES": {"kind": "constant", "type": "set"},
+      "UNATTRIBUTED_APP_MAX_WEIGHT": {"kind": "constant", "type": "float"},
+      "apply_matches": {"kind": "function", "signature": "(finding: Finding, matches: Iterable[Match], location: str | None = None, snippet: str | Callable[[], str | None] | None = None, max_evidence_per_signature: int = 12, weight_scale: float = 1.0, capabilities: bool = True, signature_capabilities: bool = True, indicator_filter: Callable[[Match], bool] | None = None, establish: bool = True, unverified_names: bool = False) -> int"},
+      "blob_matches": {"kind": "function", "signature": "(index: SignatureIndex, text: str, *, secrets: bool = False) -> list[Match]"},
+      "cap_confidence": {"kind": "function", "signature": "(finding: Finding, maximum: float) -> None"},
+      "classify_permissions": {"kind": "function", "signature": "(index: SignatureIndex, finding: Finding, scopes: Iterable[str]) -> None"},
+      "config_boolean": {"kind": "function", "signature": "(value: Any, name: str) -> bool"},
+      "describe_match": {"kind": "function", "signature": "(m: Match) -> str"},
+      "domain_matches": {"kind": "function", "signature": "(index: SignatureIndex, *urls: str | None) -> list[Match]"},
+      "failure_outcome": {"kind": "function", "signature": "(exc: BaseException) -> str"},
+      "failure_summary": {"kind": "function", "signature": "(exc: BaseException) -> str"},
+      "finalize": {"kind": "function", "signature": "(finding: Finding, index: SignatureIndex | None = None) -> Finding"},
+      "looks_like_placeholder": {"kind": "function", "signature": "(value: str) -> bool"},
+      "max_pages_limit": {"kind": "function", "signature": "(value: Any) -> int"},
+      "merge_duplicate_metadata": {"kind": "function", "signature": "(merged: Finding, duplicate: Finding) -> None"},
+      "model_matches": {"kind": "function", "signature": "(index: SignatureIndex, *models: str | None) -> list[Match]"},
+      "name_matches": {"kind": "function", "signature": "(index: SignatureIndex, *texts: str | None) -> list[Match]"},
+      "placeholder_reason": {"kind": "function", "signature": "(value: str) -> str | None"},
+      "scope_matches": {"kind": "function", "signature": "(index: SignatureIndex, scopes: Iterable[str]) -> list[Match]"},
+      "unique_records": {"kind": "function", "signature": "(records: list[Any]) -> list[dict[str, Any]]"},
+      "whole_value_placeholder": {"kind": "function", "signature": "(value: str) -> bool"}
+    },
+    "shadowscan.connectors.offline": {
+      "ChangeCheck": {"kind": "constant", "type": "type-alias"},
+      "DEADLINE_CHECK_LINES": {"kind": "constant", "type": "int"},
+      "DEFAULT_MAX_INPUT_BYTES": {"kind": "constant", "type": "int"},
+      "DEFAULT_MAX_INPUT_FILES": {"kind": "constant", "type": "int"},
+      "DEFAULT_MAX_INPUT_FILE_BYTES": {"kind": "constant", "type": "int"},
+      "MAX_INVALID_LINE_ERRORS": {"kind": "constant", "type": "int"},
+      "MAX_LISTED_UNSUPPORTED": {"kind": "constant", "type": "int"},
+      "MAX_OFFLINE_ENTRIES": {"kind": "constant", "type": "int"},
+      "MAX_OFFLINE_FILE_BYTES": {"kind": "constant", "type": "int"},
+      "MAX_OFFLINE_LINE_BYTES": {"kind": "constant", "type": "int"},
+      "MAX_OFFLINE_TOTAL_BYTES": {"kind": "constant", "type": "int"},
+      "OFFLINE_SUFFIXES": {"kind": "constant", "type": "frozenset"},
+      "OfflineInputBudget": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(max_bytes: int, max_files: int, bytes_read: int = 0, files_seen: int = 0, file_limit_warning_sent: bool = False, limit_hit: str | None = None) -> None",
+        "fields": {
+          "max_bytes": "int",
+          "max_files": "int",
+          "bytes_read": "int",
+          "files_seen": "int",
+          "file_limit_warning_sent": "bool",
+          "limit_hit": "str | None"
+        },
+        "members": {
+          "consume": {"kind": "method", "signature": "(self, count: int) -> bool"},
+          "remaining_bytes": {"kind": "property"}
+        }
+      },
+      "Report": {"kind": "constant", "type": "type-alias"},
+      "bounded_diagnostics": {"kind": "function", "signature": "(report: Report, limit: int) -> Report"},
+      "csv_records": {"kind": "function", "signature": "(text: str, report: Report) -> Iterator[dict[str, Any]]"},
+      "empty_export_message": {"kind": "function", "signature": "(budget: OfflineInputBudget) -> str"},
+      "is_csv_provider_error": {"kind": "function", "signature": "(record: dict[str, str]) -> bool"},
+      "is_error_record": {"kind": "function", "signature": "(data: dict[str, Any]) -> bool"},
+      "is_native_offline_record": {"kind": "function", "signature": "(data: dict[str, Any]) -> bool"},
+      "iter_bounded_lines": {"kind": "function", "signature": "(conn: BaseConnector, path: Path, budget: OfflineInputBudget, *, compressed: bool = False, changed: ChangeCheck = changed_since) -> Iterator[str]"},
+      "iter_offline_files": {"kind": "function", "signature": "(conn: BaseConnector, path: str, budget: OfflineInputBudget, suffixes: AbstractSet[str] | None = None) -> Iterator[Path]"},
+      "json_lines": {"kind": "function", "signature": "(cls: type[BaseConnector], text: str, report: Report) -> Iterator[dict[str, Any]]"},
+      "load_offline": {"kind": "function", "signature": "(conn: BaseConnector, path: str) -> Iterator[dict[str, Any]]"},
+      "load_offline_file": {"kind": "function", "signature": "(conn: BaseConnector, source: Path, budget: OfflineInputBudget) -> Iterator[dict[str, Any]]"},
+      "offline_files": {"kind": "function", "signature": "(conn: BaseConnector, path: str, suffixes: AbstractSet[str] | None = None) -> Iterator[Path]"},
+      "offline_pagination_issue": {"kind": "function", "signature": "(data: dict[str, Any]) -> str | None"},
+      "read_offline_bytes": {"kind": "function", "signature": "(conn: BaseConnector, path: Path, budget: OfflineInputBudget | None = None, *, changed: ChangeCheck = changed_since) -> bytes | None"},
+      "read_offline_text": {"kind": "function", "signature": "(conn: BaseConnector, path: Path, budget: OfflineInputBudget | None = None) -> str | None"},
+      "record_fields_valid": {"kind": "function", "signature": "(data: Any, *, strings: tuple[str, ...] = (), mappings: tuple[str, ...] = (), arrays: tuple[str, ...] = (), required: tuple[str, ...] = ()) -> bool"},
+      "unwrap": {"kind": "function", "signature": "(cls: type[BaseConnector], data: Any, failed: Report) -> Iterator[dict[str, Any]]"},
+      "valid_record": {"kind": "function", "signature": "(data: Any) -> bool"}
+    },
+    "shadowscan.controls": {
+      "ControlSelectionError": {
+        "kind": "exception",
+        "bases": ["builtins.ValueError"],
+        "members": {}
+      },
+      "EVIDENCE_STATUSES": {"kind": "constant", "type": "tuple"},
+      "INVENTORY_REFS": {"kind": "constant", "type": "tuple"},
+      "MAX_EXAMPLES": {"kind": "constant", "type": "int"},
+      "NOTICE": {"kind": "constant", "type": "str"},
+      "NOT_MAPPED": {"kind": "constant", "type": "str"},
+      "NOT_OBSERVED": {"kind": "constant", "type": "str"},
+      "REFERENCED": {"kind": "constant", "type": "str"},
+      "REFERENCED_INCOMPLETE": {"kind": "constant", "type": "str"},
+      "RISK_LEVELS": {"kind": "constant", "type": "tuple"},
+      "SCHEMA": {"kind": "constant", "type": "str"},
+      "UNKNOWN_INCOMPLETE": {"kind": "constant", "type": "str"},
+      "UNKNOWN_NOT_DECLARED": {"kind": "constant", "type": "str"},
+      "UNKNOWN_NO_INVENTORY": {"kind": "constant", "type": "str"},
+      "build_control_evidence": {"kind": "function", "signature": "(result: ScanResult, reports: Sequence[tuple[str, Mapping[str, Any]]], *, catalogs: Sequence[Catalog] | None = None, index: MappingIndex | None = None) -> dict[str, Any]"},
+      "check_sources": {"kind": "function", "signature": "(reports: Sequence[tuple[str, Mapping[str, Any]]]) -> None"},
+      "control_catalogs": {"kind": "function", "signature": "(frameworks: Sequence[str] = (), index: MappingIndex | None = None) -> list[Catalog]"},
+      "control_evidence": {"kind": "function", "signature": "(reports: Sequence[tuple[str, dict[str, Any]]], *, frameworks: Sequence[str] = ()) -> dict[str, Any]"}
+    },
+    "shadowscan.correlation": {
+      "correlate": {"kind": "function", "signature": "(findings: list[Finding]) -> None"},
+      "correlate_lifecycle": {"kind": "function", "signature": "(findings: list[Finding], *, observation_window: tuple[str, str] | None = None, runtime_coverage: str = 'unknown') -> None"},
+      "correlate_runtime": {"kind": "function", "signature": "(findings: list[Finding]) -> None"}
+    },
+    "shadowscan.dashboard": {
+      "AMBIGUOUS_REGISTRATION": {"kind": "constant", "type": "str"},
+      "AUTONOMY_STATUSES": {"kind": "constant", "type": "tuple"},
+      "HistoryError": {
+        "kind": "exception",
+        "bases": ["builtins.ValueError"],
+        "members": {}
+      },
+      "INVENTORY_SCHEMA": {"kind": "constant", "type": "str"},
+      "INVENTORY_STATUSES": {"kind": "constant", "type": "tuple"},
+      "MAX_DIAGNOSTICS": {"kind": "constant", "type": "int"},
+      "MAX_DIAGNOSTIC_MESSAGES": {"kind": "constant", "type": "int"},
+      "MAX_HISTORY": {"kind": "constant", "type": "int"},
+      "MAX_HISTORY_FILES": {"kind": "constant", "type": "int"},
+      "NOT_COLLECTED": {"kind": "constant", "type": "str"},
+      "PRIORITY_FLOOR": {"kind": "constant", "type": "int"},
+      "REFERENCE_NOTE": {"kind": "constant", "type": "str"},
+      "UNKNOWN": {"kind": "constant", "type": "str"},
+      "build_inventory": {"kind": "function", "signature": "(result: ScanResult, *, name: str = 'report', baseline: dict[str, Any] | None = None, current: dict[str, Any] | None = None, history: dict[str, Any] | None = None, as_of: str | None = None) -> dict[str, Any]"},
+      "coverage_cell": {"kind": "function", "signature": "(source: dict[str, Any], connector: str) -> str"},
+      "inventory_status": {"kind": "function", "signature": "(shadow: bool | None) -> str"},
+      "is_priority": {"kind": "function", "signature": "(agent: dict[str, Any]) -> bool"},
+      "load_history": {"kind": "function", "signature": "(directory: str | Path) -> dict[str, Any]"},
+      "parse_instant": {"kind": "function", "signature": "(value: Any) -> datetime | None"},
+      "render_inventory_json": {"kind": "function", "signature": "(inventory: dict[str, Any]) -> str"}
+    },
+    "shadowscan.engine": {
+      "Engine": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(config: ScanConfig, index: SignatureIndex | None = None, progress: ProgressFn | None = None) -> None",
+        "members": {
+          "run": {"kind": "method", "signature": "(self, only: list[str] | None = None, *, job_deadline: float | None = None) -> ScanResult"}
+        }
+      },
+      "MAX_AUTO_TIMEOUT": {"kind": "constant", "type": "float"},
+      "ProgressFn": {"kind": "constant", "type": "type-alias"}
+    },
+    "shadowscan.fleet": {
+      "CONNECTOR_STATUSES": {"kind": "constant", "type": "tuple"},
+      "FLEET_SCHEMA": {"kind": "constant", "type": "str"},
+      "MAX_SOURCES": {"kind": "constant", "type": "int"},
+      "connector_status": {"kind": "function", "signature": "(stats: ScanStats) -> str"},
+      "legacy_fleet": {"kind": "function", "signature": "(scope: Any) -> bool"},
+      "merge_reports": {"kind": "function", "signature": "(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult"},
+      "report_result": {"kind": "function", "signature": "(name: str, raw: Any) -> ScanResult"},
+      "shows_inventory": {"kind": "function", "signature": "(report: dict[str, Any]) -> bool"},
+      "source_names": {"kind": "function", "signature": "(paths: Sequence[str]) -> list[str]"}
+    },
+    "shadowscan.governance": {
+      "DECLARED_GOVERNANCE_KEY": {"kind": "constant", "type": "str"},
+      "EU_AI_ACT_RISK_CLASSES": {"kind": "constant", "type": "tuple"},
+      "FIELD_LABELS": {"kind": "constant", "type": "dict"},
+      "GOVERNANCE_FIELDS": {"kind": "constant", "type": "tuple"},
+      "GovernanceError": {
+        "kind": "exception",
+        "bases": ["builtins.ValueError"],
+        "signature": "(field: str, message: str) -> None",
+        "members": {}
+      },
+      "MAX_AIUC1_CERTIFICATE": {"kind": "constant", "type": "int"},
+      "MAX_INTENDED_PURPOSE": {"kind": "constant", "type": "int"},
+      "MAX_OVERSIGHT_MEASURE": {"kind": "constant", "type": "int"},
+      "MAX_OVERSIGHT_MEASURES": {"kind": "constant", "type": "int"},
+      "apply_declared_governance": {"kind": "function", "signature": "(finding: Finding, entry: InventoryEntry | None) -> None"},
+      "declared_facts": {"kind": "function", "signature": "(finding: Finding) -> tuple[str, list[tuple[str, str]]] | None"},
+      "declared_risk_class": {"kind": "function", "signature": "(finding: Finding) -> str | None"},
+      "parse_governance": {"kind": "function", "signature": "(value: Any) -> dict[str, Any] | None"},
+      "valid_declared_governance": {"kind": "function", "signature": "(value: Any) -> bool"}
+    },
+    "shadowscan.incremental": {
+      "IncrementalCache": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(config: ScanConfig, index: SignatureIndex, *, identity_key: bytes | None = None)",
+        "members": {
+          "load": {"kind": "method", "signature": "(self, spec: ConnectorSpec, snapshot: Snapshot, *, check_deadline: Callable[[], None] | None = None) -> tuple[list[Finding], ScanStats] | None"},
+          "save": {"kind": "method", "signature": "(self, snapshot: Snapshot, findings: list[Finding], stats: ScanStats, *, check_deadline: Callable[[], None] | None = None, publish_replace: Callable[[str | Path, str | Path], None] | None = None) -> None"},
+          "snapshot": {"kind": "method", "signature": "(self, spec: ConnectorSpec, *, check_deadline: Callable[[], None] | None = None, deadline: float | None = None) -> Snapshot | None"},
+          "supports_connector": {"kind": "staticmethod", "signature": "(spec: ConnectorSpec, connector_class: type) -> bool"}
+        }
+      },
+      "Snapshot": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(slot: str, fingerprint: str) -> None",
+        "fields": {
+          "slot": "str",
+          "fingerprint": "str"
+        },
+        "members": {}
+      }
+    },
+    "shadowscan.mappings": {
+      "Catalog": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(framework: str, edition: str, prefix: str, name: str, kind: str, source_url: str, licence: str, checked: str, verification: str, review: str, notes: str, entries: tuple[MappingEntry, ...], source: str) -> None",
+        "fields": {"framework": "str", "edition": "str", "prefix": "str", "name": "str", "kind": "str", "source_url": "str", "licence": "str", "checked": "str", "verification": "str", "review": "str", "notes": "str", "entries": "tuple[MappingEntry, ...]", "source": "str"},
+        "members": {}
+      },
+      "MappingCatalogError": {
+        "kind": "exception",
+        "bases": ["builtins.ValueError"],
+        "signature": "(problems: Collection[str]) -> None",
+        "members": {}
+      },
+      "MappingEntry": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(ref: str, id: str, title: str, framework: str, framework_name: str, edition: str, kind: str, url: str, verification: str) -> None",
+        "fields": {"ref": "str", "id": "str", "title": "str", "framework": "str", "framework_name": "str", "edition": "str", "kind": "str", "url": "str", "verification": "str"},
+        "members": {}
+      },
+      "MappingIndex": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(catalogs: tuple[Catalog, ...], rules: tuple[Rule, ...], entries: Mapping[str, MappingEntry]) -> None",
+        "fields": {
+          "catalogs": "tuple[Catalog, ...]",
+          "rules": "tuple[Rule, ...]",
+          "entries": "Mapping[str, MappingEntry]"
+        },
+        "members": {
+          "describe": {"kind": "method", "signature": "(self, ref: str) -> MappingEntry | None"},
+          "from_directory": {"kind": "classmethod", "signature": "(root: Path) -> MappingIndex"},
+          "matching_rules": {"kind": "method", "signature": "(self, finding: Finding) -> list[Rule]"},
+          "references": {"kind": "method", "signature": "(self, finding: Finding) -> tuple[list[str], list[str]]"}
+        }
+      },
+      "Rule": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(id: str, kind: str, when: Condition, refs: tuple[str, ...], rationale: str, source: str) -> None",
+        "fields": {"id": "str", "kind": "str", "when": "Condition", "refs": "tuple[str, ...]", "rationale": "str", "source": "str"},
+        "members": {}
+      },
+      "control_references": {"kind": "function", "signature": "(finding: Finding) -> list[str]"},
+      "describe": {"kind": "function", "signature": "(ref: str) -> MappingEntry | None"},
+      "finding_references": {"kind": "function", "signature": "(finding: Finding) -> tuple[list[str], list[str]]"},
+      "load_mappings": {"kind": "constant", "type": "object"},
+      "threat_references": {"kind": "function", "signature": "(finding: Finding) -> list[str]"}
+    },
+    "shadowscan.mcp_registry": {
+      "API_VERSION": {"kind": "constant", "type": "str"},
+      "DEFAULT_MAX_PAGES": {"kind": "constant", "type": "int"},
+      "DEFAULT_REGISTRY_URL": {"kind": "constant", "type": "str"},
+      "EVIDENCE_PREFIX": {"kind": "constant", "type": "str"},
+      "GOVERNANCE_FACTOR": {"kind": "constant", "type": "str"},
+      "LoadedRegistries": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(snapshots: tuple[RegistrySnapshot, ...] = (), errors: tuple[str, ...] = (), configured: int = 0, approved_configured: int = 0) -> None",
+        "fields": {
+          "snapshots": "tuple[RegistrySnapshot, ...]",
+          "errors": "tuple[str, ...]",
+          "configured": "int",
+          "approved_configured": "int"
+        },
+        "members": {
+          "approved_checked": {"kind": "property"},
+          "complete": {"kind": "property"}
+        }
+      },
+      "MATCHES_KEY": {"kind": "constant", "type": "str"},
+      "MAX_MCP_REGISTRIES": {"kind": "constant", "type": "int"},
+      "MAX_PAGE_BYTES": {"kind": "constant", "type": "int"},
+      "MAX_SNAPSHOT_BYTES": {"kind": "constant", "type": "int"},
+      "MAX_SNAPSHOT_SERVERS": {"kind": "constant", "type": "int"},
+      "METADATA_KEY": {"kind": "constant", "type": "str"},
+      "McpRegistrySource": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(id: str, snapshot: str, sha256: str, approved: bool = False) -> None",
+        "fields": {
+          "id": "str",
+          "snapshot": "str",
+          "sha256": "str",
+          "approved": "bool"
+        },
+        "members": {}
+      },
+      "OFFICIAL_META": {"kind": "constant", "type": "str"},
+      "PAGE_LIMIT": {"kind": "constant", "type": "int"},
+      "REGISTRY_TAGS": {"kind": "constant", "type": "tuple"},
+      "RegistrySnapshot": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(source: McpRegistrySource, registry: str, fetched_at: str, by_name: dict[str, list[_Entry]] = <factory>, by_package: dict[tuple[str, str], set[str]] = <factory>, by_remote: dict[str, set[str]] = <factory>, latest: dict[str, _Entry | None] = <factory>) -> None",
+        "fields": {
+          "source": "McpRegistrySource",
+          "registry": "str",
+          "fetched_at": "str",
+          "by_name": "dict[str, list[_Entry]]",
+          "by_package": "dict[tuple[str, str], set[str]]",
+          "by_remote": "dict[str, set[str]]",
+          "latest": "dict[str, _Entry | None]"
+        },
+        "members": {
+          "summary": {"kind": "method", "signature": "(self) -> dict[str, Any]"}
+        }
+      },
+      "SERVER_KEY": {"kind": "constant", "type": "str"},
+      "SNAPSHOT_SCHEMA": {"kind": "constant", "type": "str"},
+      "STATUSES": {"kind": "constant", "type": "tuple"},
+      "SnapshotError": {
+        "kind": "exception",
+        "bases": ["builtins.ValueError"],
+        "members": {}
+      },
+      "TAG_DELETED": {"kind": "constant", "type": "str"},
+      "TAG_DEPRECATED": {"kind": "constant", "type": "str"},
+      "TAG_OUTDATED": {"kind": "constant", "type": "str"},
+      "TAG_PUBLISHED": {"kind": "constant", "type": "str"},
+      "TAG_UNIDENTIFIED": {"kind": "constant", "type": "str"},
+      "TAG_UNPUBLISHED": {"kind": "constant", "type": "str"},
+      "TAG_VERSION_UNPUBLISHED": {"kind": "constant", "type": "str"},
+      "enrich_mcp_findings": {"kind": "function", "signature": "(findings: Iterable[Finding], registries: LoadedRegistries) -> list[str]"},
+      "fetch_snapshot": {"kind": "function", "signature": "(url: str = 'https://registry.modelcontextprotocol.io', *, max_pages: int = 5000, ca_bundle: str | None = None, allow_private_origin: bool = False) -> str"},
+      "load_registries": {"kind": "function", "signature": "(sources: Sequence[McpRegistrySource]) -> LoadedRegistries"},
+      "load_snapshot": {"kind": "function", "signature": "(source: McpRegistrySource, *, max_bytes: int = 268435456) -> RegistrySnapshot"},
+      "normalize_remote": {"kind": "function", "signature": "(url: Any) -> str | None"},
+      "registry_base_url": {"kind": "function", "signature": "(url: str, *, allow_private_origin: bool = False) -> str"}
+    },
+    "shadowscan.merge": {
+      "merge": {"kind": "function", "signature": "(findings: list[Finding]) -> list[Finding]"}
+    },
+    "shadowscan.models": {
+      "DERIVED_METADATA_KEYS": {"kind": "constant", "type": "frozenset"},
+      "Evidence": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(signal: str, description: str, location: str | None = None, snippet: str | None = None, weight: float = 0.5, signature: str | None = None, attributes: dict[str, Any] = <factory>) -> None",
+        "fields": {
+          "signal": "str",
+          "description": "str",
+          "location": "str | None",
+          "snippet": "str | None",
+          "weight": "float",
+          "signature": "str | None",
+          "attributes": "dict[str, Any]",
+          "_clean_digest": "_CleanState | None"
+        },
+        "members": {
+          "sanitize": {"kind": "method", "signature": "(self) -> None"}
+        }
+      },
+      "FINDING_IDENTITY_SCHEMA": {"kind": "constant", "type": "str"},
+      "Finding": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(surface: Surface, connector: str, kind: Kind, title: str, resource: str, resource_type: str, provider: str | None = None, account: str | None = None, region: str | None = None, owner: str | None = None, frameworks: list[str] = <factory>, model_providers: list[str] = <factory>, models: list[str] = <factory>, capabilities: list[str] = <factory>, permissions: list[str] = <factory>, evidence: list[Evidence] = <factory>, confidence: float = 0.0, likelihood: Likelihood = <Likelihood.WEAK: 'weak'>, risk: Risk = <factory>, shadow: bool | None = None, registry_match: str | None = None, tags: list[str] = <factory>, first_seen: str | None = None, last_seen: str | None = None, metadata: dict[str, Any] = <factory>, id: str = '', identity_discriminator: str = '', identity_schema: str = 'shadowscan.finding-identity/v2') -> None",
+        "fields": {"surface": "Surface", "connector": "str", "kind": "Kind", "title": "str", "resource": "str", "resource_type": "str", "provider": "str | None", "account": "str | None", "region": "str | None", "owner": "str | None", "frameworks": "list[str]", "model_providers": "list[str]", "models": "list[str]", "capabilities": "list[str]", "permissions": "list[str]", "evidence": "list[Evidence]", "confidence": "float", "likelihood": "Likelihood", "risk": "Risk", "shadow": "bool | None", "registry_match": "str | None", "tags": "list[str]", "first_seen": "str | None", "last_seen": "str | None", "metadata": "dict[str, Any]", "id": "str", "identity_discriminator": "str", "identity_schema": "str", "_clean_digest": "_CleanState | None"},
+        "members": {
+          "add_capability": {"kind": "method", "signature": "(self, cap: str) -> None"},
+          "add_evidence": {"kind": "method", "signature": "(self, ev: Evidence) -> None"},
+          "add_framework": {"kind": "method", "signature": "(self, sig_id: str) -> None"},
+          "add_model_provider": {"kind": "method", "signature": "(self, sig_id: str) -> None"},
+          "add_tag": {"kind": "method", "signature": "(self, tag: str) -> None"},
+          "compute_id": {"kind": "method", "signature": "(self) -> str"},
+          "from_dict": {"kind": "classmethod", "signature": "(d: dict[str, Any]) -> Finding"},
+          "reattribute": {"kind": "method", "signature": "(self, connector: str, *, derive_id: bool = False) -> None"},
+          "recompute_confidence": {"kind": "method", "signature": "(self) -> None"},
+          "sanitize": {"kind": "method", "signature": "(self, *, credential_context: Any = None) -> None"},
+          "to_dict": {"kind": "method", "signature": "(self) -> dict[str, Any]"},
+          "update_metadata": {"kind": "method", "signature": "(self, **values: Any) -> None"}
+        }
+      },
+      "Kind": {"kind": "enum", "bases": ["builtins.str", "enum.Enum"], "members": {"AGENT": "agent", "FRAMEWORK_USAGE": "framework-usage", "MCP_SERVER": "mcp-server", "AGENT_CONFIG": "agent-config", "OAUTH_GRANT": "oauth-grant", "SERVICE_IDENTITY": "service-identity", "TOKEN": "token", "GATEWAY_CALLER": "gateway-caller", "WORKFLOW": "workflow", "BOT_APP": "bot-app", "CLOUD_RESOURCE": "cloud-resource", "IAM_GRANT": "iam-grant", "SECRET": "secret", "INFRA": "infra", "AI_APP": "ai-app", "LOCAL_MODEL": "local-model", "NETWORK_CONTACT": "network-contact", "RUNTIME_PROCESS": "runtime-process"}},
+      "LEGACY_FINDING_IDENTITY_SCHEMA": {"kind": "constant", "type": "str"},
+      "Likelihood": {"kind": "enum", "bases": ["builtins.str", "enum.Enum"], "members": {"STRONG": "strong", "LIKELY": "likely", "POSSIBLE": "possible", "WEAK": "weak"}},
+      "Risk": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(score: int = 0, level: RiskLevel = <RiskLevel.INFO: 'info'>, factors: list[RiskFactor] = <factory>, danger_score: int = 0) -> None",
+        "fields": {
+          "score": "int",
+          "level": "RiskLevel",
+          "factors": "list[RiskFactor]",
+          "danger_score": "int"
+        },
+        "members": {}
+      },
+      "RiskFactor": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(id: str, description: str, weight: int) -> None",
+        "fields": {
+          "id": "str",
+          "description": "str",
+          "weight": "int"
+        },
+        "members": {}
+      },
+      "RiskLevel": {"kind": "enum", "bases": ["builtins.str", "enum.Enum"], "members": {"CRITICAL": "critical", "HIGH": "high", "MEDIUM": "medium", "LOW": "low", "INFO": "info"}},
+      "ScanResult": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(findings: list[Finding] = <factory>, stats: list[ScanStats] = <factory>, started_at: str = <factory>, finished_at: str | None = None, version: str = '', inventory_size: int = 0, collection_scope: dict[str, Any] | None = None, inventory_present: bool = False) -> None",
+        "fields": {
+          "findings": "list[Finding]",
+          "stats": "list[ScanStats]",
+          "started_at": "str",
+          "finished_at": "str | None",
+          "version": "str",
+          "inventory_size": "int",
+          "collection_scope": "dict[str, Any] | None",
+          "inventory_present": "bool"
+        },
+        "members": {
+          "complete": {"kind": "property"},
+          "summary": {"kind": "method", "signature": "(self) -> dict[str, Any]"},
+          "to_dict": {"kind": "method", "signature": "(self) -> dict[str, Any]"},
+          "to_json": {"kind": "method", "signature": "(self, indent: int | None = 2) -> str"}
+        }
+      },
+      "ScanStats": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(connector: str, started_at: str, finished_at: str | None = None, findings: int = 0, objects_examined: int = 0, errors: list[str] = <factory>, warnings: list[str] = <factory>, skipped: bool = False, skip_reason: str | None = None, cached: bool = False, incomplete: bool = False, coverage: dict[str, Any] | None = None, incomplete_reasons: dict[str, int] = <factory>, declared_omissions: int = 0, declared_paths: list[str] = <factory>, name: str | None = None) -> None",
+        "fields": {
+          "connector": "str",
+          "started_at": "str",
+          "finished_at": "str | None",
+          "findings": "int",
+          "objects_examined": "int",
+          "errors": "list[str]",
+          "warnings": "list[str]",
+          "skipped": "bool",
+          "skip_reason": "str | None",
+          "cached": "bool",
+          "incomplete": "bool",
+          "coverage": "dict[str, Any] | None",
+          "incomplete_reasons": "dict[str, int]",
+          "declared_omissions": "int",
+          "declared_paths": "list[str]",
+          "name": "str | None"
+        },
+        "members": {}
+      },
+      "Surface": {"kind": "enum", "bases": ["builtins.str", "enum.Enum"], "members": {"CODE": "code", "IDENTITY": "identity", "GATEWAY": "gateway", "LOWCODE": "lowcode", "SAAS": "saas", "CLOUD": "cloud", "ENDPOINT": "endpoint", "NETWORK": "network", "RUNTIME": "runtime"}},
+      "detached_copy": {"kind": "function", "signature": "(finding: Any) -> Finding"},
+      "now_iso": {"kind": "function", "signature": "() -> str"}
+    },
+    "shadowscan.registries": {
+      "APPROVAL_MODES": {"kind": "constant", "type": "tuple"},
+      "BINDABLE_RESOURCE_TYPES": {"kind": "constant", "type": "dict"},
+      "COVERAGE_VALUES": {"kind": "constant", "type": "tuple"},
+      "DESCRIPTOR_TYPES": {"kind": "constant", "type": "tuple"},
+      "EVIDENCE_GROUP": {"kind": "constant", "type": "str"},
+      "EVIDENCE_WEIGHT": {"kind": "constant", "type": "float"},
+      "LISTING_SCOPES": {"kind": "constant", "type": "tuple"},
+      "MAX_BINDINGS": {"kind": "constant", "type": "int"},
+      "MAX_IDENTIFIER_LENGTH": {"kind": "constant", "type": "int"},
+      "MAX_LINKS": {"kind": "constant", "type": "int"},
+      "MAX_TRUSTED_REGISTRIES": {"kind": "constant", "type": "int"},
+      "OFFLINE_WITHHELD": {"kind": "constant", "type": "str"},
+      "RECONCILED_KINDS": {"kind": "constant", "type": "frozenset"},
+      "RECONCILIATION_KEY": {"kind": "constant", "type": "str"},
+      "RECONCILIATION_STATUSES": {"kind": "constant", "type": "tuple"},
+      "RECORD_KEY": {"kind": "constant", "type": "str"},
+      "RECORD_SCHEMA": {"kind": "constant", "type": "str"},
+      "RECORD_STATUSES": {"kind": "constant", "type": "tuple"},
+      "REGISTERING_STATUSES": {"kind": "constant", "type": "frozenset"},
+      "REGISTRY_TYPES": {"kind": "constant", "type": "tuple"},
+      "RegistryBinding": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(resource: str, provider: str | None = None, account: str | None = None, region: str | None = None, coverage: str = 'unknown') -> None",
+        "fields": {
+          "resource": "str",
+          "provider": "str | None",
+          "account": "str | None",
+          "region": "str | None",
+          "coverage": "str"
+        },
+        "members": {
+          "matches": {"kind": "method", "signature": "(self, finding: Finding) -> bool"},
+          "usable": {"kind": "property"}
+        }
+      },
+      "RegistryRecord": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(registry: str, registry_id: str, record_id: str, status: str, descriptor_type: str, bindings: tuple[RegistryBinding, ...] = (), publisher: str | None = None, updated_at: str | None = None, listing_complete: bool = False, approval_mode: str = 'unknown', listing_scope: str = 'registry') -> None",
+        "fields": {
+          "registry": "str",
+          "registry_id": "str",
+          "record_id": "str",
+          "status": "str",
+          "descriptor_type": "str",
+          "bindings": "tuple[RegistryBinding, ...]",
+          "publisher": "str | None",
+          "updated_at": "str | None",
+          "listing_complete": "bool",
+          "approval_mode": "str",
+          "listing_scope": "str"
+        },
+        "members": {
+          "agent_id": {"kind": "property"},
+          "identified": {"kind": "property"},
+          "key": {"kind": "property"}
+        }
+      },
+      "TRUSTED_SOURCE_PREFIX": {"kind": "constant", "type": "str"},
+      "TrustedApprovals": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(findings: Sequence[Finding], trusted: Sequence[TrustedRegistry], *, offline: Collection[str] = frozenset()) -> None",
+        "members": {
+          "candidates": {"kind": "method", "signature": "(self, finding: Finding) -> list[InventoryEntry]"},
+          "warnings": {"kind": "method", "signature": "(self) -> list[str]"}
+        }
+      },
+      "TrustedRegistry": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(registry: str, id: str, allow_auto_approved: bool = False, allow_registered_only: bool = False, allow_offline_records: bool = False) -> None",
+        "fields": {
+          "registry": "str",
+          "id": "str",
+          "allow_auto_approved": "bool",
+          "allow_registered_only": "bool",
+          "allow_offline_records": "bool"
+        },
+        "members": {}
+      },
+      "UNTRUSTABLE_REGISTRY_TYPES": {"kind": "constant", "type": "frozenset"},
+      "parse_registry_record": {"kind": "function", "signature": "(value: Any) -> RegistryRecord | None"},
+      "prune_reconciliation_links": {"kind": "function", "signature": "(findings: Sequence[Finding]) -> None"},
+      "reconcile_registries": {"kind": "function", "signature": "(findings: Sequence[Finding]) -> list[str]"},
+      "registry_evidence": {"kind": "function", "signature": "(registry: str, description: str, *, location: str | None = None) -> Evidence"},
+      "registry_record": {"kind": "function", "signature": "(finding: Finding) -> RegistryRecord | None"},
+      "shown_registry_id": {"kind": "function", "signature": "(registry_id: str) -> str"}
+    },
+    "shadowscan.registry": {
+      "CARD_SCHEMA_VERSIONS": {"kind": "constant", "type": "tuple"},
+      "IGNORED_AUTONOMY_LEVEL": {"kind": "constant", "type": "str"},
+      "Inventory": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(entries: list[InventoryEntry] | None = None)",
+        "members": {
+          "autonomy_warnings": {"kind": "method", "signature": "(self) -> list[str]"},
+          "load": {"kind": "classmethod", "signature": "(paths: Sequence[str | Path]) -> Inventory"},
+          "match": {"kind": "method", "signature": "(self, finding: Finding, extra: Sequence[InventoryEntry] = ()) -> InventoryEntry | None"},
+          "suggest": {"kind": "method", "signature": "(self, finding: Finding) -> list[InventoryEntry]"}
+        }
+      },
+      "InventoryEntry": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(agent_id: str, name: str | None = None, owner: str | None = None, resources: list[str] = <factory>, names: list[str] = <factory>, frameworks: list[str] = <factory>, surfaces: list[str] = <factory>, providers: list[str] = <factory>, accounts: list[str] = <factory>, regions: list[str] = <factory>, discriminators: list[str] = <factory>, tags: list[str] = <factory>, source: str | None = None, card: dict[str, Any] = <factory>, autonomy_level: int | None = None, ignored_autonomy_level: bool = False, governance: dict[str, Any] | None = None) -> None",
+        "fields": {
+          "agent_id": "str",
+          "name": "str | None",
+          "owner": "str | None",
+          "resources": "list[str]",
+          "names": "list[str]",
+          "frameworks": "list[str]",
+          "surfaces": "list[str]",
+          "providers": "list[str]",
+          "accounts": "list[str]",
+          "regions": "list[str]",
+          "discriminators": "list[str]",
+          "tags": "list[str]",
+          "source": "str | None",
+          "card": "dict[str, Any]",
+          "autonomy_level": "int | None",
+          "ignored_autonomy_level": "bool",
+          "governance": "dict[str, Any] | None"
+        },
+        "members": {
+          "all_names": {"kind": "method", "signature": "(self) -> list[str]"}
+        }
+      },
+      "InventoryValidationError": {
+        "kind": "exception",
+        "bases": ["shadowscan.errors.SetupError", "builtins.ValueError"],
+        "signature": "(message: object = '', *args: object) -> None",
+        "members": {}
+      },
+      "NAME_FIELDS": {"kind": "constant", "type": "tuple"},
+      "UNVERIFIED_IDENTITY_TAG": {"kind": "constant", "type": "str"},
+      "card_stub_for": {"kind": "function", "signature": "(finding: Finding) -> dict[str, Any]"},
+      "clear_match_state": {"kind": "function", "signature": "(finding: Finding) -> None"},
+      "literal_resource_pattern": {"kind": "function", "signature": "(resource: str) -> str"}
+    },
+    "shadowscan.reporters": {
+      "FORMATS": {"kind": "constant", "type": "list"},
+      "RENDERERS": {"kind": "constant", "type": "dict"},
+      "Renderer": {
+        "kind": "class",
+        "bases": ["typing.Protocol"],
+        "signature": "(*args, **kwargs)",
+        "members": {}
+      },
+      "render": {"kind": "function", "signature": "(result: ScanResult, fmt: str, index: SignatureIndex | None = None) -> str"}
+    },
+    "shadowscan.risk": {
+      "AUTONOMY_WEIGHTS": {"kind": "constant", "type": "dict"},
+      "CAPABILITY_WEIGHTS": {"kind": "constant", "type": "dict"},
+      "COMBINATION_WEIGHTS": {"kind": "constant", "type": "dict"},
+      "DEFAULT_POLICY": {"kind": "constant", "type": "shadowscan.risk.RiskPolicy"},
+      "GOVERNANCE_FACTORS": {"kind": "constant", "type": "frozenset"},
+      "GOVERNANCE_WEIGHTS": {"kind": "constant", "type": "dict"},
+      "KIND_BASE": {"kind": "constant", "type": "dict"},
+      "MITIGATING_TAGS": {"kind": "constant", "type": "frozenset"},
+      "PROVIDER_WEIGHTS": {"kind": "constant", "type": "dict"},
+      "RISK_BASES": {"kind": "constant", "type": "frozenset"},
+      "RiskPolicy": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(kinds: Mapping[Kind, int] = <factory>, capabilities: Mapping[str, tuple[int, str]] = <factory>, tags: Mapping[str, tuple[int, str]] = <factory>, providers: Mapping[str, tuple[int, str]] = <factory>, combinations: Mapping[str, tuple[frozenset[str], int, str]] = <factory>, governance: Mapping[str, int] = <factory>, basis: str = 'combined', autonomy: Mapping[str, int] = <factory>) -> None",
+        "fields": {
+          "kinds": "Mapping[Kind, int]",
+          "capabilities": "Mapping[str, tuple[int, str]]",
+          "tags": "Mapping[str, tuple[int, str]]",
+          "providers": "Mapping[str, tuple[int, str]]",
+          "combinations": "Mapping[str, tuple[frozenset[str], int, str]]",
+          "governance": "Mapping[str, int]",
+          "basis": "str",
+          "autonomy": "Mapping[str, int]"
+        },
+        "members": {
+          "from_options": {"kind": "classmethod", "signature": "(weights: Mapping[str, Any] | None = None, basis: str = 'combined', *, known_providers: Collection[str] | None = None) -> RiskPolicy"}
+        }
+      },
+      "TAG_WEIGHTS": {"kind": "constant", "type": "dict"},
+      "assess": {"kind": "function", "signature": "(finding: Finding, index: SignatureIndex | None = None, inventory_present: bool = False, policy: RiskPolicy | None = None) -> Risk"},
+      "provider_ids": {"kind": "function", "signature": "(index: SignatureIndex) -> frozenset[str]"}
+    },
+    "shadowscan.signatures": {
+      "Match": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(signature: Signature, signal: Signal, value: str, weight: float, line: int | None = None, extra: dict[str, Any] = <factory>) -> None",
+        "fields": {
+          "signature": "Signature",
+          "signal": "Signal",
+          "value": "str",
+          "weight": "float",
+          "line": "int | None",
+          "extra": "dict[str, Any]"
+        },
+        "members": {
+          "agent_indicator": {"kind": "property"},
+          "capabilities": {"kind": "method", "signature": "(self) -> list[str]"},
+          "signature_id": {"kind": "property"}
+        }
+      },
+      "Signal": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(type: str, weight: float = 0.5, ecosystem: str | None = None, languages: list[str] = <factory>, names: list[str] = <factory>, prefixes: list[str] = <factory>, exclude_names: list[str] = <factory>, exclude_prefixes: list[str] = <factory>, patterns: list[str] = <factory>, globs: list[str] = <factory>, values: list[str] = <factory>, capabilities: list[str] = <factory>, agent_indicator: bool = False, ambiguous: bool = False, description: str | None = None, bounded_compiled: list[Any] = <factory>) -> None",
+        "fields": {
+          "type": "str",
+          "weight": "float",
+          "ecosystem": "str | None",
+          "languages": "list[str]",
+          "names": "list[str]",
+          "prefixes": "list[str]",
+          "exclude_names": "list[str]",
+          "exclude_prefixes": "list[str]",
+          "patterns": "list[str]",
+          "globs": "list[str]",
+          "values": "list[str]",
+          "capabilities": "list[str]",
+          "agent_indicator": "bool",
+          "ambiguous": "bool",
+          "description": "str | None",
+          "bounded_compiled": "list[Any]"
+        },
+        "members": {
+          "compile": {"kind": "method", "signature": "(self) -> None"},
+          "compiled": {"kind": "property"}
+        }
+      },
+      "Signature": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(id: str, name: str, category: str, vendor: str | None = None, homepage: str | None = None, description: str | None = None, tags: list[str] = <factory>, capabilities: list[str] = <factory>, agent_indicator: bool = False, risk_notes: list[str] = <factory>, references: list[str] = <factory>, signals: list[Signal] = <factory>, source: str | None = None) -> None",
+        "fields": {
+          "id": "str",
+          "name": "str",
+          "category": "str",
+          "vendor": "str | None",
+          "homepage": "str | None",
+          "description": "str | None",
+          "tags": "list[str]",
+          "capabilities": "list[str]",
+          "agent_indicator": "bool",
+          "risk_notes": "list[str]",
+          "references": "list[str]",
+          "signals": "list[Signal]",
+          "source": "str | None"
+        },
+        "members": {
+          "validate": {"kind": "method", "signature": "(self) -> None"}
+        }
+      },
+      "SignatureIndex": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(signatures: list[Signature])",
+        "members": {
+          "by_category": {"kind": "method", "signature": "(self, category: str) -> list[Signature]"},
+          "fingerprint": {"kind": "method", "signature": "(self) -> str"},
+          "get": {"kind": "method", "signature": "(self, sig_id: str) -> Signature | None"},
+          "literal_scan": {"kind": "method", "signature": "(self, text: str, language: str | None) -> LiteralScan"},
+          "match_client_id": {"kind": "method", "signature": "(self, client_id: str) -> list[Match]"},
+          "match_code": {"kind": "method", "signature": "(self, text: str, language: str | None = None, ignore_spans: Sequence[tuple[int, int]] = (), scan: LiteralScan | None = None) -> list[Match]"},
+          "match_dependency": {"kind": "method", "signature": "(self, ecosystem: str, name: str) -> list[Match]"},
+          "match_domain": {"kind": "method", "signature": "(self, host: str) -> list[Match]"},
+          "match_domains_in_text": {"kind": "method", "signature": "(self, text: str, *, skip_line: Callable[[str], bool] | None = None, source: bool = False) -> list[Match]"},
+          "match_env": {"kind": "method", "signature": "(self, name: str) -> list[Match]"},
+          "match_envs_in_text": {"kind": "method", "signature": "(self, text: str) -> list[Match]"},
+          "match_file": {"kind": "method", "signature": "(self, relpath: str) -> list[Match]"},
+          "match_iac": {"kind": "method", "signature": "(self, resource_type: str) -> list[Match]"},
+          "match_image": {"kind": "method", "signature": "(self, image: str) -> list[Match]"},
+          "match_import_statement": {"kind": "method", "signature": "(self, statement: str, language: str | None) -> tuple[Match, ...]"},
+          "match_imports": {"kind": "method", "signature": "(self, text: str, language: str | None, ignore_spans: Sequence[tuple[int, int]] = (), scan: LiteralScan | None = None) -> list[Match]"},
+          "match_model": {"kind": "method", "signature": "(self, model: str) -> list[Match]"},
+          "match_name": {"kind": "method", "signature": "(self, name: str) -> list[Match]"},
+          "match_scope": {"kind": "method", "signature": "(self, scope: str) -> list[Match]"},
+          "match_secrets": {"kind": "method", "signature": "(self, text: str, scan: LiteralScan | None = None, *, code: bool = False, limited: set[str] | None = None, placeholder: Callable[[str], object] | None = None, env_file: bool = False) -> list[Match]"},
+          "match_user_agent": {"kind": "method", "signature": "(self, ua: str) -> list[Match]"},
+          "scan_budget": {"kind": "method", "signature": "(self, seconds: float = 2.0, *, chars: int | None = None, wall_seconds: float | None = None) -> Iterator[None]"},
+          "signals_of_type": {"kind": "method", "signature": "(self, kind: str) -> list[tuple[Signature, Signal]]"}
+        }
+      },
+      "get_index": {"kind": "function", "signature": "(extra_dirs: list[str] | None = None, reload: bool = False, *, allow_override: bool = False) -> SignatureIndex"},
+      "load_signatures": {"kind": "function", "signature": "(extra_dirs: Sequence[str | os.PathLike[str]] | None = None, include_builtin: bool = True, *, allow_override: bool = False) -> list[Signature]"}
+    },
+    "shadowscan.triage": {
+      "PROVIDERS": {"kind": "constant", "type": "dict"},
+      "Triage": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(settings: TriageSettings, index: SignatureIndex | None = None, *, client: HttpClient | None = None, allow_private_origin: bool = False) -> None",
+        "members": {
+          "run": {"kind": "method", "signature": "(self, findings: list[Finding], *, deadline: float | None = None) -> list[str]"}
+        }
+      },
+      "TriageConfigError": {
+        "kind": "exception",
+        "bases": ["builtins.ValueError"],
+        "members": {}
+      },
+      "TriageSettings": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(enabled: bool = False, provider: str = 'anthropic', model: str = '', base_url: str = '', api_key_env: str = '', max_findings: int = 25, min_level: str = 'medium', timeout_seconds: float = 30.0, budget_seconds: float = 300.0, structured_output: bool = False) -> None",
+        "fields": {
+          "enabled": "bool",
+          "provider": "str",
+          "model": "str",
+          "base_url": "str",
+          "api_key_env": "str",
+          "max_findings": "int",
+          "min_level": "str",
+          "timeout_seconds": "float",
+          "budget_seconds": "float",
+          "structured_output": "bool"
+        },
+        "members": {
+          "from_options": {"kind": "classmethod", "signature": "(value: Any) -> TriageSettings"}
+        }
+      },
+      "VERDICTS": {"kind": "constant", "type": "tuple"},
+      "finding_summary": {"kind": "function", "signature": "(f: Finding, index: SignatureIndex | None = None) -> dict[str, Any]"},
+      "parse_reply": {"kind": "function", "signature": "(text: str) -> dict[str, str] | None"},
+      "select": {"kind": "function", "signature": "(findings: list[Finding], settings: TriageSettings) -> list[Finding]"},
+      "skip": {"kind": "function", "signature": "(findings: list[Finding], settings: TriageSettings) -> int"}
+    },
+    "shadowscan.utils.http": {
+      "DEFAULT_MAX_RESPONSE_BYTES": {"kind": "constant", "type": "int"},
+      "DEFAULT_TIMEOUT": {"kind": "constant", "type": "int"},
+      "DestinationUnresolved": {
+        "kind": "exception",
+        "bases": ["builtins.ValueError"],
+        "members": {}
+      },
+      "HttpClient": {
+        "kind": "class",
+        "bases": ["builtins.object"],
+        "signature": "(base_url: str = '', headers: dict[str, str] | None = None, timeout: float = 30, max_retries: int = 4, session: requests.Session | None = None, auth: Any = None, on_warning: Callable[[str], None] | None = None, allow_private_origin: bool | None = None, max_response_bytes: int = 16777216, ca_bundle: str | None = None, deadline: float | None = None, cancelled: threading.Event | None = None)",
+        "members": {
+          "get": {"kind": "method", "signature": "(self, path: str, **kwargs: Any) -> requests.Response"},
+          "get_json": {"kind": "method", "signature": "(self, path: str, *, max_bytes: int | None = None, on_response: Callable[[requests.Response], None] | None = None, **kwargs: Any) -> Any"},
+          "paginate_link": {"kind": "method", "signature": "(self, path: str, params: dict[str, Any] | None = None, item_key: str | None = None, max_pages: int = 1000, on_page: Callable[[requests.Response], None] | None = None, *, on_data: Callable[[Any], None] | None = None) -> Iterator[Any]"},
+          "paginate_odata": {"kind": "method", "signature": "(self, path: str, params: dict[str, Any] | None = None, max_pages: int = 1000) -> Iterator[dict[str, Any]]"},
+          "paginate_token": {"kind": "method", "signature": "(self, path: str, params: dict[str, Any] | None = None, items_key: str = 'items', token_key: str = 'nextPageToken', token_param: str = 'pageToken', max_pages: int = 1000, method: str = 'GET', body: dict[str, Any] | None = None, expected_empty_kind: str | None = None) -> Iterator[dict[str, Any]]"},
+          "post": {"kind": "method", "signature": "(self, path: str, **kwargs: Any) -> requests.Response"},
+          "post_json": {"kind": "method", "signature": "(self, path: str, *, max_bytes: int | None = None, **kwargs: Any) -> Any"},
+          "read_json_response": {"kind": "method", "signature": "(self, resp: requests.Response, *, max_bytes: int | None = None) -> Any"},
+          "read_response_bytes": {"kind": "method", "signature": "(self, resp: requests.Response, *, max_bytes: int | None = None) -> bytes"},
+          "request": {"kind": "method", "signature": "(self, method: str, path: str, *, raise_for_status: bool = True, **kwargs: Any) -> requests.Response"},
+          "try_get_json": {"kind": "method", "signature": "(self, path: str, default: Any = None, ok_statuses: set[int] | None = None, **kwargs: Any) -> Any"}
+        }
+      },
+      "HttpError": {
+        "kind": "exception",
+        "bases": ["builtins.RuntimeError"],
+        "signature": "(status: int, url: str, body: str = '')",
+        "members": {}
+      },
+      "MAX_RETRY_DELAY": {"kind": "constant", "type": "int"},
+      "METADATA_HOSTS": {"kind": "constant", "type": "frozenset"},
+      "METADATA_NETS": {"kind": "constant", "type": "tuple"},
+      "READ_DEADLINE_FACTOR": {"kind": "constant", "type": "int"},
+      "RETRY_STATUSES": {"kind": "constant", "type": "set"},
+      "diagnostic_url": {"kind": "function", "signature": "(url: str) -> str"},
+      "reset_allow_private_origin": {"kind": "function", "signature": "(token: contextvars.Token[bool]) -> None"},
+      "reset_ca_bundle": {"kind": "function", "signature": "(token: contextvars.Token[str | None]) -> None"},
+      "reset_request_deadline": {"kind": "function", "signature": "(token: contextvars.Token[tuple[float | None, threading.Event | None]]) -> None"},
+      "resolve_destination": {"kind": "function", "signature": "(host: str, port: int, *, allow_private: bool | None = None) -> list[str]"},
+      "set_allow_private_origin": {"kind": "function", "signature": "(enabled: bool) -> contextvars.Token[bool]"},
+      "set_ca_bundle": {"kind": "function", "signature": "(path: str | None) -> contextvars.Token[str | None]"},
+      "set_request_deadline": {"kind": "function", "signature": "(deadline: float | None, cancelled: threading.Event | None) -> contextvars.Token[tuple[float | None, threading.Event | None]]"},
+      "validate_url": {"kind": "function", "signature": "(url: str, origin: str | None = None, *, allow_private: bool | None = None, dns_budget: float | None = None) -> str"}
+    },
+    "shadowscan.utils.redaction": {
+      "REDACTED": {"kind": "constant", "type": "str"},
+      "SanitizationLimitError": {
+        "kind": "exception",
+        "bases": ["builtins.ValueError"],
+        "members": {}
+      },
+      "credential_id": {"kind": "function", "signature": "(value: Any) -> str"},
+      "policy_token": {"kind": "function", "signature": "() -> tuple[Any, ...]"},
+      "sanitize": {"kind": "function", "signature": "(value: Any, *, redact_short_secrets: bool = False, env_values_are_secrets: bool = True) -> Any"},
+      "sanitize_excerpt": {"kind": "function", "signature": "(value: Any, limit: int = 200) -> Any"},
+      "sanitize_text": {"kind": "function", "signature": "(text: str) -> str"},
+      "sanitize_text_excerpt": {"kind": "function", "signature": "(value: str | None, limit: int = 200) -> str | None"}
+    }
+  }
+}

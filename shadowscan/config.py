@@ -1210,3 +1210,35 @@ def _coerce(value: str) -> Any:
     if "," in value and not value.startswith(("http", "/")):
         return [v.strip() for v in value.split(",") if v.strip()]
     return value
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "ConfigValidationError",
+    "ConnectorSpec",
+    "DEFAULT_CONNECTOR_TIMEOUT",
+    "MAX_PLUGIN_ENV",
+    "MinConfidenceError",
+    "PATH_KEYS",
+    "SHARED_BOOLEAN_CONNECTOR_KEYS",
+    "SHARED_CONNECTOR_KEYS",
+    "ScanConfig",
+    "accepted_connector_keys",
+    "argv_credential_keys",
+    "connector_boolean",
+    "connector_timeout_is_default",
+    "expand_env",
+    "normalize_connector_config",
+    "parse_set_options",
+    "plugin_names",
+    "validate_connector_config",
+    "validate_connector_timeout",
+    "validate_connector_timeout_seconds",
+    "validate_job_deadline_seconds",
+    "validate_mcp_registries",
+    "validate_min_confidence",
+    "validate_plugin_env",
+    "validate_plugins",
+    "validate_trusted_registries",
+]

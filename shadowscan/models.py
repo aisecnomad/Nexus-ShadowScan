@@ -944,3 +944,24 @@ class ScanResult:
 
 def now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "DERIVED_METADATA_KEYS",
+    "Evidence",
+    "FINDING_IDENTITY_SCHEMA",
+    "Finding",
+    "Kind",
+    "LEGACY_FINDING_IDENTITY_SCHEMA",
+    "Likelihood",
+    "Risk",
+    "RiskFactor",
+    "RiskLevel",
+    "ScanResult",
+    "ScanStats",
+    "Surface",
+    "detached_copy",
+    "now_iso",
+]

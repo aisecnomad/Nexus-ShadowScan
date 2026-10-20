@@ -4,6 +4,8 @@ Every `shadowscan` command and its options. The
 [README](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/README.md#command-reference)
 lists them in one table; `shadowscan <command> --help` prints the options of
 the installed version, which is authoritative where this page and it differ.
+[`cli-surface.json`](cli-surface.json) records the same surface for the
+[stability policy](stability.md), and a test fails when it falls behind the code.
 
 ## Core scanning commands
 

@@ -1061,3 +1061,11 @@ class IncrementalCache:
                     os.unlink(temp)
                 except OSError:
                     pass
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "IncrementalCache",
+    "Snapshot",
+]
