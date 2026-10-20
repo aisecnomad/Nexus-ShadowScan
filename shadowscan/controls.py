@@ -353,3 +353,27 @@ def control_evidence(
     catalogs = control_catalogs(frameworks)
     check_sources(reports)
     return build_control_evidence(merge_reports(list(reports)), reports, catalogs=catalogs)
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "ControlSelectionError",
+    "EVIDENCE_STATUSES",
+    "INVENTORY_REFS",
+    "MAX_EXAMPLES",
+    "NOTICE",
+    "NOT_MAPPED",
+    "NOT_OBSERVED",
+    "REFERENCED",
+    "REFERENCED_INCOMPLETE",
+    "RISK_LEVELS",
+    "SCHEMA",
+    "UNKNOWN_INCOMPLETE",
+    "UNKNOWN_NOT_DECLARED",
+    "UNKNOWN_NO_INVENTORY",
+    "build_control_evidence",
+    "check_sources",
+    "control_catalogs",
+    "control_evidence",
+]

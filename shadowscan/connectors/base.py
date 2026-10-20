@@ -1078,3 +1078,17 @@ class BaseConnector(ABC):
 
 class _NoDump:
     """Exclude input records from exports (filesystem walks or sensitive token streams)."""
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "BaseConnector",
+    "ConnectorContext",
+    "ConnectorError",
+    "LIVE_SCOPE_SCHEMA",
+    "SCOPE_OUTCOMES",
+    "failure_summary",
+    "incomplete_reason",
+    "known_incomplete_reasons",
+]

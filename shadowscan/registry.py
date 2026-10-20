@@ -826,3 +826,19 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
 def _slug(s: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", str(s).lower()).strip("-")
     return s[:64] or "agent"
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "CARD_SCHEMA_VERSIONS",
+    "IGNORED_AUTONOMY_LEVEL",
+    "Inventory",
+    "InventoryEntry",
+    "InventoryValidationError",
+    "NAME_FIELDS",
+    "UNVERIFIED_IDENTITY_TAG",
+    "card_stub_for",
+    "clear_match_state",
+    "literal_resource_pattern",
+]

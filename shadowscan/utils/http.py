@@ -1291,3 +1291,28 @@ class HttpClient:
             params[token_param] = token
             pages += 1
         raise RuntimeError("Pagination limit reached; collection incomplete")
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "DEFAULT_MAX_RESPONSE_BYTES",
+    "DEFAULT_TIMEOUT",
+    "DestinationUnresolved",
+    "HttpClient",
+    "HttpError",
+    "MAX_RETRY_DELAY",
+    "METADATA_HOSTS",
+    "METADATA_NETS",
+    "READ_DEADLINE_FACTOR",
+    "RETRY_STATUSES",
+    "diagnostic_url",
+    "reset_allow_private_origin",
+    "reset_ca_bundle",
+    "reset_request_deadline",
+    "resolve_destination",
+    "set_allow_private_origin",
+    "set_ca_bundle",
+    "set_request_deadline",
+    "validate_url",
+]

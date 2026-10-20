@@ -16,6 +16,10 @@ a contract. Items move only when they keep the fail-closed trust model.
   Completing the packet is not a release approval.
 - Grow the first-contribution surface: documentation, signatures, offline
   fixtures, evaluation cases.
+- Prepare for 1.0.0 without releasing it: the command line and the public
+  Python API are recorded as snapshots that CI checks for drift, and the
+  [stability policy](docs/reference/stability.md) lists what 1.0.0 freezes,
+  the deprecation rules and the open readiness items.
 - Recruit an independent reviewer who can satisfy the non-author approval rule
   and review the exact release candidate.
 - Complete fresh human-labeled holdout and scope-specific live tenant

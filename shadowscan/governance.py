@@ -185,3 +185,23 @@ def apply_declared_governance(finding: Finding, entry: InventoryEntry | None) ->
     finding.metadata.pop(DECLARED_GOVERNANCE_KEY, None)
     if entry is not None and entry.governance:
         finding.update_metadata(**{DECLARED_GOVERNANCE_KEY: {**entry.governance, "source": entry.agent_id}})
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "DECLARED_GOVERNANCE_KEY",
+    "EU_AI_ACT_RISK_CLASSES",
+    "FIELD_LABELS",
+    "GOVERNANCE_FIELDS",
+    "GovernanceError",
+    "MAX_AIUC1_CERTIFICATE",
+    "MAX_INTENDED_PURPOSE",
+    "MAX_OVERSIGHT_MEASURE",
+    "MAX_OVERSIGHT_MEASURES",
+    "apply_declared_governance",
+    "declared_facts",
+    "declared_risk_class",
+    "parse_governance",
+    "valid_declared_governance",
+]

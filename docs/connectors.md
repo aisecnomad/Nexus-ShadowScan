@@ -1440,6 +1440,20 @@ Generic libraries, model descriptors and packaging do not establish an agent.
 Options: `label` (host name for records without one), `max_processes` (live
 mode bound). See the [runtime guide](connectors/runtime.md).
 
+## Connector inventory
+
+`docs/connectors/inventory.json` is a generated, machine-readable inventory of
+every registered connector: surface, provider, live or offline collection,
+optional SDK extras and third-party imports, credential inputs and environment
+fallbacks, permission model, network egress and the reasons it can leave a scan
+incomplete. Most fields are derived from the code; the permission model comes
+from the [least-privilege table](#least-privilege) and the remaining reviewed
+facts from `tools/connector_inventory.yaml`. Connectors whose scopes must be
+confirmed in a real tenant are listed under `needs_tenant_verification`
+instead of being guessed. Run `make connector-inventory` after changing a
+connector or this table; a test and the weekly `Connector inventory` workflow
+fail on drift, and the workflow opens or updates one tracking issue.
+
 ## Least privilege
 
 All connectors are read-only. Prefer dedicated audit credentials:

@@ -1147,3 +1147,22 @@ def drift_counts(
         "drift_summary": drift_summary,
         "adverse": adverse,
     }
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "DRIFT_CLASSES",
+    "IDENTITY_KEY_ENV",
+    "MAX_BASELINE_AGE_DAYS",
+    "MAX_REPORT_BYTES",
+    "MAX_REPORT_DEPTH",
+    "ReportDigestMismatch",
+    "baseline_age_days",
+    "baseline_lifecycle_reasons",
+    "build_collection_scope",
+    "compare_reports",
+    "drift_counts",
+    "load_report",
+    "load_report_with_digest",
+]

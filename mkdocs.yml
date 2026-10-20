@@ -95,6 +95,7 @@ nav:
       - Configuration: getting-started/configuration.md
       - Incomplete scans (exit 3): getting-started/incomplete-scans.md
       - Command reference: reference/cli.md
+      - Stability policy: reference/stability.md
   - Connectors:
       - Overview: connectors.md
       - Code: connectors/code.md

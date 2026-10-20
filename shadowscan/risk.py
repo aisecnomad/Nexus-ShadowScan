@@ -712,3 +712,23 @@ def _metadata_factors(finding: Finding) -> list[RiskFactor]:
         elif users >= 10:
             factors.append(RiskFactor("blast-radius", f"{users} users / installations", 5))
     return factors
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "AUTONOMY_WEIGHTS",
+    "CAPABILITY_WEIGHTS",
+    "COMBINATION_WEIGHTS",
+    "DEFAULT_POLICY",
+    "GOVERNANCE_FACTORS",
+    "GOVERNANCE_WEIGHTS",
+    "KIND_BASE",
+    "MITIGATING_TAGS",
+    "PROVIDER_WEIGHTS",
+    "RISK_BASES",
+    "RiskPolicy",
+    "TAG_WEIGHTS",
+    "assess",
+    "provider_ids",
+]

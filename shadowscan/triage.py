@@ -557,3 +557,18 @@ class Triage:
         if failed:
             warnings.append(f"llm triage: {failed} finding(s) without a usable verdict")
         return warnings
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "PROVIDERS",
+    "Triage",
+    "TriageConfigError",
+    "TriageSettings",
+    "VERDICTS",
+    "finding_summary",
+    "parse_reply",
+    "select",
+    "skip",
+]

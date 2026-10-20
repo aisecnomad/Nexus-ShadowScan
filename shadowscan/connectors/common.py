@@ -768,3 +768,31 @@ def merge_duplicate_metadata(merged: Finding, duplicate: Finding) -> None:
             merged.metadata.setdefault(key, value)
     if sources:
         _merge_runtime_sources(merged, sources)
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "MAX_PAGES",
+    "TECH_CATEGORIES",
+    "UNATTRIBUTED_APP_MAX_WEIGHT",
+    "apply_matches",
+    "blob_matches",
+    "cap_confidence",
+    "classify_permissions",
+    "config_boolean",
+    "describe_match",
+    "domain_matches",
+    "failure_outcome",
+    "failure_summary",
+    "finalize",
+    "looks_like_placeholder",
+    "max_pages_limit",
+    "merge_duplicate_metadata",
+    "model_matches",
+    "name_matches",
+    "placeholder_reason",
+    "scope_matches",
+    "unique_records",
+    "whole_value_placeholder",
+]

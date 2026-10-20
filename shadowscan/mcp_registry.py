@@ -879,3 +879,43 @@ def fetch_snapshot(
         raise SnapshotError("registry listing exceeds the snapshot byte limit")
     _index(McpRegistrySource(id="snapshot", snapshot="", sha256=""), document)
     return text
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "API_VERSION",
+    "DEFAULT_MAX_PAGES",
+    "DEFAULT_REGISTRY_URL",
+    "EVIDENCE_PREFIX",
+    "GOVERNANCE_FACTOR",
+    "LoadedRegistries",
+    "MATCHES_KEY",
+    "MAX_MCP_REGISTRIES",
+    "MAX_PAGE_BYTES",
+    "MAX_SNAPSHOT_BYTES",
+    "MAX_SNAPSHOT_SERVERS",
+    "METADATA_KEY",
+    "McpRegistrySource",
+    "OFFICIAL_META",
+    "PAGE_LIMIT",
+    "REGISTRY_TAGS",
+    "RegistrySnapshot",
+    "SERVER_KEY",
+    "SNAPSHOT_SCHEMA",
+    "STATUSES",
+    "SnapshotError",
+    "TAG_DELETED",
+    "TAG_DEPRECATED",
+    "TAG_OUTDATED",
+    "TAG_PUBLISHED",
+    "TAG_UNIDENTIFIED",
+    "TAG_UNPUBLISHED",
+    "TAG_VERSION_UNPUBLISHED",
+    "enrich_mcp_findings",
+    "fetch_snapshot",
+    "load_registries",
+    "load_snapshot",
+    "normalize_remote",
+    "registry_base_url",
+]

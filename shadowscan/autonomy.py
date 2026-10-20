@@ -540,3 +540,29 @@ def valid_autonomy(value: Any) -> bool:
         elif entry not in (OVERSIGHT_VALUES if bound == "oversight" else INITIATION_VALUES):
             return False
     return True
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "APPLICABLE_KINDS",
+    "BOUNDS",
+    "INITIATION_VALUES",
+    "LEVELS",
+    "Level",
+    "MAX_BASIS",
+    "MAX_LEVEL",
+    "MIN_LEVEL",
+    "OVERSIGHT_VALUES",
+    "RULES",
+    "SCHEMA",
+    "UNDERSTATED_TAG",
+    "applicable",
+    "apply_autonomy",
+    "classify",
+    "level_title",
+    "merge_autonomy",
+    "merged_autonomy",
+    "observed_floor",
+    "valid_autonomy",
+]

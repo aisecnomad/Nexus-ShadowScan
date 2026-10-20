@@ -1798,3 +1798,12 @@ def _prune_runtime_links(findings: list[Finding]) -> None:
             ids = ev.attributes.get("gateway_finding_ids")
             if isinstance(ids, list):
                 ev.attributes["gateway_finding_ids"] = [i for i in ids if i in retained]
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "Engine",
+    "MAX_AUTO_TIMEOUT",
+    "ProgressFn",
+]

@@ -1,0 +1,1529 @@
+{
+  "schema": "shadowscan.connector-inventory/v1",
+  "generated_by": "python -m tools.connector_inventory",
+  "connector_count": 38,
+  "needs_tenant_verification": ["cloud.gcp", "lowcode.make", "lowcode.salesforce", "lowcode.workato"],
+  "connectors": [
+    {
+      "name": "cloud.aws",
+      "class": "shadowscan.connectors.cloud.aws:AwsConnector",
+      "surface": "cloud",
+      "provider": "aws",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSONL dump of records",
+      "guides": ["docs/connectors.md: `cloud.aws`", "docs/connectors/cloud.md: `cloud.aws`"],
+      "sdk": {
+        "requires": ["boto3"],
+        "extras": ["aws"],
+        "third_party_imports": [
+          {"module": "boto3", "from": "extra:aws"},
+          {"module": "botocore", "from": "extra:aws"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.registries", "shadowscan.signatures", "shadowscan.signatures.matcher", "shadowscan.utils.identity", "shadowscan.utils.redaction", "shadowscan.utils.safe_json", "shadowscan.utils.text"]
+      },
+      "credentials": [],
+      "environment_fallbacks": [
+        {"key": "profile", "env": "AWS_PROFILE"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "`SecurityAudit` managed policy + `bedrock:List*/Get*`, `bedrock-agentcore:List*/Get*`, `cloudtrail:LookupEvents`; ECS additionally needs `ecs:ListClusters`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ecs:ListServices`, `ecs:DescribeServices`, `ecs:ListTaskDefinitionFamilies`, `ecs:DescribeTaskDefinition`; the opt-in `registry` service needs `agent-registry:ListRegistries`, `agent-registry:GetRegistry`, `agent-registry:ListRegistryRecords`, `agent-registry:GetRegistryRecord` (AgentCore registries are covered by `bedrock-agentcore:List*/Get*`), and `registry_arns` needs `agent-registry:ListDiscoverableRegistryRecords` and `agent-registry:BatchGetDiscoverableRegistryRecord` on those registries. Do not grant `agent-registry:InvokeRegistryMcp` or `Search*` actions: the connector never calls them",
+        "source": "docs/connectors.md#least-privilege, row 'AWS'",
+        "grants": ["Search*", "SecurityAudit", "agent-registry:BatchGetDiscoverableRegistryRecord", "agent-registry:GetRegistry", "agent-registry:GetRegistryRecord", "agent-registry:InvokeRegistryMcp", "agent-registry:ListDiscoverableRegistryRecords", "agent-registry:ListRegistries", "agent-registry:ListRegistryRecords", "bedrock-agentcore:List*/Get*", "bedrock:List*/Get*", "cloudtrail:LookupEvents", "ecs:DescribeServices", "ecs:DescribeTaskDefinition", "ecs:DescribeTasks", "ecs:ListClusters", "ecs:ListServices", "ecs:ListTaskDefinitionFamilies", "ecs:ListTasks", "registry", "registry_arns"],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": ["sdk:boto3"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "connector": ["access-denied", "analysis-limit", "other", "unparsed-input", "unscanned-input"]
+        }
+      }
+    },
+    {
+      "name": "cloud.azure",
+      "class": "shadowscan.connectors.cloud.azure:AzureConnector",
+      "surface": "cloud",
+      "provider": "azure",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSONL dump of records",
+      "guides": ["docs/connectors.md: `cloud.azure`", "docs/connectors/cloud.md: `cloud.azure`"],
+      "sdk": {
+        "requires": [],
+        "extras": ["azure"],
+        "third_party_imports": [
+          {"module": "azure", "from": "extra:azure"},
+          {"module": "requests", "from": "core:requests"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.signatures.matcher", "shadowscan.utils.http", "shadowscan.utils.redaction", "shadowscan.utils.text"]
+      },
+      "credentials": [
+        {"key": "access_token", "kind": "secret", "env": "AZURE_ACCESS_TOKEN"},
+        {"key": "foundry_token", "kind": "secret", "env": null}
+      ],
+      "environment_fallbacks": [
+        {"key": "access_token", "env": "AZURE_ACCESS_TOKEN"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "`Reader` on subscriptions, which also covers the `GET /subscriptions/{id}` read that verifies configured subscriptions (+ `Cognitive Services OpenAI User`/`Azure AI User` to list Foundry agents; a narrowly scoped custom permission `Microsoft.Web/sites/config/list/Action` when sensitive app settings are needed)",
+        "source": "docs/connectors.md#least-privilege, row 'Azure'",
+        "grants": ["Azure AI User", "Cognitive Services OpenAI User", "GET /subscriptions/{id}", "Microsoft.Web/sites/config/list/Action", "Reader"],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": ["management.azure.com", "sdk:azure", "discovered: Foundry project endpoints from Azure Resource Manager, checked by the URL destination policy"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["analysis-limit", "other", "unparsed-input", "unscanned-input"]
+        }
+      }
+    },
+    {
+      "name": "cloud.gcp",
+      "class": "shadowscan.connectors.cloud.gcp:GcpConnector",
+      "surface": "cloud",
+      "provider": "gcp",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSONL dump of records",
+      "guides": ["docs/connectors.md: `cloud.gcp`", "docs/connectors/cloud.md: `cloud.gcp`"],
+      "sdk": {
+        "requires": [],
+        "extras": ["gcp"],
+        "third_party_imports": [
+          {"module": "google", "from": "extra:gcp"},
+          {"module": "requests", "from": "core:requests"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.registries", "shadowscan.signatures", "shadowscan.signatures.matcher", "shadowscan.utils.http", "shadowscan.utils.redaction", "shadowscan.utils.safe_json", "shadowscan.utils.text"]
+      },
+      "credentials": [
+        {"key": "access_token", "kind": "secret", "env": "GOOGLE_OAUTH_ACCESS_TOKEN"},
+        {"key": "credentials_file", "kind": "credential-file", "env": "GOOGLE_APPLICATION_CREDENTIALS"}
+      ],
+      "environment_fallbacks": [
+        {"key": "access_token", "env": "GOOGLE_OAUTH_ACCESS_TOKEN"},
+        {"key": "credentials_file", "env": "GOOGLE_APPLICATION_CREDENTIALS"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "`roles/viewer` + `roles/iam.securityReviewer` (+ `roles/logging.privateLogViewer` for audit logs; with the opt-in catalogs, read access to Agent Registry and to Discovery Engine assistants and agents, for example Google's viewer roles for those APIs: verify the role names in your organization)",
+        "source": "docs/connectors.md#least-privilege, row 'GCP'",
+        "grants": ["roles/iam.securityReviewer", "roles/logging.privateLogViewer", "roles/viewer"],
+        "shared_with": [],
+        "verify_in_tenant": true
+      },
+      "egress": ["agentregistry.googleapis.com", "apikeys.googleapis.com", "cloudfunctions.googleapis.com", "cloudresourcemanager.googleapis.com", "iam.googleapis.com", "logging.googleapis.com", "run.googleapis.com", "secretmanager.googleapis.com", "serviceusage.googleapis.com", "*-aiplatform.googleapis.com", "*dialogflow.googleapis.com", "*discoveryengine.googleapis.com", "sdk:google"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["analysis-limit", "other", "unparsed-input", "unscanned-input", "upstream-error"]
+        }
+      }
+    },
+    {
+      "name": "cloud.kubernetes",
+      "class": "shadowscan.connectors.cloud.kubernetes:KubernetesConnector",
+      "surface": "cloud",
+      "provider": "kubernetes",
+      "collection": "offline-only",
+      "offline_input": true,
+      "offline_formats": "kubectl get -o json List envelope / JSONL / YAML export",
+      "guides": ["docs/connectors.md: `cloud.kubernetes` and `cloud.openshift`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [],
+        "first_party_services": ["shadowscan.models", "shadowscan.utils.redaction"]
+      },
+      "credentials": [],
+      "environment_fallbacks": [],
+      "permissions": {
+        "model": "offline-export",
+        "minimum": "read access to the export given as `input`; no provider credentials",
+        "source": "derived: live_collection is False",
+        "grants": []
+      },
+      "egress": [],
+      "failure_modes": {
+        "incomplete_reasons": ["analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "connector": ["analysis-limit", "other", "oversize-file", "unparsed-input"]
+        }
+      }
+    },
+    {
+      "name": "cloud.oci",
+      "class": "shadowscan.connectors.cloud.oci:OciConnector",
+      "surface": "cloud",
+      "provider": "oci",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSONL dump of records",
+      "guides": ["docs/connectors.md: `cloud.oci`", "docs/connectors/cloud.md: `cloud.oci`"],
+      "sdk": {
+        "requires": ["oci"],
+        "extras": ["oci"],
+        "third_party_imports": [
+          {"module": "oci", "from": "extra:oci"},
+          {"module": "regex", "from": "core:regex"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.signatures.matcher", "shadowscan.utils.redaction", "shadowscan.utils.text"]
+      },
+      "credentials": [],
+      "environment_fallbacks": [],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "policy `Allow group audit to read all-resources in tenancy`",
+        "source": "docs/connectors.md#least-privilege, row 'OCI'",
+        "grants": ["Allow group audit to read all-resources in tenancy"],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": ["sdk:oci"],
+      "failure_modes": {
+        "incomplete_reasons": ["analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "connector": ["analysis-limit", "other", "unparsed-input", "unscanned-input"]
+        }
+      }
+    },
+    {
+      "name": "cloud.openshift",
+      "class": "shadowscan.connectors.cloud.kubernetes:OpenShiftConnector",
+      "surface": "cloud",
+      "provider": "openshift",
+      "collection": "offline-only",
+      "offline_input": true,
+      "offline_formats": "kubectl get -o json List envelope / JSONL / YAML export",
+      "guides": ["docs/connectors.md: `cloud.kubernetes` and `cloud.openshift`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [],
+        "first_party_services": ["shadowscan.models", "shadowscan.utils.redaction"]
+      },
+      "credentials": [],
+      "environment_fallbacks": [],
+      "permissions": {
+        "model": "offline-export",
+        "minimum": "read access to the export given as `input`; no provider credentials",
+        "source": "derived: live_collection is False",
+        "grants": []
+      },
+      "egress": [],
+      "failure_modes": {
+        "incomplete_reasons": ["analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "connector": ["analysis-limit", "other", "oversize-file", "unparsed-input"]
+        }
+      }
+    },
+    {
+      "name": "code.filesystem",
+      "class": "shadowscan.connectors.code.filesystem:FilesystemConnector",
+      "surface": "code",
+      "provider": "filesystem",
+      "collection": "local",
+      "offline_input": false,
+      "offline_formats": null,
+      "guides": ["docs/connectors.md: `code.filesystem`", "docs/connectors/code.md: `code.filesystem`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [
+          {"module": "regex", "from": "core:regex"},
+          {"module": "yaml", "from": "core:PyYAML"}
+        ],
+        "first_party_services": ["shadowscan.coverage", "shadowscan.models", "shadowscan.risk", "shadowscan.signatures", "shadowscan.signatures.loader", "shadowscan.signatures.matcher", "shadowscan.signatures.schema", "shadowscan.utils.files", "shadowscan.utils.git", "shadowscan.utils.jsonc", "shadowscan.utils.python_tokens", "shadowscan.utils.redaction", "shadowscan.utils.redaction_entropy", "shadowscan.utils.safe_json", "shadowscan.utils.safe_yaml", "shadowscan.utils.text"]
+      },
+      "credentials": [],
+      "environment_fallbacks": [],
+      "permissions": {
+        "model": "documented-in-data-file",
+        "minimum": "Read access to the configured paths as the account running the scan; no provider credentials. diff_base runs the local git binary on the scanned repository.",
+        "source": "tools/connector_inventory.yaml",
+        "grants": []
+      },
+      "egress": [],
+      "failure_modes": {
+        "incomplete_reasons": ["analysis-limit", "other", "oversize-file", "sanitization-limit", "subset-scan", "timeout", "unparsed-input", "unresolved-link", "unscanned-input"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "connector": ["analysis-limit", "other", "oversize-file", "sanitization-limit", "subset-scan", "timeout", "unparsed-input", "unresolved-link", "unscanned-input"]
+        }
+      }
+    },
+    {
+      "name": "code.github",
+      "class": "shadowscan.connectors.code.github:GitHubConnector",
+      "surface": "code",
+      "provider": "github",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "directory of cloned repositories",
+      "guides": ["docs/connectors.md: `code.github`", "docs/connectors/code.md: `code.github`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [
+          {"module": "regex", "from": "core:regex"},
+          {"module": "yaml", "from": "core:PyYAML"}
+        ],
+        "first_party_services": ["shadowscan.coverage", "shadowscan.models", "shadowscan.risk", "shadowscan.signatures", "shadowscan.signatures.loader", "shadowscan.signatures.matcher", "shadowscan.signatures.schema", "shadowscan.utils.files", "shadowscan.utils.git", "shadowscan.utils.http", "shadowscan.utils.jsonc", "shadowscan.utils.python_tokens", "shadowscan.utils.redaction", "shadowscan.utils.redaction_entropy", "shadowscan.utils.safe_json", "shadowscan.utils.safe_yaml", "shadowscan.utils.text"]
+      },
+      "credentials": [
+        {"key": "token", "kind": "secret", "env": "GITHUB_TOKEN"},
+        {"key": "github_token", "kind": "secret", "env": "GH_TOKEN"}
+      ],
+      "environment_fallbacks": [
+        {"key": "api_url", "env": "GITHUB_API_URL"},
+        {"key": "github_token", "env": "GH_TOKEN"},
+        {"key": "org", "env": "GITHUB_ORG"},
+        {"key": "token", "env": "GITHUB_TOKEN"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "fine-grained PAT: contents/metadata read; `secrets:read` for Actions secret names, plus `variables:read`, Codespaces `secrets:read` and Dependabot `secrets:read` for the other credential-name listings (each optional; a denied listing marks coverage incomplete)",
+        "source": "docs/connectors.md#least-privilege, row 'GitHub'",
+        "grants": ["secrets:read", "variables:read"],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": ["<api_url>", "api.github.com", "github.com"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "sanitization-limit", "subset-scan", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["analysis-limit", "other", "oversize-file", "sanitization-limit", "subset-scan", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"]
+        }
+      }
+    },
+    {
+      "name": "code.gitlab",
+      "class": "shadowscan.connectors.code.gitlab:GitLabConnector",
+      "surface": "code",
+      "provider": "gitlab",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "directory of cloned projects",
+      "guides": ["docs/connectors.md: `code.gitlab`", "docs/connectors/code.md: `code.gitlab`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [
+          {"module": "regex", "from": "core:regex"},
+          {"module": "yaml", "from": "core:PyYAML"}
+        ],
+        "first_party_services": ["shadowscan.coverage", "shadowscan.models", "shadowscan.risk", "shadowscan.signatures", "shadowscan.signatures.loader", "shadowscan.signatures.matcher", "shadowscan.signatures.schema", "shadowscan.utils.files", "shadowscan.utils.git", "shadowscan.utils.http", "shadowscan.utils.jsonc", "shadowscan.utils.python_tokens", "shadowscan.utils.redaction", "shadowscan.utils.redaction_entropy", "shadowscan.utils.safe_json", "shadowscan.utils.safe_yaml", "shadowscan.utils.text"]
+      },
+      "credentials": [
+        {"key": "token", "kind": "secret", "env": "GITLAB_TOKEN"}
+      ],
+      "environment_fallbacks": [
+        {"key": "api_url", "env": "GITLAB_API_URL"},
+        {"key": "group", "env": "GITLAB_GROUP"},
+        {"key": "token", "env": "GITLAB_TOKEN"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "PAT `read_api`, `read_repository`",
+        "source": "docs/connectors.md#least-privilege, row 'GitLab'",
+        "grants": ["read_api", "read_repository"],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": ["<api_url>", "gitlab.com"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "sanitization-limit", "subset-scan", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["analysis-limit", "other", "oversize-file", "sanitization-limit", "subset-scan", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"]
+        }
+      }
+    },
+    {
+      "name": "endpoint.ebpf",
+      "class": "shadowscan.connectors.endpoint.runtime:EbpfConnector",
+      "surface": "endpoint",
+      "provider": "runtime-telemetry",
+      "collection": "offline-only",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML export",
+      "guides": ["docs/connectors.md: `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models` and `endpoint.ebpf`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [],
+        "first_party_services": ["shadowscan.models", "shadowscan.utils.redaction"]
+      },
+      "credentials": [],
+      "environment_fallbacks": [],
+      "permissions": {
+        "model": "offline-export",
+        "minimum": "read access to the export given as `input`; no provider credentials",
+        "source": "derived: live_collection is False",
+        "grants": []
+      },
+      "egress": [],
+      "failure_modes": {
+        "incomplete_reasons": ["analysis-limit", "other", "oversize-file", "sanitization-limit", "timeout", "unparsed-input", "unresolved-link", "unscanned-input"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "connector": ["other", "sanitization-limit", "unparsed-input"]
+        }
+      }
+    },
+    {
+      "name": "endpoint.host",
+      "class": "shadowscan.connectors.endpoint.runtime:HostConnector",
+      "surface": "endpoint",
+      "provider": "host",
+      "collection": "offline-only",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML export",
+      "guides": ["docs/connectors.md: `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models` and `endpoint.ebpf`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.utils.redaction"]
+      },
+      "credentials": [],
+      "environment_fallbacks": [],
+      "permissions": {
+        "model": "offline-export",
+        "minimum": "read access to the export given as `input`; no provider credentials",
+        "source": "derived: live_collection is False",
+        "grants": []
+      },
+      "egress": [],
+      "failure_modes": {
+        "incomplete_reasons": ["analysis-limit", "other", "oversize-file", "sanitization-limit", "timeout", "unresolved-link", "unscanned-input"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "connector": ["other", "sanitization-limit"]
+        }
+      }
+    },
+    {
+      "name": "endpoint.inventory",
+      "class": "shadowscan.connectors.endpoint.inventory:EndpointInventoryConnector",
+      "surface": "endpoint",
+      "provider": "endpoint",
+      "collection": "local",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL (exported endpoint records or osquery results)",
+      "guides": ["docs/connectors.md: `endpoint.inventory`", "docs/connectors/endpoint.md: `endpoint.inventory`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [
+          {"module": "yaml", "from": "core:PyYAML"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.risk", "shadowscan.utils.files", "shadowscan.utils.jsonc", "shadowscan.utils.redaction", "shadowscan.utils.safe_yaml"]
+      },
+      "credentials": [],
+      "environment_fallbacks": [],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "read access to the inventoried home directories; run as that user, or as an account that can read every listed home on a shared host. Nothing is written",
+        "source": "docs/connectors.md#least-privilege, row 'Endpoint'",
+        "grants": [],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": [],
+      "failure_modes": {
+        "incomplete_reasons": ["analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "connector": ["analysis-limit", "other", "unparsed-input", "unscanned-input"]
+        }
+      }
+    },
+    {
+      "name": "endpoint.mcp",
+      "class": "shadowscan.connectors.endpoint.runtime:MCPInventoryConnector",
+      "surface": "endpoint",
+      "provider": "mcp",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML export",
+      "guides": ["docs/connectors.md: `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models` and `endpoint.ebpf`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [
+          {"module": "jwt", "from": "core:PyJWT"},
+          {"module": "yaml", "from": "core:PyYAML"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.utils.http", "shadowscan.utils.jcs", "shadowscan.utils.jwks", "shadowscan.utils.redaction", "shadowscan.utils.safe_yaml", "shadowscan.utils.text"]
+      },
+      "credentials": [],
+      "environment_fallbacks": [],
+      "permissions": {
+        "model": "documented-in-data-file",
+        "minimum": "No provider credentials. The opt-in probe fetches the A2A Agent Cards in agent_card_urls, and the keys at agent_card_jwks_url, anonymously over HTTPS; a private CA comes from ca_bundle.",
+        "source": "tools/connector_inventory.yaml",
+        "grants": []
+      },
+      "egress": ["<agent_card_urls>", "<agent_card_jwks_url>"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "sanitization-limit", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["analysis-limit", "other", "sanitization-limit", "unparsed-input", "upstream-error"]
+        }
+      }
+    },
+    {
+      "name": "endpoint.models",
+      "class": "shadowscan.connectors.endpoint.runtime:ModelArtifactConnector",
+      "surface": "endpoint",
+      "provider": "local-model",
+      "collection": "offline-only",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML export",
+      "guides": ["docs/connectors.md: `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models` and `endpoint.ebpf`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [],
+        "first_party_services": ["shadowscan.models", "shadowscan.utils.redaction"]
+      },
+      "credentials": [],
+      "environment_fallbacks": [],
+      "permissions": {
+        "model": "offline-export",
+        "minimum": "read access to the export given as `input`; no provider credentials",
+        "source": "derived: live_collection is False",
+        "grants": []
+      },
+      "egress": [],
+      "failure_modes": {
+        "incomplete_reasons": ["analysis-limit", "other", "oversize-file", "sanitization-limit", "timeout", "unparsed-input", "unresolved-link", "unscanned-input"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "connector": ["other", "sanitization-limit", "unparsed-input"]
+        }
+      }
+    },
+    {
+      "name": "endpoint.ollama",
+      "class": "shadowscan.connectors.endpoint.runtime:OllamaConnector",
+      "surface": "endpoint",
+      "provider": "ollama",
+      "collection": "offline-only",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML export",
+      "guides": ["docs/connectors.md: `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models` and `endpoint.ebpf`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [],
+        "first_party_services": ["shadowscan.models", "shadowscan.utils.redaction"]
+      },
+      "credentials": [],
+      "environment_fallbacks": [],
+      "permissions": {
+        "model": "offline-export",
+        "minimum": "read access to the export given as `input`; no provider credentials",
+        "source": "derived: live_collection is False",
+        "grants": []
+      },
+      "egress": [],
+      "failure_modes": {
+        "incomplete_reasons": ["analysis-limit", "other", "oversize-file", "sanitization-limit", "timeout", "unparsed-input", "unresolved-link", "unscanned-input"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "connector": ["analysis-limit", "sanitization-limit", "unparsed-input"]
+        }
+      }
+    },
+    {
+      "name": "gateway.logs",
+      "class": "shadowscan.connectors.gateway.logs:GatewayLogConnector",
+      "surface": "gateway",
+      "provider": "gateway",
+      "collection": "offline-only",
+      "offline_input": true,
+      "offline_formats": "JSONL / JSON / CSV / text access logs",
+      "guides": ["docs/connectors.md: `gateway.logs`", "docs/connectors/gateway.md: `gateway.logs`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.signatures.matcher", "shadowscan.utils.redaction", "shadowscan.utils.safe_json", "shadowscan.utils.text"]
+      },
+      "credentials": [],
+      "environment_fallbacks": [],
+      "permissions": {
+        "model": "offline-export",
+        "minimum": "read access to the export given as `input`; no provider credentials",
+        "source": "derived: live_collection is False",
+        "grants": []
+      },
+      "egress": [],
+      "failure_modes": {
+        "incomplete_reasons": ["analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "connector": ["analysis-limit", "other", "unparsed-input"]
+        }
+      }
+    },
+    {
+      "name": "gateway.otel",
+      "class": "shadowscan.connectors.endpoint.runtime:OtelConnector",
+      "surface": "gateway",
+      "provider": "opentelemetry",
+      "collection": "offline-only",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML export",
+      "guides": ["docs/connectors.md: `gateway.otel`", "docs/connectors/gateway.md: `gateway.otel`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [],
+        "first_party_services": ["shadowscan.models", "shadowscan.utils.redaction"]
+      },
+      "credentials": [],
+      "environment_fallbacks": [],
+      "permissions": {
+        "model": "offline-export",
+        "minimum": "read access to the export given as `input`; no provider credentials",
+        "source": "derived: live_collection is False",
+        "grants": []
+      },
+      "egress": [],
+      "failure_modes": {
+        "incomplete_reasons": ["analysis-limit", "other", "oversize-file", "sanitization-limit", "timeout", "unparsed-input", "unresolved-link", "unscanned-input"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "connector": ["analysis-limit", "sanitization-limit", "unparsed-input"]
+        }
+      }
+    },
+    {
+      "name": "identity.auth0",
+      "class": "shadowscan.connectors.identity.auth0:Auth0Connector",
+      "surface": "identity",
+      "provider": "auth0",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML / CSV export",
+      "guides": ["docs/connectors.md: `identity.auth0`", "docs/connectors/identity.md: `identity.auth0`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [
+          {"module": "requests", "from": "core:requests"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.signatures.matcher", "shadowscan.utils.http"]
+      },
+      "credentials": [
+        {"key": "client_secret", "kind": "secret", "env": "AUTH0_CLIENT_SECRET"},
+        {"key": "token", "kind": "secret", "env": "AUTH0_MGMT_TOKEN"}
+      ],
+      "environment_fallbacks": [
+        {"key": "client_id", "env": "AUTH0_CLIENT_ID"},
+        {"key": "client_secret", "env": "AUTH0_CLIENT_SECRET"},
+        {"key": "domain", "env": "AUTH0_DOMAIN"},
+        {"key": "token", "env": "AUTH0_MGMT_TOKEN"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "Management API v2 token with `read:clients`, `read:client_grants`",
+        "source": "docs/connectors.md#least-privilege, row 'Auth0'",
+        "grants": ["read:client_grants", "read:clients"],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": ["<domain>"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["analysis-limit", "other", "unparsed-input"]
+        }
+      }
+    },
+    {
+      "name": "identity.entra",
+      "class": "shadowscan.connectors.identity.entra:EntraConnector",
+      "surface": "identity",
+      "provider": "entra",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML / CSV export",
+      "guides": ["docs/connectors.md: `identity.entra`", "docs/connectors/identity.md: `identity.entra`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [
+          {"module": "jwt", "from": "core:PyJWT"},
+          {"module": "requests", "from": "core:requests"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.registries", "shadowscan.signatures", "shadowscan.utils.http", "shadowscan.utils.redaction", "shadowscan.utils.safe_json"]
+      },
+      "credentials": [
+        {"key": "client_secret", "kind": "secret", "env": "AZURE_CLIENT_SECRET"},
+        {"key": "access_token", "kind": "secret", "env": "GRAPH_ACCESS_TOKEN"},
+        {"key": "delegated_token_env", "kind": "environment-reference", "env": null}
+      ],
+      "environment_fallbacks": [
+        {"key": "access_token", "env": "GRAPH_ACCESS_TOKEN"},
+        {"key": "client_id", "env": "AZURE_CLIENT_ID"},
+        {"key": "client_secret", "env": "AZURE_CLIENT_SECRET"},
+        {"key": "tenant_id", "env": "AZURE_TENANT_ID"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user. Opt-in Agent 365 packages: `CopilotPackages.Read.All` (application, or delegated for a work or school account whose user holds a role that can read the agent catalog). Opt-in agent identities: `AgentIdentity.Read.All` (Microsoft's least-privileged permission for listing agent identities, application or delegated). Comparable drift reads `GET /organization`: `Organization.Read.All` or `Directory.Read.All` (application), `User.Read` (delegated)",
+        "source": "docs/connectors.md#least-privilege, row 'Entra / Teams / Power Platform'",
+        "grants": ["AgentIdentity.Read.All", "AppCatalog.Read.All", "Application.Read.All", "CopilotPackages.Read.All", "DelegatedPermissionGrant.Read.All", "Directory.Read.All", "GET /organization", "Organization.Read.All", "Team.ReadBasic.All", "TeamsAppInstallation.ReadForTeam.All", "User.Read"],
+        "shared_with": ["lowcode.power-platform", "saas.microsoft-teams"],
+        "verify_in_tenant": false
+      },
+      "egress": ["graph.microsoft.com", "login.microsoftonline.com"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["access-denied", "analysis-limit", "other", "unparsed-input", "unscanned-input"]
+        }
+      }
+    },
+    {
+      "name": "identity.google-workspace",
+      "class": "shadowscan.connectors.identity.google_workspace:GoogleWorkspaceConnector",
+      "surface": "identity",
+      "provider": "google-workspace",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML / CSV export",
+      "guides": ["docs/connectors.md: `identity.google-workspace`", "docs/connectors/identity.md: `identity.google-workspace`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [
+          {"module": "jwt", "from": "core:PyJWT"},
+          {"module": "requests", "from": "core:requests"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.utils.http", "shadowscan.utils.identity", "shadowscan.utils.safe_json"]
+      },
+      "credentials": [
+        {"key": "service_account_file", "kind": "credential-file", "env": "GOOGLE_APPLICATION_CREDENTIALS"},
+        {"key": "access_token", "kind": "secret", "env": "GOOGLE_ACCESS_TOKEN"}
+      ],
+      "environment_fallbacks": [
+        {"key": "access_token", "env": "GOOGLE_ACCESS_TOKEN"},
+        {"key": "admin_email", "env": "GOOGLE_ADMIN_EMAIL"},
+        {"key": "service_account_file", "env": "GOOGLE_APPLICATION_CREDENTIALS"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "DWD scopes `admin.directory.user.readonly`, `admin.directory.user.security`, `admin.directory.customer.readonly`",
+        "source": "docs/connectors.md#least-privilege, row 'Google Workspace'",
+        "grants": ["admin.directory.customer.readonly", "admin.directory.user.readonly", "admin.directory.user.security"],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": ["admin.googleapis.com", "oauth2.googleapis.com"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["other", "unparsed-input", "unscanned-input"]
+        }
+      }
+    },
+    {
+      "name": "identity.jwt",
+      "class": "shadowscan.connectors.identity.jwt:JwtConnector",
+      "surface": "identity",
+      "provider": "jwt",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "text (one JWT per line) / JSON",
+      "guides": ["docs/connectors.md: `identity.jwt`", "docs/connectors/identity.md: `identity.jwt`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [
+          {"module": "jwt", "from": "core:PyJWT"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures.matcher", "shadowscan.utils.jwks", "shadowscan.utils.redaction", "shadowscan.utils.safe_json", "shadowscan.utils.text"]
+      },
+      "credentials": [
+        {"key": "tokens", "kind": "secret", "env": null}
+      ],
+      "environment_fallbacks": [],
+      "permissions": {
+        "model": "documented-in-data-file",
+        "minimum": "No provider credentials. Tokens come from the configuration or input; an optional jwks_url is fetched anonymously over HTTPS to verify signatures.",
+        "source": "tools/connector_inventory.yaml",
+        "grants": []
+      },
+      "egress": ["<jwks_url>"],
+      "failure_modes": {
+        "incomplete_reasons": ["analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "connector": ["other", "oversize-file", "unparsed-input"]
+        }
+      }
+    },
+    {
+      "name": "identity.okta",
+      "class": "shadowscan.connectors.identity.okta:OktaConnector",
+      "surface": "identity",
+      "provider": "okta",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML / CSV export",
+      "guides": ["docs/connectors.md: `identity.okta`", "docs/connectors/identity.md: `identity.okta`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [
+          {"module": "requests", "from": "core:requests"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.signatures.matcher", "shadowscan.utils.http"]
+      },
+      "credentials": [
+        {"key": "token", "kind": "secret", "env": "OKTA_API_TOKEN"},
+        {"key": "bearer", "kind": "secret", "env": "OKTA_ACCESS_TOKEN"}
+      ],
+      "environment_fallbacks": [
+        {"key": "bearer", "env": "OKTA_ACCESS_TOKEN"},
+        {"key": "org_url", "env": "OKTA_ORG_URL"},
+        {"key": "token", "env": "OKTA_API_TOKEN"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "API token from a read-only admin, or OAuth `okta.apps.read` and `okta.appGrants.read`",
+        "source": "docs/connectors.md#least-privilege, row 'Okta'",
+        "grants": ["okta.appGrants.read", "okta.apps.read"],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": ["<org_url>"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["access-denied", "other", "unparsed-input"]
+        }
+      }
+    },
+    {
+      "name": "lowcode.make",
+      "class": "shadowscan.connectors.lowcode.automation:MakeConnector",
+      "surface": "lowcode",
+      "provider": "make",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML / CSV export",
+      "guides": ["docs/connectors.md: `lowcode.make`", "docs/connectors/lowcode.md: `lowcode.n8n` · `lowcode.make` · `lowcode.zapier` · `lowcode.workato`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [
+          {"module": "requests", "from": "core:requests"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.signatures.matcher", "shadowscan.utils.http", "shadowscan.utils.redaction"]
+      },
+      "credentials": [
+        {"key": "token", "kind": "secret", "env": "MAKE_API_TOKEN"}
+      ],
+      "environment_fallbacks": [
+        {"key": "api_url", "env": "MAKE_API_URL"},
+        {"key": "token", "env": "MAKE_API_TOKEN"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "API token with read access to scenarios (including blueprints) and AI agents (`/api/v2/scenarios`, `/api/v2/scenarios/{id}/blueprint`, `/api/v2/ai-agents/v1/agents`), plus teams (`/api/v2/teams`) when `organization_id` is set instead of `team_id`; verify the scope names in your organization",
+        "source": "docs/connectors.md#least-privilege, row 'Make'",
+        "grants": ["/api/v2/ai-agents/v1/agents", "/api/v2/scenarios", "/api/v2/scenarios/{id}/blueprint", "/api/v2/teams", "organization_id", "team_id"],
+        "shared_with": [],
+        "verify_in_tenant": true
+      },
+      "egress": ["<api_url>"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["analysis-limit", "other", "unparsed-input", "unscanned-input"]
+        }
+      }
+    },
+    {
+      "name": "lowcode.n8n",
+      "class": "shadowscan.connectors.lowcode.automation:N8nConnector",
+      "surface": "lowcode",
+      "provider": "n8n",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML / CSV export",
+      "guides": ["docs/connectors.md: `lowcode.n8n`", "docs/connectors/lowcode.md: `lowcode.n8n` · `lowcode.make` · `lowcode.zapier` · `lowcode.workato`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.signatures.matcher", "shadowscan.utils.http", "shadowscan.utils.safe_json", "shadowscan.utils.text"]
+      },
+      "credentials": [
+        {"key": "api_key", "kind": "secret", "env": "N8N_API_KEY"}
+      ],
+      "environment_fallbacks": [
+        {"key": "api_key", "env": "N8N_API_KEY"},
+        {"key": "api_url", "env": "N8N_API_URL"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "API key; the connector reads `/api/v1/workflows` only",
+        "source": "docs/connectors.md#least-privilege, row 'n8n'",
+        "grants": ["/api/v1/workflows"],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": ["<api_url>"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["other", "unparsed-input"]
+        }
+      }
+    },
+    {
+      "name": "lowcode.power-platform",
+      "class": "shadowscan.connectors.lowcode.power_platform:PowerPlatformConnector",
+      "surface": "lowcode",
+      "provider": "power-platform",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML / CSV export",
+      "guides": ["docs/connectors.md: `lowcode.power-platform`", "docs/connectors/lowcode.md: `lowcode.power-platform`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [
+          {"module": "requests", "from": "core:requests"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures.matcher", "shadowscan.utils.http", "shadowscan.utils.text"]
+      },
+      "credentials": [
+        {"key": "client_secret", "kind": "secret", "env": "AZURE_CLIENT_SECRET"}
+      ],
+      "environment_fallbacks": [
+        {"key": "client_id", "env": "AZURE_CLIENT_ID"},
+        {"key": "client_secret", "env": "AZURE_CLIENT_SECRET"},
+        {"key": "tenant_id", "env": "AZURE_TENANT_ID"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user. Opt-in Agent 365 packages: `CopilotPackages.Read.All` (application, or delegated for a work or school account whose user holds a role that can read the agent catalog). Opt-in agent identities: `AgentIdentity.Read.All` (Microsoft's least-privileged permission for listing agent identities, application or delegated). Comparable drift reads `GET /organization`: `Organization.Read.All` or `Directory.Read.All` (application), `User.Read` (delegated)",
+        "source": "docs/connectors.md#least-privilege, row 'Entra / Teams / Power Platform'",
+        "grants": ["AgentIdentity.Read.All", "AppCatalog.Read.All", "Application.Read.All", "CopilotPackages.Read.All", "DelegatedPermissionGrant.Read.All", "Directory.Read.All", "GET /organization", "Organization.Read.All", "Team.ReadBasic.All", "TeamsAppInstallation.ReadForTeam.All", "User.Read"],
+        "shared_with": ["identity.entra", "saas.microsoft-teams"],
+        "verify_in_tenant": false
+      },
+      "egress": ["api.bap.microsoft.com", "api.flow.microsoft.com", "api.powerplatform.com", "login.microsoftonline.com", "discovered: Dataverse environment origins from the admin API, limited to Dynamics CRM hosts"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["other", "unparsed-input", "unscanned-input"]
+        }
+      }
+    },
+    {
+      "name": "lowcode.salesforce",
+      "class": "shadowscan.connectors.lowcode.salesforce:SalesforceConnector",
+      "surface": "lowcode",
+      "provider": "salesforce",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML / CSV export",
+      "guides": ["docs/connectors.md: `lowcode.salesforce`", "docs/connectors/lowcode.md: `lowcode.salesforce`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [
+          {"module": "requests", "from": "core:requests"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.utils.http", "shadowscan.utils.redaction", "shadowscan.utils.text"]
+      },
+      "credentials": [
+        {"key": "access_token", "kind": "secret", "env": "SFDC_ACCESS_TOKEN"},
+        {"key": "client_secret", "kind": "secret", "env": "SFDC_CLIENT_SECRET"}
+      ],
+      "environment_fallbacks": [
+        {"key": "access_token", "env": "SFDC_ACCESS_TOKEN"},
+        {"key": "client_id", "env": "SFDC_CLIENT_ID"},
+        {"key": "client_secret", "env": "SFDC_CLIENT_SECRET"},
+        {"key": "instance_url", "env": "SFDC_INSTANCE_URL"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "connected app (client-credentials flow) whose integration user has read access to the objects the REST `query` and Tooling `query` endpoints return; verify the object permissions in your org",
+        "source": "docs/connectors.md#least-privilege, row 'Salesforce'",
+        "grants": ["query"],
+        "shared_with": [],
+        "verify_in_tenant": true
+      },
+      "egress": ["<instance_url>"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["analysis-limit", "other", "unparsed-input"]
+        }
+      }
+    },
+    {
+      "name": "lowcode.servicenow",
+      "class": "shadowscan.connectors.lowcode.servicenow:ServiceNowConnector",
+      "surface": "lowcode",
+      "provider": "servicenow",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML / CSV export",
+      "guides": ["docs/connectors.md: `lowcode.servicenow`", "docs/connectors/lowcode.md: `lowcode.servicenow`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [
+          {"module": "requests", "from": "core:requests"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.signatures.matcher", "shadowscan.utils.http", "shadowscan.utils.redaction"]
+      },
+      "credentials": [
+        {"key": "password", "kind": "secret", "env": "SNOW_PASSWORD"},
+        {"key": "token", "kind": "secret", "env": "SNOW_TOKEN"}
+      ],
+      "environment_fallbacks": [
+        {"key": "instance", "env": "SNOW_INSTANCE"},
+        {"key": "password", "env": "SNOW_PASSWORD"},
+        {"key": "token", "env": "SNOW_TOKEN"},
+        {"key": "username", "env": "SNOW_USERNAME"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "basic or bearer credentials with read access to the `sn_aia_*`, `sys_hub_flow` and `oauth_entity` tables through the Table API",
+        "source": "docs/connectors.md#least-privilege, row 'ServiceNow'",
+        "grants": ["oauth_entity", "sn_aia_*", "sys_hub_flow"],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": ["<instance>"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["analysis-limit", "other", "timeout", "unparsed-input"]
+        }
+      }
+    },
+    {
+      "name": "lowcode.workato",
+      "class": "shadowscan.connectors.lowcode.automation:WorkatoConnector",
+      "surface": "lowcode",
+      "provider": "workato",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML / CSV export",
+      "guides": ["docs/connectors.md: `lowcode.workato`", "docs/connectors/lowcode.md: `lowcode.n8n` · `lowcode.make` · `lowcode.zapier` · `lowcode.workato`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.signatures.matcher", "shadowscan.utils.http", "shadowscan.utils.safe_json"]
+      },
+      "credentials": [
+        {"key": "token", "kind": "secret", "env": "WORKATO_API_TOKEN"}
+      ],
+      "environment_fallbacks": [
+        {"key": "api_url", "env": "WORKATO_API_URL"},
+        {"key": "token", "env": "WORKATO_API_TOKEN"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "API client with read access to recipes (`/api/recipes`); verify the privilege name in your workspace",
+        "source": "docs/connectors.md#least-privilege, row 'Workato'",
+        "grants": ["/api/recipes"],
+        "shared_with": [],
+        "verify_in_tenant": true
+      },
+      "egress": ["<api_url>", "www.workato.com"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["analysis-limit", "other", "unparsed-input"]
+        }
+      }
+    },
+    {
+      "name": "lowcode.zapier",
+      "class": "shadowscan.connectors.lowcode.automation:ZapierConnector",
+      "surface": "lowcode",
+      "provider": "zapier",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "CSV / JSON export",
+      "guides": ["docs/connectors.md: `lowcode.zapier`", "docs/connectors/lowcode.md: `lowcode.n8n` · `lowcode.make` · `lowcode.zapier` · `lowcode.workato`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.signatures.matcher", "shadowscan.utils.http", "shadowscan.utils.text"]
+      },
+      "credentials": [
+        {"key": "token", "kind": "secret", "env": "ZAPIER_TOKEN"}
+      ],
+      "environment_fallbacks": [
+        {"key": "token", "env": "ZAPIER_TOKEN"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "OAuth bearer token with the `zap` scope for `https://api.zapier.com/v2/zaps`",
+        "source": "docs/connectors.md#least-privilege, row 'Zapier'",
+        "grants": ["https://api.zapier.com/v2/zaps", "zap"],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": ["api.zapier.com"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["analysis-limit", "other", "unparsed-input", "unscanned-input"]
+        }
+      }
+    },
+    {
+      "name": "network.logs",
+      "class": "shadowscan.connectors.network.logs:NetworkLogConnector",
+      "surface": "network",
+      "provider": "network",
+      "collection": "offline-only",
+      "offline_input": true,
+      "offline_formats": "Zeek TSV / JSON, Route 53 Resolver JSON, VPC Flow Logs text, JSON / CSV",
+      "guides": ["docs/connectors.md: `network.logs`", "docs/connectors/network.md: `network.logs`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.utils.safe_json", "shadowscan.utils.text"]
+      },
+      "credentials": [],
+      "environment_fallbacks": [],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "read access to the exported logs; the connector needs no sensor or cloud credentials",
+        "source": "docs/connectors.md#least-privilege, row 'Network'",
+        "grants": [],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": [],
+      "failure_modes": {
+        "incomplete_reasons": ["analysis-limit", "other", "oversize-file", "timeout", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "connector": ["upstream-error"]
+        }
+      }
+    },
+    {
+      "name": "runtime.processes",
+      "class": "shadowscan.connectors.runtime.processes:RuntimeProcessConnector",
+      "surface": "runtime",
+      "provider": "runtime",
+      "collection": "local",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / CSV process inventories (osquery, Defender, CrowdStrike)",
+      "guides": ["docs/connectors.md: `runtime.processes`", "docs/connectors/runtime.md: `runtime.processes`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [],
+        "first_party_services": ["shadowscan.models", "shadowscan.utils.text"]
+      },
+      "credentials": [],
+      "environment_fallbacks": [],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "offline: read access to the process export; live: an account that can read `/proc/<pid>/cmdline` of the processes to inventory. Nothing is written",
+        "source": "docs/connectors.md#least-privilege, row 'Runtime'",
+        "grants": ["/proc/<pid>/cmdline"],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": [],
+      "failure_modes": {
+        "incomplete_reasons": ["analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "connector": ["other", "oversize-file", "timeout", "unparsed-input", "unscanned-input"]
+        }
+      }
+    },
+    {
+      "name": "saas.atlassian",
+      "class": "shadowscan.connectors.saas.atlassian:AtlassianConnector",
+      "surface": "saas",
+      "provider": "atlassian",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML / CSV export",
+      "guides": ["docs/connectors.md: `saas.atlassian`", "docs/connectors/saas.md: `saas.atlassian`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [
+          {"module": "requests", "from": "core:requests"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.utils.http", "shadowscan.utils.identity", "shadowscan.utils.text"]
+      },
+      "credentials": [
+        {"key": "api_token", "kind": "secret", "env": "ATLASSIAN_API_TOKEN"}
+      ],
+      "environment_fallbacks": [
+        {"key": "api_token", "env": "ATLASSIAN_API_TOKEN"},
+        {"key": "email", "env": "ATLASSIAN_EMAIL"},
+        {"key": "site", "env": "ATLASSIAN_SITE"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "site admin basic auth with an API token for the Universal Plugin Manager listing",
+        "source": "docs/connectors.md#least-privilege, row 'Atlassian'",
+        "grants": [],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": ["<site>"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["other", "unparsed-input", "upstream-error"]
+        }
+      }
+    },
+    {
+      "name": "saas.generic",
+      "class": "shadowscan.connectors.saas.generic:GenericSaaSConnector",
+      "surface": "saas",
+      "provider": "saas",
+      "collection": "offline-only",
+      "offline_input": true,
+      "offline_formats": "CSV / JSON",
+      "guides": ["docs/connectors.md: `saas.generic`", "docs/connectors/saas.md: `saas.generic`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.signatures.matcher", "shadowscan.utils.credential_identity", "shadowscan.utils.redaction"]
+      },
+      "credentials": [],
+      "environment_fallbacks": [],
+      "permissions": {
+        "model": "offline-export",
+        "minimum": "read access to the export given as `input`; no provider credentials",
+        "source": "derived: live_collection is False",
+        "grants": []
+      },
+      "egress": [],
+      "failure_modes": {
+        "incomplete_reasons": ["analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "connector": ["other", "unparsed-input", "unscanned-input"]
+        }
+      }
+    },
+    {
+      "name": "saas.github-apps",
+      "class": "shadowscan.connectors.saas.github_apps:GitHubAppsConnector",
+      "surface": "saas",
+      "provider": "github",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML / CSV export",
+      "guides": ["docs/connectors.md: `saas.github-apps`", "docs/connectors/saas.md: `saas.github-apps`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [
+          {"module": "requests", "from": "core:requests"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.utils.http"]
+      },
+      "credentials": [
+        {"key": "token", "kind": "secret", "env": "GITHUB_TOKEN"},
+        {"key": "app_token", "kind": "secret", "env": "GITHUB_APP_TOKEN"}
+      ],
+      "environment_fallbacks": [
+        {"key": "api_url", "env": "GITHUB_API_URL"},
+        {"key": "app_token", "env": "GITHUB_APP_TOKEN"},
+        {"key": "org", "env": "GITHUB_ORG"},
+        {"key": "token", "env": "GITHUB_TOKEN"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "GitHub App token with organization `Administration`, `Personal access tokens` and `GitHub Copilot Business` read permissions; or an organization owner's token plus `app_token`, a GitHub App token for the fine-grained PAT list, which GitHub serves only to GitHub Apps",
+        "source": "docs/connectors.md#least-privilege, row 'GitHub Apps'",
+        "grants": ["Administration", "GitHub Copilot Business", "Personal access tokens", "app_token"],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": ["<api_url>", "api.github.com"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["other", "unparsed-input"]
+        }
+      }
+    },
+    {
+      "name": "saas.microsoft-teams",
+      "class": "shadowscan.connectors.saas.teams:TeamsConnector",
+      "surface": "saas",
+      "provider": "microsoft-teams",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML / CSV export",
+      "guides": ["docs/connectors.md: `saas.microsoft-teams`", "docs/connectors/saas.md: `saas.microsoft-teams`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [
+          {"module": "requests", "from": "core:requests"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.signatures.matcher", "shadowscan.utils.http", "shadowscan.utils.text"]
+      },
+      "credentials": [
+        {"key": "client_secret", "kind": "secret", "env": "AZURE_CLIENT_SECRET"},
+        {"key": "access_token", "kind": "secret", "env": "GRAPH_ACCESS_TOKEN"}
+      ],
+      "environment_fallbacks": [
+        {"key": "access_token", "env": "GRAPH_ACCESS_TOKEN"},
+        {"key": "client_id", "env": "AZURE_CLIENT_ID"},
+        {"key": "client_secret", "env": "AZURE_CLIENT_SECRET"},
+        {"key": "tenant_id", "env": "AZURE_TENANT_ID"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user. Opt-in Agent 365 packages: `CopilotPackages.Read.All` (application, or delegated for a work or school account whose user holds a role that can read the agent catalog). Opt-in agent identities: `AgentIdentity.Read.All` (Microsoft's least-privileged permission for listing agent identities, application or delegated). Comparable drift reads `GET /organization`: `Organization.Read.All` or `Directory.Read.All` (application), `User.Read` (delegated)",
+        "source": "docs/connectors.md#least-privilege, row 'Entra / Teams / Power Platform'",
+        "grants": ["AgentIdentity.Read.All", "AppCatalog.Read.All", "Application.Read.All", "CopilotPackages.Read.All", "DelegatedPermissionGrant.Read.All", "Directory.Read.All", "GET /organization", "Organization.Read.All", "Team.ReadBasic.All", "TeamsAppInstallation.ReadForTeam.All", "User.Read"],
+        "shared_with": ["identity.entra", "lowcode.power-platform"],
+        "verify_in_tenant": false
+      },
+      "egress": ["graph.microsoft.com", "login.microsoftonline.com"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["access-denied", "other", "unparsed-input"]
+        }
+      }
+    },
+    {
+      "name": "saas.notion",
+      "class": "shadowscan.connectors.saas.notion:NotionConnector",
+      "surface": "saas",
+      "provider": "notion",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML / CSV export",
+      "guides": ["docs/connectors.md: `saas.notion`", "docs/connectors/saas.md: `saas.notion`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.signatures.matcher", "shadowscan.utils.http", "shadowscan.utils.text"]
+      },
+      "credentials": [
+        {"key": "token", "kind": "secret", "env": "NOTION_TOKEN"}
+      ],
+      "environment_fallbacks": [
+        {"key": "token", "env": "NOTION_TOKEN"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "internal integration token with the *read user information* capability (`GET /v1/users`)",
+        "source": "docs/connectors.md#least-privilege, row 'Notion'",
+        "grants": ["GET /v1/users"],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": ["api.notion.com"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["analysis-limit", "other", "unparsed-input"]
+        }
+      }
+    },
+    {
+      "name": "saas.slack",
+      "class": "shadowscan.connectors.saas.slack:SlackConnector",
+      "surface": "saas",
+      "provider": "slack",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML / CSV export",
+      "guides": ["docs/connectors.md: `saas.slack`", "docs/connectors/saas.md: `saas.slack`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [
+          {"module": "requests", "from": "core:requests"}
+        ],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.utils.http", "shadowscan.utils.text"]
+      },
+      "credentials": [
+        {"key": "token", "kind": "secret", "env": "SLACK_TOKEN"}
+      ],
+      "environment_fallbacks": [
+        {"key": "team_id", "env": "SLACK_TEAM_ID"},
+        {"key": "token", "env": "SLACK_TOKEN"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "token with `users:read`; the `admin.apps.*` lists and `team.integrationLogs` need an org admin user token (`admin.apps:read`, `admin`), and an org-level token needs `team_id`",
+        "source": "docs/connectors.md#least-privilege, row 'Slack'",
+        "grants": ["admin", "admin.apps.*", "admin.apps:read", "team.integrationLogs", "team_id", "users:read"],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": ["slack.com"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["analysis-limit", "other", "unparsed-input"]
+        }
+      }
+    },
+    {
+      "name": "saas.zoom",
+      "class": "shadowscan.connectors.saas.zoom:ZoomConnector",
+      "surface": "saas",
+      "provider": "zoom",
+      "collection": "live-api",
+      "offline_input": true,
+      "offline_formats": "JSON / JSONL / YAML / CSV export",
+      "guides": ["docs/connectors.md: `saas.zoom`", "docs/connectors/saas.md: `saas.zoom`"],
+      "sdk": {
+        "requires": [],
+        "extras": [],
+        "third_party_imports": [],
+        "first_party_services": ["shadowscan.models", "shadowscan.signatures", "shadowscan.utils.http"]
+      },
+      "credentials": [
+        {"key": "client_secret", "kind": "secret", "env": "ZOOM_CLIENT_SECRET"},
+        {"key": "access_token", "kind": "secret", "env": "ZOOM_ACCESS_TOKEN"}
+      ],
+      "environment_fallbacks": [
+        {"key": "access_token", "env": "ZOOM_ACCESS_TOKEN"},
+        {"key": "account_id", "env": "ZOOM_ACCOUNT_ID"},
+        {"key": "client_id", "env": "ZOOM_CLIENT_ID"},
+        {"key": "client_secret", "env": "ZOOM_CLIENT_SECRET"}
+      ],
+      "permissions": {
+        "model": "least-privilege-table",
+        "minimum": "Server-to-Server OAuth app with `marketplace:read:list_apps:admin`",
+        "source": "docs/connectors.md#least-privilege, row 'Zoom'",
+        "grants": ["marketplace:read:list_apps:admin"],
+        "shared_with": [],
+        "verify_in_tenant": false
+      },
+      "egress": ["api.zoom.us", "zoom.us"],
+      "failure_modes": {
+        "incomplete_reasons": ["access-denied", "analysis-limit", "other", "oversize-file", "timeout", "unparsed-input", "unresolved-link", "unscanned-input", "upstream-error"],
+        "by_source": {
+          "engine_deadline": ["timeout"],
+          "offline_input": ["analysis-limit", "other", "oversize-file", "unresolved-link", "unscanned-input"],
+          "https_client": ["access-denied", "timeout", "upstream-error"],
+          "connector": ["other", "unparsed-input"]
+        }
+      }
+    }
+  ]
+}

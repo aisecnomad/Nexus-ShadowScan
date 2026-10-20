@@ -772,3 +772,41 @@ def unwrap(cls: type[BaseConnector], data: Any, failed: Report) -> Iterator[dict
                 failed("provider error response in offline export; coverage is incomplete")
             continue
         yield {**item, "_kind": record_kind} if record_kind else item
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "ChangeCheck",
+    "DEADLINE_CHECK_LINES",
+    "DEFAULT_MAX_INPUT_BYTES",
+    "DEFAULT_MAX_INPUT_FILES",
+    "DEFAULT_MAX_INPUT_FILE_BYTES",
+    "MAX_INVALID_LINE_ERRORS",
+    "MAX_LISTED_UNSUPPORTED",
+    "MAX_OFFLINE_ENTRIES",
+    "MAX_OFFLINE_FILE_BYTES",
+    "MAX_OFFLINE_LINE_BYTES",
+    "MAX_OFFLINE_TOTAL_BYTES",
+    "OFFLINE_SUFFIXES",
+    "OfflineInputBudget",
+    "Report",
+    "bounded_diagnostics",
+    "csv_records",
+    "empty_export_message",
+    "is_csv_provider_error",
+    "is_error_record",
+    "is_native_offline_record",
+    "iter_bounded_lines",
+    "iter_offline_files",
+    "json_lines",
+    "load_offline",
+    "load_offline_file",
+    "offline_files",
+    "offline_pagination_issue",
+    "read_offline_bytes",
+    "read_offline_text",
+    "record_fields_valid",
+    "unwrap",
+    "valid_record",
+]

@@ -1,0 +1,379 @@
+{
+  "schema": "shadowscan.cli-surface/v1",
+  "generated_by": "python -m tools.cli_surface",
+  "entry_point": "shadowscan = shadowscan.cli:main",
+  "exit_codes": {
+    "0": "Scan completed and passed",
+    "1": "No scan result: invalid option, value, path or configuration, or a setup or output error",
+    "2": "Scan completed but reached `--fail-on`; `diff` returns 2 with `--fail-on-new` or `--fail-on-drift`",
+    "3": "Scan incomplete (API error, timeout, denied access, limit, malformed export); `diff` returns 3 when reports are not comparable"
+  },
+  "root": {
+    "name": "shadowscan",
+    "kind": "group",
+    "hidden": false,
+    "deprecated": false,
+    "params": [
+      {"name": "version", "param_type": "option", "opts": ["--version"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
+      {"name": "verbose", "param_type": "option", "opts": ["-v", "--verbose"], "secondary_opts": [], "type": {"name": "integer range", "min": 0, "max": null}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": true, "default": 0, "envvar": null, "hidden": false, "deprecated_aliases": []},
+      {"name": "quiet", "param_type": "option", "opts": ["-q", "--quiet"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []}
+    ],
+    "commands": [
+      {
+        "name": "code",
+        "kind": "command",
+        "hidden": false,
+        "deprecated": false,
+        "params": [
+          {"name": "paths", "param_type": "argument", "opts": ["paths"], "secondary_opts": [], "type": {"name": "path", "exists": true, "file_okay": true, "dir_okay": true}, "nargs": -1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "github_org", "param_type": "option", "opts": ["--github-org"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "github_repo", "param_type": "option", "opts": ["--github-repo"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "gitlab_group", "param_type": "option", "opts": ["--gitlab-group"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "mode", "param_type": "option", "opts": ["--mode"], "secondary_opts": [], "type": {"name": "choice", "choices": ["clone", "api"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "exclude", "param_type": "option", "opts": ["--exclude"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "no_default_excludes", "param_type": "option", "opts": ["--no-default-excludes"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "no_secrets", "param_type": "option", "opts": ["--no-secrets"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "strict_coverage", "param_type": "option", "opts": ["--strict-coverage"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "include_tests", "param_type": "option", "opts": ["--include-tests"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "triage", "param_type": "option", "opts": ["--triage"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "profile", "param_type": "option", "opts": ["--profile"], "secondary_opts": [], "type": {"name": "choice", "choices": ["default", "ci"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "diff_base", "param_type": "option", "opts": ["--diff-base"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "job_deadline_seconds", "param_type": "option", "opts": ["--job-deadline-seconds"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_instance_credentials", "param_type": "option", "opts": ["--allow-instance-credentials"], "secondary_opts": ["--deny-instance-credentials"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_credential_mixing", "param_type": "option", "opts": ["--allow-credential-mixing"], "secondary_opts": ["--deny-credential-mixing"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "connector_timeout_seconds", "param_type": "option", "opts": ["--connector-timeout-seconds", "--connector-timeout"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": ["--connector-timeout"]},
+          {"name": "max_coverage_gap", "param_type": "option", "opts": ["--max-coverage-gap"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "plugin_execution", "param_type": "option", "opts": ["--plugin-execution"], "secondary_opts": [], "type": {"name": "choice", "choices": ["thread", "process"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_plugin", "param_type": "option", "opts": ["--allow-plugin"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_signature_override", "param_type": "option", "opts": ["--allow-signature-override"], "secondary_opts": ["--deny-signature-override"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_private_origin", "param_type": "option", "opts": ["--allow-private-origin"], "secondary_opts": ["--deny-private-origin"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "incremental", "param_type": "option", "opts": ["--incremental"], "secondary_opts": ["--no-incremental"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "state_dir", "param_type": "option", "opts": ["--state-dir"], "secondary_opts": [], "type": {"name": "directory", "exists": false, "file_okay": false, "dir_okay": true}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "fmt", "param_type": "option", "opts": ["--format", "-f"], "secondary_opts": [], "type": {"name": "choice", "choices": ["table", "csv", "cyclonedx", "html", "json", "markdown", "ocsf", "sarif"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": "table", "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "output", "param_type": "option", "opts": ["--output", "-o"], "secondary_opts": [], "type": {"name": "file", "exists": false, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "inventory", "param_type": "option", "opts": ["--inventory", "-i"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "signature_dirs", "param_type": "option", "opts": ["--signatures", "-s"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "min_confidence", "param_type": "option", "opts": ["--min-confidence"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": 0.0, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "fail_on", "param_type": "option", "opts": ["--fail-on"], "secondary_opts": [], "type": {"name": "choice", "choices": ["critical", "high", "medium", "low", "info"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "max_rows", "param_type": "option", "opts": ["--max-rows"], "secondary_opts": [], "type": {"name": "integer"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "dump_records", "param_type": "option", "opts": ["--dump-records"], "secondary_opts": [], "type": {"name": "directory", "exists": false, "file_okay": false, "dir_okay": true}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []}
+        ]
+      },
+      {
+        "name": "connectors",
+        "kind": "command",
+        "hidden": false,
+        "deprecated": false,
+        "params": [
+          {"name": "surface", "param_type": "option", "opts": ["--surface"], "secondary_opts": [], "type": {"name": "choice", "choices": ["code", "identity", "gateway", "lowcode", "saas", "cloud", "endpoint", "network", "runtime"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "as_json", "param_type": "option", "opts": ["--json"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []}
+        ]
+      },
+      {
+        "name": "controls",
+        "kind": "command",
+        "hidden": false,
+        "deprecated": false,
+        "params": [
+          {"name": "reports", "param_type": "argument", "opts": ["reports"], "secondary_opts": [], "type": {"name": "file", "exists": true, "file_okay": true, "dir_okay": false}, "nargs": -1, "multiple": false, "required": true, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "fmt", "param_type": "option", "opts": ["-f", "--format"], "secondary_opts": [], "type": {"name": "choice", "choices": ["markdown", "csv", "json"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": "markdown", "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "output", "param_type": "option", "opts": ["-o", "--output"], "secondary_opts": [], "type": {"name": "file", "exists": false, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "frameworks", "param_type": "option", "opts": ["--framework"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []}
+        ]
+      },
+      {
+        "name": "dashboard",
+        "kind": "command",
+        "hidden": false,
+        "deprecated": false,
+        "params": [
+          {"name": "reports", "param_type": "argument", "opts": ["reports"], "secondary_opts": [], "type": {"name": "file", "exists": true, "file_okay": true, "dir_okay": false}, "nargs": -1, "multiple": false, "required": true, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "output", "param_type": "option", "opts": ["-o", "--output"], "secondary_opts": [], "type": {"name": "file", "exists": false, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": true, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "inventory_json", "param_type": "option", "opts": ["--inventory-json"], "secondary_opts": [], "type": {"name": "file", "exists": false, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "baseline", "param_type": "option", "opts": ["--baseline"], "secondary_opts": [], "type": {"name": "file", "exists": true, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "history_dir", "param_type": "option", "opts": ["--history"], "secondary_opts": [], "type": {"name": "directory", "exists": true, "file_okay": false, "dir_okay": true}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "as_of", "param_type": "option", "opts": ["--as-of"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []}
+        ]
+      },
+      {
+        "name": "diff",
+        "kind": "command",
+        "hidden": false,
+        "deprecated": false,
+        "params": [
+          {"name": "baseline", "param_type": "argument", "opts": ["baseline"], "secondary_opts": [], "type": {"name": "file", "exists": true, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": true, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "current", "param_type": "argument", "opts": ["current"], "secondary_opts": [], "type": {"name": "file", "exists": true, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": true, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "as_json", "param_type": "option", "opts": ["--json"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "fail_on_new", "param_type": "option", "opts": ["--fail-on-new"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "fail_on_drift", "param_type": "option", "opts": ["--fail-on-drift"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "baseline_sha256", "param_type": "option", "opts": ["--baseline-sha256"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "max_baseline_age_days", "param_type": "option", "opts": ["--max-baseline-age-days"], "secondary_opts": [], "type": {"name": "integer range", "min": 1, "max": 36500}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "shadow_only", "param_type": "option", "opts": ["--shadow-only"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []}
+        ]
+      },
+      {
+        "name": "endpoint",
+        "kind": "command",
+        "hidden": false,
+        "deprecated": false,
+        "params": [
+          {"name": "home_dir", "param_type": "option", "opts": ["--home"], "secondary_opts": [], "type": {"name": "directory", "exists": true, "file_okay": false, "dir_okay": true}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "label", "param_type": "option", "opts": ["--label"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "list_only", "param_type": "option", "opts": ["--list"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "job_deadline_seconds", "param_type": "option", "opts": ["--job-deadline-seconds"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_instance_credentials", "param_type": "option", "opts": ["--allow-instance-credentials"], "secondary_opts": ["--deny-instance-credentials"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_credential_mixing", "param_type": "option", "opts": ["--allow-credential-mixing"], "secondary_opts": ["--deny-credential-mixing"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "connector_timeout_seconds", "param_type": "option", "opts": ["--connector-timeout-seconds", "--connector-timeout"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": ["--connector-timeout"]},
+          {"name": "max_coverage_gap", "param_type": "option", "opts": ["--max-coverage-gap"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "plugin_execution", "param_type": "option", "opts": ["--plugin-execution"], "secondary_opts": [], "type": {"name": "choice", "choices": ["thread", "process"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_plugin", "param_type": "option", "opts": ["--allow-plugin"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_signature_override", "param_type": "option", "opts": ["--allow-signature-override"], "secondary_opts": ["--deny-signature-override"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_private_origin", "param_type": "option", "opts": ["--allow-private-origin"], "secondary_opts": ["--deny-private-origin"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "incremental", "param_type": "option", "opts": ["--incremental"], "secondary_opts": ["--no-incremental"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "state_dir", "param_type": "option", "opts": ["--state-dir"], "secondary_opts": [], "type": {"name": "directory", "exists": false, "file_okay": false, "dir_okay": true}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "fmt", "param_type": "option", "opts": ["--format", "-f"], "secondary_opts": [], "type": {"name": "choice", "choices": ["table", "csv", "cyclonedx", "html", "json", "markdown", "ocsf", "sarif"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": "table", "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "output", "param_type": "option", "opts": ["--output", "-o"], "secondary_opts": [], "type": {"name": "file", "exists": false, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "inventory", "param_type": "option", "opts": ["--inventory", "-i"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "signature_dirs", "param_type": "option", "opts": ["--signatures", "-s"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "min_confidence", "param_type": "option", "opts": ["--min-confidence"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": 0.0, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "fail_on", "param_type": "option", "opts": ["--fail-on"], "secondary_opts": [], "type": {"name": "choice", "choices": ["critical", "high", "medium", "low", "info"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "max_rows", "param_type": "option", "opts": ["--max-rows"], "secondary_opts": [], "type": {"name": "integer"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "dump_records", "param_type": "option", "opts": ["--dump-records"], "secondary_opts": [], "type": {"name": "directory", "exists": false, "file_okay": false, "dir_okay": true}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []}
+        ]
+      },
+      {
+        "name": "gateway",
+        "kind": "command",
+        "hidden": false,
+        "deprecated": false,
+        "params": [
+          {"name": "logs", "param_type": "argument", "opts": ["logs"], "secondary_opts": [], "type": {"name": "path", "exists": true, "file_okay": true, "dir_okay": true}, "nargs": -1, "multiple": false, "required": true, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "log_format", "param_type": "option", "opts": ["--log-format"], "secondary_opts": [], "type": {"name": "choice", "choices": ["auto", "litellm", "portkey", "kong", "cloudflare", "helicone", "langfuse", "bedrock", "azure-openai", "vertex", "openai-usage", "anthropic-usage", "access-log", "generic"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": "auto", "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "min_events", "param_type": "option", "opts": ["--min-events"], "secondary_opts": [], "type": {"name": "integer"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": 1, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "all_hosts", "param_type": "option", "opts": ["--all-hosts"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "internal_model_hosts", "param_type": "option", "opts": ["--internal-model-host"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "label", "param_type": "option", "opts": ["--label"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "job_deadline_seconds", "param_type": "option", "opts": ["--job-deadline-seconds"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_instance_credentials", "param_type": "option", "opts": ["--allow-instance-credentials"], "secondary_opts": ["--deny-instance-credentials"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_credential_mixing", "param_type": "option", "opts": ["--allow-credential-mixing"], "secondary_opts": ["--deny-credential-mixing"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "connector_timeout_seconds", "param_type": "option", "opts": ["--connector-timeout-seconds", "--connector-timeout"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": ["--connector-timeout"]},
+          {"name": "max_coverage_gap", "param_type": "option", "opts": ["--max-coverage-gap"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "plugin_execution", "param_type": "option", "opts": ["--plugin-execution"], "secondary_opts": [], "type": {"name": "choice", "choices": ["thread", "process"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_plugin", "param_type": "option", "opts": ["--allow-plugin"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_signature_override", "param_type": "option", "opts": ["--allow-signature-override"], "secondary_opts": ["--deny-signature-override"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_private_origin", "param_type": "option", "opts": ["--allow-private-origin"], "secondary_opts": ["--deny-private-origin"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "incremental", "param_type": "option", "opts": ["--incremental"], "secondary_opts": ["--no-incremental"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "state_dir", "param_type": "option", "opts": ["--state-dir"], "secondary_opts": [], "type": {"name": "directory", "exists": false, "file_okay": false, "dir_okay": true}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "fmt", "param_type": "option", "opts": ["--format", "-f"], "secondary_opts": [], "type": {"name": "choice", "choices": ["table", "csv", "cyclonedx", "html", "json", "markdown", "ocsf", "sarif"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": "table", "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "output", "param_type": "option", "opts": ["--output", "-o"], "secondary_opts": [], "type": {"name": "file", "exists": false, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "inventory", "param_type": "option", "opts": ["--inventory", "-i"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "signature_dirs", "param_type": "option", "opts": ["--signatures", "-s"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "min_confidence", "param_type": "option", "opts": ["--min-confidence"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": 0.0, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "fail_on", "param_type": "option", "opts": ["--fail-on"], "secondary_opts": [], "type": {"name": "choice", "choices": ["critical", "high", "medium", "low", "info"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "max_rows", "param_type": "option", "opts": ["--max-rows"], "secondary_opts": [], "type": {"name": "integer"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "dump_records", "param_type": "option", "opts": ["--dump-records"], "secondary_opts": [], "type": {"name": "directory", "exists": false, "file_okay": false, "dir_okay": true}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []}
+        ]
+      },
+      {
+        "name": "inventory",
+        "kind": "group",
+        "hidden": false,
+        "deprecated": false,
+        "params": [],
+        "commands": [
+          {
+            "name": "check",
+            "kind": "command",
+            "hidden": false,
+            "deprecated": false,
+            "params": [
+              {"name": "paths", "param_type": "argument", "opts": ["paths"], "secondary_opts": [], "type": {"name": "text"}, "nargs": -1, "multiple": false, "required": true, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []}
+            ]
+          },
+          {
+            "name": "stubs",
+            "kind": "command",
+            "hidden": false,
+            "deprecated": false,
+            "params": [
+              {"name": "findings_json", "param_type": "argument", "opts": ["findings_json"], "secondary_opts": [], "type": {"name": "file", "exists": true, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": true, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+              {"name": "out_dir", "param_type": "option", "opts": ["--out", "-o"], "secondary_opts": [], "type": {"name": "directory", "exists": false, "file_okay": false, "dir_okay": true}, "nargs": 1, "multiple": false, "required": true, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+              {"name": "kinds", "param_type": "option", "opts": ["--kinds"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": "agent,mcp-server,workflow,bot-app,agent-config", "envvar": null, "hidden": false, "deprecated_aliases": []},
+              {"name": "min_risk", "param_type": "option", "opts": ["--min-risk"], "secondary_opts": [], "type": {"name": "choice", "choices": ["critical", "high", "medium", "low", "info"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": "low", "envvar": null, "hidden": false, "deprecated_aliases": []}
+            ]
+          }
+        ]
+      },
+      {
+        "name": "jwt",
+        "kind": "command",
+        "hidden": false,
+        "deprecated": false,
+        "params": [
+          {"name": "tokens", "param_type": "argument", "opts": ["tokens"], "secondary_opts": [], "type": {"name": "text"}, "nargs": -1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "token_file", "param_type": "option", "opts": ["--file", "-F"], "secondary_opts": [], "type": {"name": "file", "exists": true, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "jwks_url", "param_type": "option", "opts": ["--jwks-url"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "expected_issuer", "param_type": "option", "opts": ["--expected-issuer"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "jwt_algorithm", "param_type": "option", "opts": ["--jwt-algorithm"], "secondary_opts": [], "type": {"name": "choice", "choices": ["RS256", "ES256", "EdDSA", "PS256"]}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "job_deadline_seconds", "param_type": "option", "opts": ["--job-deadline-seconds"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_instance_credentials", "param_type": "option", "opts": ["--allow-instance-credentials"], "secondary_opts": ["--deny-instance-credentials"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_credential_mixing", "param_type": "option", "opts": ["--allow-credential-mixing"], "secondary_opts": ["--deny-credential-mixing"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "connector_timeout_seconds", "param_type": "option", "opts": ["--connector-timeout-seconds", "--connector-timeout"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": ["--connector-timeout"]},
+          {"name": "max_coverage_gap", "param_type": "option", "opts": ["--max-coverage-gap"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "plugin_execution", "param_type": "option", "opts": ["--plugin-execution"], "secondary_opts": [], "type": {"name": "choice", "choices": ["thread", "process"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_plugin", "param_type": "option", "opts": ["--allow-plugin"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_signature_override", "param_type": "option", "opts": ["--allow-signature-override"], "secondary_opts": ["--deny-signature-override"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_private_origin", "param_type": "option", "opts": ["--allow-private-origin"], "secondary_opts": ["--deny-private-origin"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "incremental", "param_type": "option", "opts": ["--incremental"], "secondary_opts": ["--no-incremental"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "state_dir", "param_type": "option", "opts": ["--state-dir"], "secondary_opts": [], "type": {"name": "directory", "exists": false, "file_okay": false, "dir_okay": true}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "fmt", "param_type": "option", "opts": ["--format", "-f"], "secondary_opts": [], "type": {"name": "choice", "choices": ["table", "csv", "cyclonedx", "html", "json", "markdown", "ocsf", "sarif"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": "table", "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "output", "param_type": "option", "opts": ["--output", "-o"], "secondary_opts": [], "type": {"name": "file", "exists": false, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "inventory", "param_type": "option", "opts": ["--inventory", "-i"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "signature_dirs", "param_type": "option", "opts": ["--signatures", "-s"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "min_confidence", "param_type": "option", "opts": ["--min-confidence"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": 0.0, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "fail_on", "param_type": "option", "opts": ["--fail-on"], "secondary_opts": [], "type": {"name": "choice", "choices": ["critical", "high", "medium", "low", "info"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "max_rows", "param_type": "option", "opts": ["--max-rows"], "secondary_opts": [], "type": {"name": "integer"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "dump_records", "param_type": "option", "opts": ["--dump-records"], "secondary_opts": [], "type": {"name": "directory", "exists": false, "file_okay": false, "dir_okay": true}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []}
+        ]
+      },
+      {
+        "name": "mcp-registry",
+        "kind": "group",
+        "hidden": false,
+        "deprecated": false,
+        "params": [],
+        "commands": [
+          {
+            "name": "snapshot",
+            "kind": "command",
+            "hidden": false,
+            "deprecated": false,
+            "params": [
+              {"name": "url", "param_type": "option", "opts": ["--url"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": "https://registry.modelcontextprotocol.io", "envvar": null, "hidden": false, "deprecated_aliases": []},
+              {"name": "output", "param_type": "option", "opts": ["--output", "-o"], "secondary_opts": [], "type": {"name": "file", "exists": false, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": true, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+              {"name": "max_pages", "param_type": "option", "opts": ["--max-pages"], "secondary_opts": [], "type": {"name": "integer range", "min": 1, "max": 5000}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": 5000, "envvar": null, "hidden": false, "deprecated_aliases": []},
+              {"name": "ca_bundle", "param_type": "option", "opts": ["--ca-bundle"], "secondary_opts": [], "type": {"name": "file", "exists": true, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+              {"name": "allow_private_origin", "param_type": "option", "opts": ["--allow-private-origin"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []}
+            ]
+          }
+        ]
+      },
+      {
+        "name": "merge",
+        "kind": "command",
+        "hidden": false,
+        "deprecated": false,
+        "params": [
+          {"name": "reports", "param_type": "argument", "opts": ["reports"], "secondary_opts": [], "type": {"name": "file", "exists": true, "file_okay": true, "dir_okay": false}, "nargs": -1, "multiple": false, "required": true, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "fmt", "param_type": "option", "opts": ["-f", "--format"], "secondary_opts": [], "type": {"name": "choice", "choices": ["table", "csv", "cyclonedx", "html", "json", "markdown", "ocsf", "sarif"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": "table", "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "output", "param_type": "option", "opts": ["-o", "--output"], "secondary_opts": [], "type": {"name": "file", "exists": false, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "max_rows", "param_type": "option", "opts": ["--max-rows"], "secondary_opts": [], "type": {"name": "integer"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []}
+        ]
+      },
+      {
+        "name": "run",
+        "kind": "command",
+        "hidden": false,
+        "deprecated": false,
+        "params": [
+          {"name": "connector", "param_type": "argument", "opts": ["connector"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": false, "required": true, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "input_path", "param_type": "option", "opts": ["--input"], "secondary_opts": [], "type": {"name": "path", "exists": true, "file_okay": true, "dir_okay": true}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "settings", "param_type": "option", "opts": ["--set", "-S"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "job_deadline_seconds", "param_type": "option", "opts": ["--job-deadline-seconds"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_instance_credentials", "param_type": "option", "opts": ["--allow-instance-credentials"], "secondary_opts": ["--deny-instance-credentials"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_credential_mixing", "param_type": "option", "opts": ["--allow-credential-mixing"], "secondary_opts": ["--deny-credential-mixing"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "connector_timeout_seconds", "param_type": "option", "opts": ["--connector-timeout-seconds", "--connector-timeout"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": ["--connector-timeout"]},
+          {"name": "max_coverage_gap", "param_type": "option", "opts": ["--max-coverage-gap"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "plugin_execution", "param_type": "option", "opts": ["--plugin-execution"], "secondary_opts": [], "type": {"name": "choice", "choices": ["thread", "process"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_plugin", "param_type": "option", "opts": ["--allow-plugin"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_signature_override", "param_type": "option", "opts": ["--allow-signature-override"], "secondary_opts": ["--deny-signature-override"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_private_origin", "param_type": "option", "opts": ["--allow-private-origin"], "secondary_opts": ["--deny-private-origin"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "incremental", "param_type": "option", "opts": ["--incremental"], "secondary_opts": ["--no-incremental"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "state_dir", "param_type": "option", "opts": ["--state-dir"], "secondary_opts": [], "type": {"name": "directory", "exists": false, "file_okay": false, "dir_okay": true}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "fmt", "param_type": "option", "opts": ["--format", "-f"], "secondary_opts": [], "type": {"name": "choice", "choices": ["table", "csv", "cyclonedx", "html", "json", "markdown", "ocsf", "sarif"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": "table", "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "output", "param_type": "option", "opts": ["--output", "-o"], "secondary_opts": [], "type": {"name": "file", "exists": false, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "inventory", "param_type": "option", "opts": ["--inventory", "-i"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "signature_dirs", "param_type": "option", "opts": ["--signatures", "-s"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "min_confidence", "param_type": "option", "opts": ["--min-confidence"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": 0.0, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "fail_on", "param_type": "option", "opts": ["--fail-on"], "secondary_opts": [], "type": {"name": "choice", "choices": ["critical", "high", "medium", "low", "info"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "max_rows", "param_type": "option", "opts": ["--max-rows"], "secondary_opts": [], "type": {"name": "integer"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "dump_records", "param_type": "option", "opts": ["--dump-records"], "secondary_opts": [], "type": {"name": "directory", "exists": false, "file_okay": false, "dir_okay": true}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []}
+        ]
+      },
+      {
+        "name": "scan",
+        "kind": "command",
+        "hidden": false,
+        "deprecated": false,
+        "params": [
+          {"name": "config_path", "param_type": "option", "opts": ["--config", "-c"], "secondary_opts": [], "type": {"name": "file", "exists": true, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": true, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "only", "param_type": "option", "opts": ["--only"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "job_deadline_seconds", "param_type": "option", "opts": ["--job-deadline-seconds"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_instance_credentials", "param_type": "option", "opts": ["--allow-instance-credentials"], "secondary_opts": ["--deny-instance-credentials"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_credential_mixing", "param_type": "option", "opts": ["--allow-credential-mixing"], "secondary_opts": ["--deny-credential-mixing"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "connector_timeout_seconds", "param_type": "option", "opts": ["--connector-timeout-seconds", "--connector-timeout"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": ["--connector-timeout"]},
+          {"name": "max_coverage_gap", "param_type": "option", "opts": ["--max-coverage-gap"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "plugin_execution", "param_type": "option", "opts": ["--plugin-execution"], "secondary_opts": [], "type": {"name": "choice", "choices": ["thread", "process"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_plugin", "param_type": "option", "opts": ["--allow-plugin"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_signature_override", "param_type": "option", "opts": ["--allow-signature-override"], "secondary_opts": ["--deny-signature-override"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "allow_private_origin", "param_type": "option", "opts": ["--allow-private-origin"], "secondary_opts": ["--deny-private-origin"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "incremental", "param_type": "option", "opts": ["--incremental"], "secondary_opts": ["--no-incremental"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "state_dir", "param_type": "option", "opts": ["--state-dir"], "secondary_opts": [], "type": {"name": "directory", "exists": false, "file_okay": false, "dir_okay": true}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "fmt", "param_type": "option", "opts": ["--format", "-f"], "secondary_opts": [], "type": {"name": "choice", "choices": ["table", "csv", "cyclonedx", "html", "json", "markdown", "ocsf", "sarif"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": "table", "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "output", "param_type": "option", "opts": ["--output", "-o"], "secondary_opts": [], "type": {"name": "file", "exists": false, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "inventory", "param_type": "option", "opts": ["--inventory", "-i"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "signature_dirs", "param_type": "option", "opts": ["--signatures", "-s"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "min_confidence", "param_type": "option", "opts": ["--min-confidence"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": 0.0, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "fail_on", "param_type": "option", "opts": ["--fail-on"], "secondary_opts": [], "type": {"name": "choice", "choices": ["critical", "high", "medium", "low", "info"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "max_rows", "param_type": "option", "opts": ["--max-rows"], "secondary_opts": [], "type": {"name": "integer"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "dump_records", "param_type": "option", "opts": ["--dump-records"], "secondary_opts": [], "type": {"name": "directory", "exists": false, "file_okay": false, "dir_okay": true}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []}
+        ]
+      },
+      {
+        "name": "signatures",
+        "kind": "group",
+        "hidden": false,
+        "deprecated": false,
+        "params": [],
+        "commands": [
+          {
+            "name": "list",
+            "kind": "command",
+            "hidden": false,
+            "deprecated": false,
+            "params": [
+              {"name": "category", "param_type": "option", "opts": ["--category"], "secondary_opts": [], "type": {"name": "choice", "choices": ["cloud-service", "coding-agent", "framework", "heuristic", "identity-app", "memory", "observability", "platform", "policy", "protocol", "provider", "sandbox"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+              {"name": "signature_dirs", "param_type": "option", "opts": ["--signatures", "-s"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+              {"name": "as_json", "param_type": "option", "opts": ["--json"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
+              {"name": "allow_signature_override", "param_type": "option", "opts": ["--allow-signature-override"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []}
+            ]
+          },
+          {
+            "name": "show",
+            "kind": "command",
+            "hidden": false,
+            "deprecated": false,
+            "params": [
+              {"name": "signature_id", "param_type": "argument", "opts": ["signature_id"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": false, "required": true, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+              {"name": "signature_dirs", "param_type": "option", "opts": ["--signatures", "-s"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+              {"name": "allow_signature_override", "param_type": "option", "opts": ["--allow-signature-override"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []}
+            ]
+          },
+          {
+            "name": "test",
+            "kind": "command",
+            "hidden": false,
+            "deprecated": false,
+            "params": [
+              {"name": "value", "param_type": "argument", "opts": ["value"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": false, "required": true, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+              {"name": "kind", "param_type": "option", "opts": ["--kind"], "secondary_opts": [], "type": {"name": "choice", "choices": ["auto", "dependency", "domain", "user-agent", "model", "name", "env", "scope", "image", "iac", "file", "text", "secret"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": "auto", "envvar": null, "hidden": false, "deprecated_aliases": []},
+              {"name": "ecosystem", "param_type": "option", "opts": ["--ecosystem"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": "any", "envvar": null, "hidden": false, "deprecated_aliases": []},
+              {"name": "signature_dirs", "param_type": "option", "opts": ["--signatures", "-s"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+              {"name": "allow_signature_override", "param_type": "option", "opts": ["--allow-signature-override"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

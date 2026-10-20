@@ -217,6 +217,18 @@ docs-serve: ## Serve documentation site with live reload
 connector-reference: ## Regenerate docs/connectors/reference.md from the connector classes
 	python -m tools.connector_reference
 
+.PHONY: cli-surface
+cli-surface: ## Regenerate docs/reference/cli-surface.json, the frozen command-line surface
+	python -m tools.cli_surface
+
+.PHONY: python-api
+python-api: ## Regenerate docs/reference/python-api.json, the frozen public Python API
+	python -m tools.public_api
+
+.PHONY: connector-inventory
+connector-inventory: ## Regenerate docs/connectors/inventory.json, the machine-readable connector inventory
+	python -m tools.connector_inventory
+
 .PHONY: readme-matrix
 readme-matrix: ## Regenerate the README detection matrix from the signature packs and connector classes
 	python -m tools.readme_matrix

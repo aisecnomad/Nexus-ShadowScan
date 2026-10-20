@@ -524,3 +524,18 @@ def report_result(name: str, raw: Any) -> ScanResult:
     result.started_at = _text(report.get("started_at")) or ""
     result.finished_at = _text(report.get("finished_at"))
     return result
+
+
+# The public API of this module; docs/reference/python-api.json records it
+# (make python-api) and docs/reference/stability.md says what a change to it means.
+__all__ = [
+    "CONNECTOR_STATUSES",
+    "FLEET_SCHEMA",
+    "MAX_SOURCES",
+    "connector_status",
+    "legacy_fleet",
+    "merge_reports",
+    "report_result",
+    "shows_inventory",
+    "source_names",
+]
