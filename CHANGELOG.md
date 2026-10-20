@@ -27,6 +27,9 @@ longer flag MCP tool poisoning. Dispatch proof caching remains bounded and
 respects import shadowing; scan summaries share incomplete-reason aggregation.
 The sample Dockerfile uses a digest-pinned Node 22 image and an integrity-locked
 CLI dependency graph, with package lifecycle scripts disabled.
+Report readers
+accept a newer scanner's slug-shaped coverage-gap reason instead of refusing
+the report; forged values stay refused and the write path stays strict.
 
 ## 0.1.2 — 2026-10-08
 

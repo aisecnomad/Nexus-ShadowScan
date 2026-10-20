@@ -88,13 +88,28 @@ class TestGapWeighting:
         ledger.record(CoverageGap(detail="d", path="src/x.py", reason="oversize-file"))
         _, summary = ledger.evaluate(CoveragePolicy())
         assert validate_coverage_summary(summary) is summary
-        for forged in ("\x1b[2Jforged", "src/x.py", None):
+        for forged in ("\x1b[2Jforged", "src/x.py", None, "", "Upper-Case", "a" * 33, "-leading"):
             summary["details"][0]["reason"] = forged
             with pytest.raises(ValueError, match="coverage"):
                 validate_coverage_summary(summary)
         del summary["details"][0]["reason"]
         with pytest.raises(ValueError, match="coverage"):
             validate_coverage_summary(summary)
+
+    def test_a_newer_versions_gap_reason_still_loads(self) -> None:
+        """Regression (#264): a slug-shaped category a newer scanner added must
+        not make an older ``diff``/``merge`` refuse the whole report. The
+        unknown slug is preserved verbatim; this version's own records stay
+        strict (``CoverageGap`` rejects it at creation)."""
+        ledger = CoverageLedger()
+        ledger.add_examined(100)
+        ledger.record(CoverageGap(detail="d", path="src/x.py", reason="oversize-file"))
+        _, summary = ledger.evaluate(CoveragePolicy())
+        summary["details"][0]["reason"] = "quantum-budget-2"
+        assert validate_coverage_summary(summary) is summary
+        assert summary["details"][0]["reason"] == "quantum-budget-2"
+        with pytest.raises(ValueError, match="unknown coverage gap reason"):
+            CoverageGap(detail="d", reason="quantum-budget-2")
 
 
 class TestBudget:
