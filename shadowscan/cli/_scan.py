@@ -104,6 +104,7 @@ def _code_options(
     triage: bool,
     profile: str | None,
     max_coverage_gap: float | None = None,
+    max_file_size: int | None = None,
 ) -> dict[str, Any]:
     """The configuration every code connector of one `shadowscan code` run shares.
 
@@ -111,6 +112,8 @@ def _code_options(
     every gap the ci profile exists to declare, so either one conflicts with ``--profile ci``.
     """
     common: dict[str, Any] = {"exclude": list(exclude), "scan_secrets": not no_secrets}
+    if max_file_size is not None:
+        common["max_file_size"] = max_file_size
     if no_default_excludes:
         common["default_excludes"] = False
     if strict_coverage:
@@ -177,6 +180,22 @@ def _code_options(
     ),
 )
 @click.option(
+    "--max-file-size",
+    type=click.IntRange(min=1),
+    default=None,
+    metavar="BYTES",
+    help="read files up to this size; a larger analyzable file is a coverage gap (default: 1000000)",
+)
+@click.option(
+    "--preflight",
+    is_flag=True,
+    help=(
+        "local PATHS only: list the files over --max-file-size, links and other static coverage gaps a "
+        "full scan would record, reading no other content; exits 3 when they would leave it incomplete, "
+        "0 otherwise; prints to the terminal only"
+    ),
+)
+@click.option(
     "--diff-base",
     default=None,
     help=(
@@ -198,6 +217,8 @@ def code(
     include_tests: bool,
     triage: bool,
     profile: str | None,
+    max_file_size: int | None,
+    preflight: bool,
     diff_base: str | None,
     opts: ScanOptions,
 ) -> None:
@@ -213,9 +234,13 @@ def code(
         triage,
         profile,
         opts.max_coverage_gap,
+        max_file_size,
     )
     if diff_base and not paths:
         raise click.UsageError("--diff-base applies only to local PATHS")
+    if preflight:
+        _check_preflight(paths, bool(github_org or github_repo or gitlab_group), triage, diff_base, opts)
+        common["preflight"] = True
     if mode and not (github_org or github_repo or gitlab_group):
         raise click.UsageError("--mode applies only to --github-org, --github-repo or --gitlab-group")
     if paths:
@@ -240,7 +265,25 @@ def code(
         specs.append(ConnectorSpec(name="code.gitlab", config=gl))
     if not specs:
         raise click.UsageError("give at least one PATH, --github-org/--github-repo or --gitlab-group")
-    _cli._run_scan(opts.config(specs), opts)
+    _cli._run_scan(opts.config(specs), opts, preflight=preflight)
+
+
+def _check_preflight(
+    paths: tuple[str, ...], remote: bool, triage: bool, diff_base: str | None, opts: ScanOptions
+) -> None:
+    """Refuse a preflight that could be mistaken for a scan or that cannot be judged statically.
+
+    A preflight reports no finding, so it never writes a report file or a machine-readable
+    format that a pipeline might keep as a scan result; and it reads local trees only.
+    """
+    if not paths or remote:
+        raise click.UsageError("--preflight applies only to local PATHS")
+    if triage or diff_base:
+        raise click.UsageError("--preflight conflicts with --triage and --diff-base")
+    if opts.output or opts.fmt != "table":
+        raise click.UsageError("--preflight prints to the terminal only; drop --output and --format")
+    if opts.incremental:
+        raise click.UsageError("--preflight reads no content to reuse; drop --incremental")
 
 
 # ------------------------------------------------------------------- gateway

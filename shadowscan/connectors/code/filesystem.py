@@ -742,6 +742,13 @@ class FilesystemConnector(BaseConnector):
             "is always reported incomplete so a triage result is never mistaken for a full scan "
             "(default false)"
         ),
+        "preflight": (
+            "list the coverage gaps a full scan would record before reading any content: files over "
+            "max_file_size, links, non-regular entries and walk limits, judged by the same exclusions, "
+            "accounting and budget; nothing else is read, no finding is reported, and the scan is "
+            "always reported incomplete (subset-scan) so a preflight is never mistaken for a scan; "
+            "conflicts with triage and diff_base (default false)"
+        ),
         "agent_granularity": (
             "project (default) | source; source additionally inventories unique named straight-line "
             "Python agent constructions by file and scoped binding; other source remains project evidence"
@@ -806,6 +813,9 @@ class FilesystemConnector(BaseConnector):
         # A gap budget of 0 is strict accounting, as strict_coverage is (see _strict_accounting).
         self._zero_budget = coverage_profile(ctx.config, strict_coverage=self.strict_coverage)
         self.triage = config_boolean(ctx.get("triage", False), "triage")
+        self.preflight = config_boolean(ctx.get("preflight", False), "preflight")
+        if self.preflight and (self.triage or ctx.get("diff_base") is not None):
+            raise ConnectorError("code.filesystem: preflight conflicts with triage and diff_base")
         self.agent_granularity = ctx.get("agent_granularity", "project")
         if ("agent_granularity" in ctx.config and ctx.config["agent_granularity"] is None) or (
             self.agent_granularity not in ("project", "source")
@@ -986,6 +996,17 @@ class FilesystemConnector(BaseConnector):
                     "and content sweeps skipped; findings are a subset of a full scan",
                     incomplete=True,
                 )
+            if self.preflight:
+                # Unconditional, as for triage: a preflight reads no content and
+                # reports no finding, so it must never read as a complete scan.
+                self.ctx.warn(
+                    f"code.filesystem: {scan.label}: preflight: a subset scan that checked size limits, "
+                    "links and other static coverage gaps only; nothing was analyzed",
+                    incomplete=True,
+                    reason="subset-scan",
+                )
+                self.walker.walk(scan, self.file_scanner.preflight_file, self.unread_settings)
+                return
             if self.diff_base is not None:
                 scan.diff_base_ref = self.diff_base
                 scan.diff_files = self._resolve_diff(root)

@@ -278,6 +278,35 @@ class FileScanner:
         self.model_metadata_bytes = model_metadata_bytes
         self.cross_file = CrossFileSources(self)
 
+    def preflight_file(self, scan: _ScanState, rel: str, path: Path, proj_root: str) -> None:
+        """Record the size-limit gap ``scan_file`` would record for one file, analyzing nothing (``preflight``).
+
+        Every file counts as examined, as in a full scan, so the coverage budget
+        is judged against the same entries. A file the passes would not read and
+        a model artifact are left alone, as is one within ``max_file_size``. A
+        larger one goes through the reader, which records its gap exactly as a
+        full scan does: an oversize file is not read (a bounded prefix decides
+        whether it may name MCP servers), and an oversize notebook is read so
+        the notebook rule applies to its code cells.
+        """
+        self.ctx.examined()
+        if self.walker.model_artifact_name(path.name):
+            return
+        file_matches = self.index.match_file(rel)
+        by_name = _analyzed_by_name(path.name)
+        if not (by_name or file_matches):
+            return
+        if path.name.lower() in CREDENTIAL_FILE_NAMES and not self.scan_secrets:
+            return  # only the credential pass reads its body
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return  # the full scan would report it when it opens the file
+        if size <= self.max_file_size:
+            return
+        named = by_name or self.walker._named_by_signature(rel, file_matches)
+        self._read_source(rel, path, scan.root_fd, scan.base, named=named)
+
     def scan_file(self, scan: _ScanState, rel: str, path: Path, proj_root: str) -> None:
         """Run every analysis pass over one file of the walk."""
         proj = scan.projects.setdefault(proj_root, _Project(proj_root))

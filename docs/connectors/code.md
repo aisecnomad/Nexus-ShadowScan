@@ -693,7 +693,7 @@ off. Most names are tool metadata, caches, virtualenvs, dependency trees and IDE
 state that never hold a project's own source, and are skipped without comment:
 `.git`, `.hg`, `.svn`, `node_modules`, `bower_components`, `.yarn`,
 `.pnpm-store`, `Pods`, `.venv`, `venv`, `.virtualenv`, `site-packages`,
-`__pycache__`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `.tox`, `.nox`,
+`__pycache__`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `.hypothesis`, `.tox`, `.nox`,
 `.cache`, `.coverage`, `.dart_tool`, `.gradle`, `.terraform`, `.serverless`,
 `.next`, `.nuxt`, `.svelte-kit`, `.turbo`, `.parcel-cache`, `.idea` and `.vs`.
 The remaining names are build output or vendored code by convention, but

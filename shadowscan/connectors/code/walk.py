@@ -358,6 +358,7 @@ DEFAULT_EXCLUDES = {
     ".mypy_cache",
     ".pytest_cache",
     ".ruff_cache",
+    ".hypothesis",
     ".tox",
     ".nox",
     "site-packages",

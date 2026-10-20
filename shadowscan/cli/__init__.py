@@ -164,11 +164,58 @@ def _exit_code(result: ScanResult, fail_on: str | None) -> int:
     return 2 if worst <= threshold else 0
 
 
+# What an operator can do about each INCOMPLETE_REASONS category, most specific first. Each line
+# names options and configuration keys only, never a path or value, like the summary it follows.
+_REMEDIATION: dict[str, str] = {
+    "oversize-file": (
+        "files over max_file_size (1,000,000 bytes unless set) were not read: exclude generated data "
+        "with --exclude GLOB, or raise the limit with --max-file-size BYTES; `shadowscan code PATH "
+        "--preflight` lists them without scanning"
+    ),
+    "timeout": (
+        "a deadline ended part of the scan: set --connector-timeout-seconds (unset, it grows with the "
+        "tree up to 1800 s), or narrow the scan with --exclude"
+    ),
+    "unresolved-link": (
+        "a symbolic link, gitlink or submodule points outside the scanned tree: scan its target as "
+        "another PATH, check out submodules, or exclude it"
+    ),
+    "unparsed-input": (
+        "a selected file did not parse or decode (an unrendered template, a malformed fixture): fix or "
+        "exclude it; --profile ci declares these under test, example, documentation and generated "
+        "paths as counted omissions"
+    ),
+    "sanitization-limit": (
+        "a file's credential-redaction context could not be established, so its excerpts were withheld "
+        "(detection still ran): exclude the file if it is not deployed content"
+    ),
+    "analysis-limit": (
+        "a per-file budget was reached (credential quota, model literals, syntax-tree nodes): review "
+        "the named files; --profile ci declares analysis limits under test, example, documentation and "
+        "generated paths, never credential limits"
+    ),
+    "access-denied": "a connector was denied access: grant the scopes its guide lists (docs/connectors/)",
+    "upstream-error": "a remote API or network call failed: re-run, or check connectivity and rate limits",
+    "subset-scan": "a triage or preflight scan reads a subset by design: run without it for a full result",
+    "unscanned-input": "selected input was not read (such as a Git LFS pointer): fetch it or exclude it",
+}
+_REMEDIATION_GUIDE = "https://aisecnomad.github.io/Nexus-ShadowScan/getting-started/incomplete-scans/"
+
+
+def _remediation_lines(reasons: dict[str, int]) -> list[str]:
+    """One remediation line per reason category in ``reasons``, in its order, then the guide."""
+    lines = [f"  {reason}: {_REMEDIATION[reason]}" for reason in reasons if reason in _REMEDIATION]
+    if lines:
+        lines.append(f"  guide: {_REMEDIATION_GUIDE}")
+    return lines
+
+
 def _incomplete_explanation(result: ScanResult) -> str:
-    """Why the scan exits 3, by reason category; the diagnostics themselves stay in the report.
+    """Why the scan exits 3, by reason category, and what to do about each; the diagnostics stay in the report.
 
     The categories come from the connectors' own message vocabulary and name no path or value,
-    so they can go to a terminal or a CI log that the private report does not reach.
+    so they can go to a terminal or a CI log that the private report does not reach. Nor does
+    the remediation that follows them, one line per category.
     """
     summary = result.summary()
     reasons = summary["incomplete_reasons"]
@@ -181,13 +228,52 @@ def _incomplete_explanation(result: ScanResult) -> str:
         note += f"; {summary['declared_omissions']} declared omission(s) did not count"
     if summary["tolerated_gaps"]:
         note += f"; {summary['tolerated_gaps']} coverage gap(s) within budget did not count"
+    remediation = _remediation_lines(reasons)
+    if remediation:
+        note += "\nto resolve:\n" + "\n".join(remediation)
     return note
 
 
-def _explain_incomplete(result: ScanResult) -> None:
-    """Print the exit-3 explanation on stderr, best effort: a closed stream must not change the exit."""
+def _static_gap_reasons(result: ScanResult) -> dict[str, int]:
+    """The reason counts of a preflight, without the subset marker every preflight carries."""
+    return {k: v for k, v in result.summary()["incomplete_reasons"].items() if k != "subset-scan"}
+
+
+def _preflight_exit_code(result: ScanResult) -> int:
+    """3 when the static gaps a preflight found would leave a full scan incomplete, else 0."""
+    summary = result.summary()
+    if _static_gap_reasons(result) or not summary["incomplete_reasons"]:
+        # A connector that failed or was skipped recorded no reason at all.
+        return 3
+    return 0
+
+
+def _preflight_explanation(result: ScanResult, code: int) -> str:
+    """The preflight verdict for stderr: path-free, as the exit-3 explanation is."""
+    if code == 0:
+        return (
+            "preflight: no static coverage gap found; nothing was analyzed, so a full scan can still be "
+            "incomplete for content (unparsed input, matching budgets, deadlines)"
+        )
+    reasons = _static_gap_reasons(result)
+    detail = incomplete_reasons_text(reasons) if reasons else "a connector was skipped or recorded no diagnostic"
+    note = (
+        f"preflight: a full scan would be incomplete (exit 3): {detail}; the files are listed above "
+        "and under stats[].coverage.details"
+    )
+    remediation = _remediation_lines(reasons)
+    if remediation:
+        note += "\nto resolve:\n" + "\n".join(remediation)
+    return note
+
+
+def _explain_incomplete(result: ScanResult, *, preflight: bool = False, code: int = 3) -> None:
+    """Print the exit-3 or preflight explanation on stderr, best effort: a closed stream must not change the exit."""
+    text = _preflight_explanation(result, code) if preflight else _incomplete_explanation(result)
+    # Each line is made terminal-safe on its own, so the line breaks between them stay line breaks.
+    safe = "\n".join(terminal_text(line) for line in text.split("\n"))
     try:
-        err_console.print(Text(terminal_text(_incomplete_explanation(result)), style="yellow"))
+        err_console.print(Text(safe, style="yellow" if code else "green"))
     except Exception:  # noqa: BLE001, S110 - output streams may already be closed; the exit code must not change
         pass
 
@@ -196,7 +282,8 @@ def _abandoned_exit_message(result: ScanResult, code: int, abandoned: int) -> st
     """The notice for leaving timed-out workers behind; with exit 3 it leads with the reasons."""
     message = f"[yellow]exiting without waiting for {abandoned} timed-out connector worker(s)[/yellow]"
     if code == 3:
-        message = f"[yellow]{escape(terminal_text(_incomplete_explanation(result)))}[/yellow]\n{message}"
+        explanation = "\n".join(terminal_text(line) for line in _incomplete_explanation(result).split("\n"))
+        message = f"[yellow]{escape(explanation)}[/yellow]\n{message}"
     return message
 
 
@@ -242,6 +329,7 @@ def _run_and_emit(
     only: list[str] | None = None,
     *,
     extra_stats: list[ScanStats] | None = None,
+    preflight: bool = False,
 ) -> None:
     # Reuse a CLI-option watchdog already running during command preparation;
     # YAML-only and direct callers arm a local watchdog for engine/output work.
@@ -256,7 +344,9 @@ def _run_and_emit(
     owned_deadline = ctx is None or ctx.meta.get(_JOB_DEADLINE_CONTEXT_KEY) is None
     job_deadline = watchdog.expires_at if watchdog is not None else None
     try:
-        _run_and_emit_with_deadline(cfg, fmt, output, verbose, max_rows, only, extra_stats, job_deadline)
+        _run_and_emit_with_deadline(
+            cfg, fmt, output, verbose, max_rows, only, extra_stats, job_deadline, preflight=preflight
+        )
     finally:
         if watchdog is not None and owned_deadline:
             watchdog.cancel()
@@ -271,10 +361,13 @@ def _run_and_emit_with_deadline(
     only: list[str] | None = None,
     extra_stats: list[ScanStats] | None = None,
     job_deadline: float | None = None,
+    *,
+    preflight: bool = False,
 ) -> None:
     """Run the scan and emit its report; ``extra_stats`` (command-level diagnostics) join its stats.
 
-    ``job_deadline`` is the armed watchdog's ``time.monotonic()`` expiry, if any.
+    ``job_deadline`` is the armed watchdog's ``time.monotonic()`` expiry, if any. A ``preflight``
+    exits 0 when it found no static gap and 3 when it did, whatever its subset marker says.
     """
 
     def progress(cid: str, msg: str) -> None:
@@ -322,7 +415,7 @@ def _run_and_emit_with_deadline(
                     " workers[/red]",
                 )
             raise
-        code = _exit_code(result, cfg.fail_on)
+        code = _preflight_exit_code(result) if preflight else _exit_code(result, cfg.fail_on)
         if engine.abandoned_workers:
             # A timed-out connector's thread may still be blocked in an SDK call.
             # Python joins worker threads at interpreter exit, which would hold the
@@ -331,7 +424,9 @@ def _run_and_emit_with_deadline(
             _exit_abandoned_workers(
                 code, _abandoned_exit_message(result, code, len(engine.abandoned_workers))
             )
-        if code == 3:
+        if preflight:
+            _explain_incomplete(result, preflight=True, code=code)
+        elif code == 3:
             _explain_incomplete(result)
         sys.exit(code)
     except KeyboardInterrupt:
@@ -611,11 +706,21 @@ def _run_scan(
     only: list[str] | None = None,
     *,
     extra_stats: list[ScanStats] | None = None,
+    preflight: bool = False,
 ) -> None:
     """Apply the shared security options, then run the scan and emit its report."""
     _apply_security_options(cfg, opts)
     verbose: int = main.verbose  # type: ignore[attr-defined]
-    _run_and_emit(cfg, opts.fmt, opts.output, verbose, opts.max_rows, only=only, extra_stats=extra_stats)
+    _run_and_emit(
+        cfg,
+        opts.fmt,
+        opts.output,
+        verbose,
+        opts.max_rows,
+        only=only,
+        extra_stats=extra_stats,
+        preflight=preflight,
+    )
 
 
 def _warn_argv_secret(what: str, instead: str) -> None:
