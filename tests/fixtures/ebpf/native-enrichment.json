@@ -1,0 +1,52 @@
+[
+  {
+    "process_exec": {
+      "process": {
+        "binary": "cat"
+      }
+    },
+    "hostname": "api.openai.com"
+  },
+  {
+    "eventName": "connect",
+    "processName": "cat",
+    "args": [],
+    "hostname": "api.openai.com"
+  },
+  {
+    "flow": {
+      "IP": {
+        "destination": "192.0.2.1"
+      },
+      "l4": {
+        "TCP": {
+          "destination_port": 443
+        }
+      }
+    },
+    "hostname": "api.openai.com"
+  },
+  {
+    "flow": {
+      "IP": {
+        "destination": "192.0.2.1"
+      },
+      "l4": {
+        "TCP": {
+          "destination_port": 443
+        }
+      }
+    },
+    "destination": "api.openai.com"
+  },
+  {
+    "process_name": "python",
+    "destination": "aiplatform-prodpsc.p.googleapis.com",
+    "port": 443
+  },
+  {
+    "process_name": "python",
+    "destination": "storage-prodpsc.p.googleapis.com",
+    "port": 443
+  }
+]

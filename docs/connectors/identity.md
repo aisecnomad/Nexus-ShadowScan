@@ -11,6 +11,10 @@ See the [shared connector entry guide](../connectors.md#connector-entry-guide)
 for the common modes, permissions, options, fail-closed and evidence-limit
 references.
 
+Invalid Okta scope grants and conflicting Entra permission labels record
+`unparsed-input` and leave the scan incomplete. They do not record an access
+denial merely because their diagnostic describes permission inventory.
+
 ### Ambiguous product names
 
 Display names, publisher labels and descriptions are mutable application metadata.

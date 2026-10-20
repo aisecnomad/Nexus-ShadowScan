@@ -13,6 +13,98 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Native eBPF metadata and service-specific Google endpoints (October 20)
+
+- A native Tetragon, Tracee or Hubble record's top-level `hostname` is now
+  treated as sensor/log-shipper metadata, like Falco's, instead of a connected
+  destination. Bare Hubble flows still reserve `destination` for their endpoint
+  map, but a wrapped flow can retain a separately enriched top-level string
+  destination. Before/after regressions reproduce all four earlier mistakes.
+- Google AI destinations now recognize the documented service-specific
+  `SERVICE-ENDPOINT.p.googleapis.com` form, limited to the existing GCP AI
+  service names and one DNS label. Tests cover every listed AI service,
+  non-AI services and prefix/length boundaries, plus an offline combined
+  native-enrichment fixture. No resolver is called; observed names do not
+  prove private routing or agency.
+- Source for the DNS form: Google's
+  [Private Service Connect endpoint guide](https://docs.cloud.google.com/vpc/docs/configure-private-service-connect-apis#use_an_endpoint),
+  checked October 20. No live eBPF deployment or cloud tenant was exercised.
+
+### Shared surrender allowance across expired connectors (October 20)
+
+- The supervisor now shares its five-second allowance for copying and sanitizing
+  partial findings across every expired connector in a scan (#264), instead of
+  restarting the allowance for each job. The allowance counts time spent in
+  surrender, rather than time waiting for other jobs. Findings left after the
+  allowance is spent are omitted with an explicit timeout diagnostic; the scan
+  remains incomplete. Cancellation stays cooperative and a single preparation
+  already in progress is not interrupted, so this is not a hard wall-clock cap.
+- A deterministic regression with two overrun jobs and one second of simulated
+  preparation per finding failed before the fix (ten seconds) and now stops
+  after the shared five seconds, with both omissions counted.
+- Rechecked the earlier scalar follow-up: exact standard-library `date`,
+  `datetime`, `time`, `timedelta`, `Decimal` and `UUID` metadata leaves are already
+  retained. New regressions cover each. Arbitrary subclasses remain refused
+  on surrender because dispatching their methods would run worker-controlled
+  code on the supervisor; existing tests verify omissions are reported and
+  such methods are never called. This is advisory coding-agent verification,
+  not independent human review or live tenant acceptance.
+
+### Host inventory path precision follow-ups (October 20)
+
+- Reproduced #264's Windows context omission with a Jan inventory row naming
+  its install directory and a bundled `lms.exe` path inside LM Studio's Windows
+  install directory. The endpoint catalog now names `AppData/Local/Programs/Jan`,
+  `AppData/Local/Programs/LM Studio` and `Program Files/LM Studio` as product
+  contexts. Bare Jan and unrelated `lms.exe` remain filtered. The Jan
+  [troubleshooting guide](https://docs.jan.ai/desktop/troubleshooting) names its
+  Windows install path; LM Studio's own [issue tracker report](https://github.com/lmstudio-ai/lmstudio-bug-tracker/issues/1860)
+  records its per-user install directory, and [another report](https://github.com/lmstudio-ai/lmstudio-bug-tracker/issues/914)
+  records the system install directory. These are path-format evidence, not a
+  live Windows acceptance run.
+- Model-store home anchoring retains the original path separator and drive
+  context: relative `home/u`, `Users/u`, `root`, `var/root`, drive-relative paths,
+  named-tilde text and traversal components no longer establish a home-directory
+  shortcut. Integration review also reproduced two traversal paths that escaped
+  the home shortcut but still matched the layout fallback because a later file
+  had a model suffix; traversal now withholds model-store attribution there too.
+  Exact symbolic home prefixes and absolute Unix/Windows homes remain
+  recognized; no variable expansion, account lookup or filesystem read occurs.
+- Ten newly added cases failed before these fixes and pass afterwards, and an
+  offline export fixture exercises collection and analysis together. This is
+  coding-agent verification, not independent human review or live tenant acceptance.
+
+### Explicit categories for cloud-list and identity input defects (October 20)
+
+GCP list validation now names `unparsed-input` for malformed response shapes,
+unreachable-location fields, item arrays and pagination tokens; exhausted page
+budgets name `analysis-limit`. Empty responses, provider error envelopes and
+valid unavailable-location reports remain `upstream-error`. These categories
+come from the failure branch rather than the URL or project name embedded in
+the message. A project called `timeout-project` or `permission-403-project`
+can no longer turn these events into a timeout or access denial. Invalid Okta
+grants and conflicting Entra role labels name `unparsed-input`, avoiding the
+fallback classifier's interpretation of the word `permission` as access denial.
+
+Regression cases fail on the prior source and verify retained identity evidence,
+unchanged incomplete status, once-only conflict diagnostics and categories across
+ordinary and misleading project names. This is a focused correction for #264;
+other connectors still use the diagnostic-text fallback and are not claimed to
+have completed the explicit-reason migration. No live provider was contacted.
+
+### DNS snapshot proposal and offline boundary regression (October 20)
+
+Recorded the remaining #210 enhancement as a concrete proposal with a separate
+explicit-opt-in collector, strict versioned snapshot and deterministic local
+replay. The acceptance plan specifies TTL and exact-vantage checks, ambiguous
+and conflicting evidence, bounded collection/replay, cancellation and no
+synthetic client-contact or agent claims. Resolver transport/dependency and
+artifact interface remain review decisions; no live collector, resolver option
+or egress was added. The network guide links the proposal. An explicit test
+guards resolver calls and packet sends during ordinary offline network scans;
+the existing hermetic DNS fixture alone would have hidden a resolver call.
+The proposal stays open; these tests do not claim live DNS acceptance.
+
 ### Forward-compatible coverage-gap reasons in report readers (October 20)
 
 - `validate_coverage_summary` no longer refuses a report whose published

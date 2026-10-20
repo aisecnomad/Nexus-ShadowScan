@@ -7,6 +7,23 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+When several connectors expire, partial-finding preparation shares one
+five-second allowance across the scan. Observations left after it is spent are
+explicit omissions in an incomplete report. This cooperative bound cannot
+interrupt a copy already in progress; retain an external process deadline when
+a hard execution limit is required.
+
+Native eBPF baselines can lose sensor-name-only destination findings and gain
+wrapped Hubble destination enrichment or service-specific Google AI Private
+Service Connect names. Rebuild the comparison baseline after reviewing the
+underlying endpoint observations; these signals do not establish agency.
+
+Host inventory now retains Windows Jan/LM Studio install-directory evidence
+and requires literal home anchors for the home-model-store shortcut. Compare
+inventory findings against a freshly reviewed baseline: relative home-like
+paths can lose provisional runtime attribution, while supported Windows install
+paths can gain it. These are offline path observations, not proof of execution.
+
 ## Candidate usability and release-evidence changes
 
 The source branch adds [staged-file hooks and readiness checks](operations/code-precommit.md)
@@ -25,6 +42,12 @@ release is created by this change.
 
 
 ## Migration notes and change history
+
+GCP list-shape defects, page-budget exhaustion, malformed Okta grants and
+conflicting Entra permission labels now use explicit incomplete categories.
+Existing reports retain their recorded categories; rescan to obtain corrected
+reason counts. These corrections do not change whether the scan is incomplete
+or which finding evidence it retains.
 
 Per-change migration and behavior notes for unreleased changes live in
 [pending migration notes](production-migrations.md), and the dated log of
