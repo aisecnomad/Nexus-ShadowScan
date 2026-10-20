@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import datetime
+import decimal
 import inspect
 import os
 import re
 import shutil
+import uuid
+from concurrent.futures import Future
 from copy import deepcopy
 from dataclasses import fields
 from threading import Event
@@ -501,6 +505,27 @@ def test_surrender_reuses_the_workers_sanitizer_pass(sanitizer_calls, connector)
     assert SECRET not in ScanResult(findings=surrendered).to_json()
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        datetime.date(2026, 10, 20),
+        datetime.datetime(2026, 10, 20, 12, 30, tzinfo=datetime.UTC),
+        datetime.time(12, 30),
+        datetime.timedelta(seconds=90),
+        decimal.Decimal("1.25"),
+        uuid.UUID(int=1),
+    ],
+)
+def test_surrender_keeps_standard_sanitizer_scalars(value):
+    """Issue #264: standard immutable metadata leaves must survive surrender."""
+    finding = _finding(metadata={"value": value})
+    finding.sanitize()
+    [copy], stats = _surrendered([finding])
+    assert copy.metadata["value"] == value
+    assert type(copy.metadata["value"]) is type(value)
+    assert stats.errors == []
+
+
 def test_surrender_sanitizes_what_the_worker_changed_after_its_pass(sanitizer_calls):
     changed, unchanged = _worker_findings(2)
     changed.metadata["note"] = f"Authorization: Bearer {SECRET}"
@@ -616,6 +641,38 @@ def test_surrender_stops_when_its_time_budget_is_spent(monkeypatch):
     ]
     # Counted as the deadline's consequence, which the exit-3 explanation names.
     assert stats.incomplete_reasons == {"timeout": 1}
+
+
+def test_surrender_budget_is_shared_across_all_expired_jobs(monkeypatch):
+    """Many overruns must not each hold the supervisor for another five seconds."""
+    clock = [1000.0]
+    monkeypatch.setattr(
+        engine_module, "time", type("Clock", (), {"monotonic": staticmethod(lambda: clock[0])})
+    )
+    first, second = _worker_findings(10), _worker_findings(10)
+    original = Finding.sanitize
+
+    def one_second_each(self, **kwargs):
+        clock[0] += 1.0
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(Finding, "sanitize", one_second_each)
+    specs = [ConnectorSpec("code.filesystem", label=label) for label in ("one", "two")]
+    futures = [Future(), Future()]
+    states = {number: _JobState() for number in range(2)}
+    for state, findings in zip(states.values(), (first, second), strict=True):
+        state.register_partial(findings)
+    engine = Engine(ScanConfig(connectors=[]), SignatureIndex([]))
+    supervisor = engine_module._Supervisor(
+        engine, dict(zip(futures, enumerate(specs), strict=True)), states, 2, now_iso()
+    )
+    for future in futures:
+        supervisor._expire(future)
+
+    results = [supervisor.completed[number] for number in range(2)]
+    assert clock[0] == 1005.0
+    assert [len(findings) for _, findings, _ in results] == [5, 0]
+    assert all(stats.incomplete and stats.incomplete_reasons["timeout"] >= 2 for _, _, stats in results)
 
 
 def test_postprocess_reports_runtime_and_omission_errors_in_order(monkeypatch, index):

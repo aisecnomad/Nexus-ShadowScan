@@ -8,6 +8,26 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## Unreleased
 
+certifi 2026.10.19 removes the `emSign ECC Root CA - G3` root, whose revoked
+intermediates had compromised keys (GHSA-6q48-6c7w-9gw2), from every lock.
+
+Expired connectors share one five-second allowance for preparing partial findings,
+so repeated overruns cannot each delay the report for another five seconds.
+Native eBPF sensor names no longer imply an AI destination; wrapped Hubble
+destination enrichment and service-specific Google AI Private Service Connect
+names are retained.
+
+Host inventory preserves Jan and LM Studio Windows install-directory context
+and no longer treats relative home-like or traversal paths as home model stores.
+
+Malformed GCP list responses, pagination limits, invalid Okta grants and conflicting
+Entra permission labels now record explicit incomplete categories, independent of
+resource names or diagnostic wording.
+
+The optional live DNS snapshot enhancement now has a scoped design and
+acceptance plan; an explicit regression guards the offline network boundary.
+Live DNS collection and snapshot replay remain unimplemented (#210).
+
 Current source adds bounded staged-file hooks, readiness and remediation guidance,
 offline terminal triage, a candidate public API contract, a pinned benchmark
 companion and verified release attachments. Signature loading uses faster native

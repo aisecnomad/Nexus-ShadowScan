@@ -543,7 +543,60 @@ def test_endpoint_host_model_store_names_elsewhere_are_not_stores(row) -> None:
     assert not connector.ctx.stats.incomplete
 
 
-@pytest.mark.parametrize("home", ["~", "/home/u", "/Users/u", "C:\\Users\\u", "/root", "$HOME"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "home/u/jan/models",
+        "Users/u/jan/models",
+        "root/jan/models",
+        "var/root/jan/models",
+        "~backup/jan/models",
+        "C:Users/u/jan/models",
+        "C:/Users/../jan/models",
+        "~/jan/models/../../project/user.rb",
+        "~/jan/models/../../project/model.gguf",
+        "/srv/app/jan/models/../../project/model.gguf",
+    ],
+)
+def test_endpoint_host_home_model_store_requires_an_anchored_home(path) -> None:
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    assert list(connector.analyze([{"path": path}])) == []
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"name": "Jan", "path": "C:/Users/u/AppData/Local/Programs/Jan"},
+        {"path": r"C:\Users\u\AppData\Local\Programs\LM Studio\resources\app\.webpack\lms.exe"},
+        {"path": r"C:\Program Files\LM Studio\resources\app\.webpack\lms.exe"},
+    ],
+)
+def test_endpoint_host_windows_install_directory_supplies_runtime_context(row) -> None:
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    assert len(list(connector.analyze([row]))) == 1
+    assert connector.ctx.stats.warnings == []
+
+
+def test_endpoint_host_path_precision_export_roundtrip() -> None:
+    context = ConnectorContext(config={"input": str(FIXTURES / "endpoint" / "host_path_precision.json")})
+    connector = HostConnector(context)
+    context.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    findings = connector.run()
+    assert [finding.resource for finding in findings] == [
+        "Jan",
+        "C:/Program Files/LM Studio/resources/app/.webpack/lms.exe",
+        "/home/synthetic/jan/models",
+    ]
+    assert not context.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "home",
+    ["~", "/home/u", "/Users/u", "C:\\Users\\u", "/root", "/var/root", "$HOME", "${HOME}", "%USERPROFILE%"],
+)
 def test_endpoint_host_every_catalog_model_store_below_a_home_is_reported(home) -> None:
     connector = HostConnector(ConnectorContext())
     connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
@@ -2698,3 +2751,64 @@ def test_mcp_tool_description_past_sanitizer_limits_fails_only_that_record(monke
     assert hostile not in json.dumps([f.to_dict() for f in findings])
     assert ctx.stats.incomplete
     assert ctx.stats.warnings == ["endpoint.mcp: record value withheld: sanitization safety limit exceeded"]
+
+
+@pytest.mark.parametrize(
+    "native",
+    [
+        {"process_exec": {"process": {"binary": "cat"}}},
+        {"eventName": "connect", "processName": "cat", "args": []},
+        {"flow": {"IP": {"destination": "192.0.2.1"}, "l4": {"TCP": {"destination_port": 443}}}},
+    ],
+)
+def test_ebpf_log_shipper_hostname_is_not_a_native_destination(native):
+    connector = _ebpf_connector()
+    assert list(connector.analyze([{**native, "hostname": "api.openai.com"}])) == []
+    assert connector.ctx.stats.warnings == []
+    assert not connector.ctx.stats.incomplete
+
+
+def test_ebpf_wrapped_hubble_keeps_an_enriched_top_level_destination():
+    connector = _ebpf_connector()
+    record = {
+        "flow": {"IP": {"destination": "192.0.2.1"}, "l4": {"TCP": {"destination_port": 443}}},
+        "destination": "api.openai.com",
+    }
+    [finding] = connector.analyze([record])
+    assert "llm-egress" in finding.tags
+    assert connector.ctx.stats.warnings == []
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("service", sorted(GCP_AI_SERVICES))
+def test_ebpf_google_ai_private_service_connect_destination(service):
+    connector = _ebpf_connector()
+    endpoint = service.removesuffix(".googleapis.com") + "-prodpsc.p.googleapis.com"
+    [finding] = connector.analyze([{"process_name": "python", "destination": endpoint, "port": 443}])
+    assert "llm-egress" in finding.tags
+    assert connector.ctx.stats.warnings == []
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "storage-prodpsc.p.googleapis.com",
+        "not-aiplatform-prodpsc.p.googleapis.com",
+        "aiplatform-.p.googleapis.com",
+        "aiplatform-prodpsc.p.googleapis.com.example.com",
+        "fake.aiplatform-prodpsc.p.googleapis.com",
+        "aiplatform-" + "x" * 64 + ".p.googleapis.com",
+    ],
+)
+def test_ebpf_private_service_connect_keeps_service_and_label_boundaries(endpoint):
+    connector = _ebpf_connector()
+    assert list(connector.analyze([{"process_name": "python", "destination": endpoint, "port": 443}])) == []
+    assert connector.ctx.stats.warnings == []
+
+
+def test_ebpf_native_enrichment_fixture_runs_offline():
+    findings, ctx = _run_offline(EbpfConnector, {}, FIXTURES / "ebpf/native-enrichment.json")
+    assert len(findings) == 2
+    assert all("llm-egress" in finding.tags for finding in findings)
+    assert not ctx.stats.incomplete
+    assert ctx.stats.errors == [] and ctx.stats.warnings == []

@@ -152,6 +152,7 @@ nav:
       - Testing: testing.md
       - Governance: governance.md
       - "Proposals: agent governance": proposals/agent-governance.md
+      - "Proposal: DNS observation snapshots": proposals/dns-observation-snapshots.md
       - Maintainer onboarding: maintainer-onboarding.md
       - Merge policy enforcement: operations/merge-policy.md
       - Publishing a release: operations/publishing.md
