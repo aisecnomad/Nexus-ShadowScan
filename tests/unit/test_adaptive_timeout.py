@@ -261,6 +261,22 @@ class TestDeadlineExtension:
             FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET = original
         assert grew == pytest.approx(MAX_AUTO_TIMEOUT - DEFAULT_CONNECTOR_TIMEOUT)
 
+    def test_a_byte_padded_tree_is_clamped_at_the_ceiling(self, tmp_path, monkeypatch) -> None:
+        # A hostile tree of a few files padded to just under max_file_size asks
+        # for far more than the ceiling by bytes alone; the engine still clamps it.
+        for i in range(3):
+            (tmp_path / f"pad{i}.py").write_bytes(b"#" * 10_000)
+            (tmp_path / f"pad{i}.lock").write_bytes(b"#" * 10_000)
+        (tmp_path / "uv.lock").write_bytes(b"#" * 10_000)
+        monkeypatch.setattr(FilesystemConnector, "_SOURCE_BYTES_PER_DEFAULT_BUDGET", 10)
+        monkeypatch.setattr(FilesystemConnector, "_READ_BYTES_PER_DEFAULT_BUDGET", 10)
+        config = {"paths": [str(tmp_path)], "max_file_size": 10_000}
+        proposal = FilesystemConnector.estimate_timeout_seconds(config, DEFAULT_CONNECTOR_TIMEOUT)
+        assert proposal is not None and proposal > 100 * MAX_AUTO_TIMEOUT
+        spec = ConnectorSpec(name="code.filesystem", config=config)
+        grew = self._extend(ScanConfig(connectors=[]), spec, self._state(DEFAULT_CONNECTOR_TIMEOUT))
+        assert grew == pytest.approx(MAX_AUTO_TIMEOUT - DEFAULT_CONNECTOR_TIMEOUT)
+
     def test_an_estimate_that_raises_leaves_the_deadline_alone(self, tmp_path, monkeypatch) -> None:
         def boom(cls, config, default):
             raise RuntimeError("probe exploded")

@@ -891,7 +891,10 @@ files at or under `max_file_size` (`max_notebook_size` for a notebook) count,
 because the reader skips larger ones. A monorepo with a lockfile per package or
 many megabytes of source therefore gets a longer deadline than its file count
 suggests. It reports `input is large; deadline raised to ...` in its progress
-output. The engine caps any connector's proposal at 30 minutes.
+output. The engine caps any connector's proposal at 30 minutes. Because bytes count, a tree with few entries can reach
+that cap by padding source or lockfiles up to `max_file_size`; when you scan
+an untrusted repository, set `--connector-timeout-seconds` or
+`--job-deadline-seconds` to the time you are willing to spend.
 
 When the deadline does end a walk, the walk stops early enough to leave time for
 the work that follows it (re-export binding and finding emission): five percent
