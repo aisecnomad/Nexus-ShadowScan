@@ -871,19 +871,36 @@ once per process. Configure only one YAML key; supplying both is rejected.
 Legacy YAML `connector_timeout: null` uses the 120-second default; it does not
 disable the deadline. Left unset, the default is raised for a large input
 when the connector can measure it: `code.filesystem` counts up to 180,000
-entries within a one-second probe and scales the deadline above 12,000,
-to at most 1800 seconds. An
+entries within a one-second probe and scales the deadline with the tree's
+entries above 12,000 and with the bytes it will analyse, to at most 1800
+seconds. An
 explicit value, 120 included, is honoured unchanged, so a configuration that
 sets `connector_timeout_seconds: 120` turns that scaling off; a larger tree
 needs an explicit, larger deadline.
 
 Leaving the option out and setting it are not the same. Left out (or given as
 legacy `connector_timeout: null`), the 120 seconds is where a connector starts,
-and a connector may raise its own deadline to fit its input: `code.filesystem`
-counts up to 180,000 entries of the tree it is about to walk and, above 12,000,
-scales its deadline in proportion, to at most 1800 seconds, and reports
-`input is large; deadline raised to ...` in its progress output. The engine caps
-any connector's proposal at 30 minutes. A value you set, from a configuration
+and a connector may raise its own deadline to fit its input. Before it walks a
+tree, `code.filesystem` probes it without opening a file or following a link
+(for at most 180,000 entries or one second) and takes the larger of two
+scales: one default per 12,000 entries, and one default per 12 MB of source
+(Python, JavaScript, TypeScript and the code share of notebooks) plus one per
+240 MB of anything else it reads, such as data files and the supported
+lockfiles (`uv.lock`, `poetry.lock`, `pnpm-lock.yaml`, `Cargo.lock`). Only
+files at or under `max_file_size` (`max_notebook_size` for a notebook) count,
+because the reader skips larger ones. A monorepo with a lockfile per package or
+many megabytes of source therefore gets a longer deadline than its file count
+suggests. It reports `input is large; deadline raised to ...` in its progress
+output. The engine caps any connector's proposal at 30 minutes.
+
+When the deadline does end a walk, the walk stops early enough to leave time for
+the work that follows it (re-export binding and finding emission): five percent
+of its window, or 5 ms per file it scanned, whichever is larger, capped at a
+quarter of the window. The report then says how far it got (`connector deadline
+reached after N of M files`), and the findings are a subset. If emission itself
+runs into the deadline, the connector records `connector deadline reached during
+finding emission; N of M project findings not emitted` rather than dropping
+them silently. Either way the scan exits 3. A value you set, from a configuration
 file, `--connector-timeout-seconds` or `ScanConfig`, is used as it is and never
 raised, and that includes 120: a configuration that spells out
 `connector_timeout_seconds: 120` gives a large repository 120 seconds and
