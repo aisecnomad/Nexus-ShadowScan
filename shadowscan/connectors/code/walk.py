@@ -508,6 +508,11 @@ SCAN_TIMEOUT_CAP_SECONDS = 10.0
 # discards a result that arrives after the deadline.
 DEADLINE_MARGIN_FRACTION = 0.05
 DEADLINE_MARGIN_MIN_SECONDS = 0.25
+# Re-export binding and emission after the walk cost about 2.3 ms per scanned
+# file (llama_index, uncontended): the walk keeps back twice that, capped at a
+# quarter of its window so a huge tree still spends most of the deadline walking.
+POST_WALK_SECONDS_PER_FILE = 0.005
+POST_WALK_RESERVE_FRACTION = 0.25
 # The walk lists every entry before it scans any. Listing may use this share
 # of the time in which a file can still start; the rest scans what it listed.
 ENUMERATION_DEADLINE_SHARE = 0.5
@@ -723,14 +728,19 @@ def scan_timeout_for_size(base: float, size: int) -> float:
     return min(base * (1 + steps), max(base, SCAN_TIMEOUT_CAP_SECONDS))
 
 
-def deadline_margin(remaining: float) -> float:
+def deadline_margin(remaining: float, scanned: int = 0) -> float:
     """Return the safety margin kept before a connector deadline.
 
     Five percent of the budget that remained when the walk started, and at
-    least 250 ms, covers emitting the collected project findings and the
-    engine's own sanitization before it compares completion to the deadline.
+    least 250 ms, covers the engine's own sanitization before it compares
+    completion to the deadline. Re-export binding and finding emission grow
+    with the ``scanned`` files, so the margin also reserves
+    ``POST_WALK_SECONDS_PER_FILE`` for each, up to ``POST_WALK_RESERVE_FRACTION``
+    of ``remaining``: a result that arrives after the deadline loses the walk's
+    accounting ("after N of M files") to the engine's cut.
     """
-    return max(DEADLINE_MARGIN_MIN_SECONDS, DEADLINE_MARGIN_FRACTION * remaining)
+    reserve = min(POST_WALK_SECONDS_PER_FILE * scanned, POST_WALK_RESERVE_FRACTION * remaining)
+    return max(DEADLINE_MARGIN_MIN_SECONDS, DEADLINE_MARGIN_FRACTION * remaining, reserve)
 
 
 def enumeration_deadline(now: float, deadline: float, margin: float, scan_timeout: float) -> float:
@@ -1694,8 +1704,8 @@ class TreeWalker:
         attribution.
         """
         deadline = self.ctx.deadline
-        margin = deadline_margin(deadline - time.monotonic()) if deadline is not None else 0.0
-        scan.margin = margin
+        window = deadline - time.monotonic() if deadline is not None else 0.0
+        margin = scan.margin = deadline_margin(window) if deadline is not None else 0.0
         entries: list[tuple[str, Path, str, int]] = []
         try:
             self._unread_settings = []
@@ -1723,6 +1733,7 @@ class TreeWalker:
             reserve = self._reserved_budget(rel, path, size, budget)
             if deadline is not None:
                 remaining = deadline - time.monotonic()
+                margin = deadline_margin(window, examined)
                 # The wall cap never runs into the connector deadline's margin.
                 wall_cap = max(budget, min(wall_cap, remaining - margin))
                 if remaining < reserve + margin:

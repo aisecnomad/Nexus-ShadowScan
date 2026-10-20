@@ -12,6 +12,7 @@ finding is contained to its own diagnostic.
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Callable, Iterator
 from collections.abc import Set as AbstractSet
 from dataclasses import replace
@@ -184,7 +185,20 @@ class ProjectFindings:
         # MCP configs, agent manifests, exported workflows and IaC produce their
         # own findings; a project finding built only from them is a duplicate.
         covered_files = scan.covered_files()
-        for proj in scan.projects.values():
+        projects = list(scan.projects.values())
+        deadline = self.ctx.deadline
+        for position, proj in enumerate(projects):
+            # Building a project finding re-reads its whole evidence set; a
+            # monorepo's hundreds of packages took 8 s in one stretch. Stop
+            # while the engine can still take this connector's accounting,
+            # as re-export binding does, and name what was left out.
+            if deadline is not None and time.monotonic() >= deadline - scan.margin / 2:
+                self.ctx.error(
+                    f"code.filesystem: {self._root_prefix(scan.label)}connector deadline reached during "
+                    f"finding emission; {len(projects) - position} of {len(projects)} project findings "
+                    "not emitted; results incomplete",
+                )
+                break
             with isolated(self.walker, proj.root, "project analysis"):
                 for finding in self._emit_project(scan.label, scan.root, proj, covered_files):
                     if finding.resource_type == "project":

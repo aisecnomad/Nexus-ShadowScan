@@ -617,6 +617,21 @@ class FilesystemConnector(BaseConnector):
     #: monorepos (AutoGPT, litellm, crewAI); at 100 a second those checkouts ran
     #: out of time mid-walk and exited 3. A deadline is a ceiling, not a cost.
     _ENTRIES_PER_DEFAULT_BUDGET = 6_000
+    #: Bytes the default deadline covers, by what reading them costs. Entries
+    #: alone misjudged trees whose files are large: per-entry rates on the
+    #: corpus spanned 16 to 270 a second, while source analysis cost 1.9-6.6 s
+    #: per MB on a contended runner and a supported lockfile, parsed and swept
+    #: for credentials although ``.lock`` is otherwise never read, about 0.17 s
+    #: of CPU per MB. llama_index (13,499 entries, 480 MB of uv.lock) needed
+    #: 232-290 s of a 270 s deadline. Source at 10 s per MB and anything else
+    #: read at 0.5 s per MB keep about the entry budget's headroom over the
+    #: slowest rate measured. Only files at or under the size the reader
+    #: accepts count, so planting large files lengthens the deadline no further
+    #: than the engine's ceiling, which a tree of empty entries already reaches.
+    _SOURCE_BYTES_PER_DEFAULT_BUDGET = 12_000_000
+    _READ_BYTES_PER_DEFAULT_BUDGET = 240_000_000
+    #: Suffixes whose bytes cost source analysis (``_SOURCE_BYTES_PER_DEFAULT_BUDGET``).
+    _SOURCE_SUFFIXES = (".py", ".pyi", ".ipynb", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
     #: Entries (directories and files) a probe counts before it stops, and the
     #: seconds it may spend counting them. The limit is the count at which the
     #: proposal reaches the engine's ceiling (MAX_AUTO_TIMEOUT at the 120 s
@@ -1124,35 +1139,60 @@ class FilesystemConnector(BaseConnector):
 
         A fixed deadline silently truncated large repositories: the walk hit
         it mid-tree and the connector reported nothing, which reads as a clean
-        result everywhere except the exit code. The probe counts entries up to
-        ``_PROBE_LIMIT`` and stops; reaching the limit means "at least this
-        many", so the proposal saturates at ``default * _PROBE_LIMIT /
-        _ENTRIES_PER_DEFAULT_BUDGET`` (1800 s at the 120 s default), the
-        engine's own ceiling. A larger tree needs an explicit deadline; one
-        that overruns this one is still incomplete.
+        result everywhere except the exit code. The proposal is the larger of
+        two shares of the default: entries over ``_ENTRIES_PER_DEFAULT_BUDGET``,
+        and the bytes the reader will analyse, source over
+        ``_SOURCE_BYTES_PER_DEFAULT_BUDGET`` plus everything else it reads
+        over ``_READ_BYTES_PER_DEFAULT_BUDGET``. The byte term can only
+        lengthen the deadline, never shorten what the entries ask for. The
+        probe counts entries up to ``_PROBE_LIMIT`` and stops; reaching the
+        limit means "at least this many", so the proposal saturates at
+        ``default * _PROBE_LIMIT / _ENTRIES_PER_DEFAULT_BUDGET`` (1800 s at the
+        120 s default), the engine's own ceiling. A larger tree needs an
+        explicit deadline; one that overruns this one is still incomplete.
         """
         try:
             roots = [Path(p) for p in cls.scanned_local_paths(config)]
             extra = _validated_names(config.get("exclude"), "exclude")
             default_excludes = config_boolean(config.get("default_excludes", True), "default_excludes")
+            size_limit = _positive_limit(
+                config.get("max_file_size", 1_000_000), "code.filesystem: max_file_size"
+            )
+            notebook_limit = config.get("max_notebook_size", DEFAULT_MAX_NOTEBOOK_SIZE)
         except Exception:  # noqa: BLE001 - an unusable path or option is the scan's problem, not the estimate's
             return None
-        if not roots:
+        if not roots or type(notebook_limit) is not int or notebook_limit < 1:
             return None
         # The directory names the walk prunes. An exclude glob only narrows the
         # walk further, so leaving it out can lengthen the estimate, never cut it.
         pruned = set(DEFAULT_EXCLUDES) if default_excludes else set(VCS_METADATA_EXCLUDES)
         pruned |= {e for e in extra if "*" not in e and "/" not in e}
-        entries = cls._probe_entry_count(roots, frozenset(pruned))
-        if entries < cls._ENTRIES_PER_DEFAULT_BUDGET:
+        probe = cls._probe_tree(roots, frozenset(pruned), size_limit, max(size_limit, notebook_limit))
+        scale = max(
+            probe.entries / cls._ENTRIES_PER_DEFAULT_BUDGET,
+            probe.source_bytes / cls._SOURCE_BYTES_PER_DEFAULT_BUDGET
+            + probe.read_bytes / cls._READ_BYTES_PER_DEFAULT_BUDGET,
+        )
+        if scale < 1:
             return None
-        return default * (entries / cls._ENTRIES_PER_DEFAULT_BUDGET)
+        return default * scale
 
     @classmethod
     def _probe_entry_count(
         cls, roots: list[Path], pruned: AbstractSet[str] = frozenset(DEFAULT_EXCLUDES)
     ) -> int:
-        """Count directories and files under *roots*, stopping at ``_PROBE_LIMIT`` or ``_PROBE_SECONDS``.
+        """Count directories and files under *roots*, stopping at ``_PROBE_LIMIT`` or ``_PROBE_SECONDS``."""
+        return cls._probe_tree(roots, pruned).entries
+
+    @classmethod
+    def _probe_tree(
+        cls,
+        roots: list[Path],
+        pruned: AbstractSet[str] = frozenset(DEFAULT_EXCLUDES),
+        size_limit: int = 1_000_000,
+        notebook_limit: int = DEFAULT_MAX_NOTEBOOK_SIZE,
+    ) -> _TreeProbe:
+        """Count entries and the bytes the reader would analyse under *roots*, within the probe's bounds.
 
         Directory names the walk prunes (``pruned``) are pruned here too, so
         the estimate reflects the tree that will actually be read. Every
@@ -1160,19 +1200,86 @@ class FilesystemConnector(BaseConnector):
         instead of being walked in full. A probe that runs out of time reports
         the limit too: a tree or filesystem that slow to list needs the
         largest deadline the estimate can propose.
+
+        Nothing is opened and no link is followed: entries are classified and
+        sized with ``follow_symlinks=False``, so a symbolic link counts as one
+        entry with no bytes and a linked directory is never descended. Bytes
+        count only for a regular file the reader accepts: at or under
+        ``size_limit`` (``notebook_limit`` for a notebook) and not skipped by
+        name (``_never_read_by_name``, which keeps the supported lockfiles).
         """
-        seen = 0
+        probe = _TreeProbe()
         stop = time.monotonic() + cls._PROBE_SECONDS
         for root in roots:
             if not root.is_dir():
-                seen += 1
+                probe.entries += 1
                 continue
-            for _dirpath, dirnames, filenames in os.walk(root, onerror=lambda _exc: None):
-                dirnames[:] = [d for d in dirnames if d not in pruned]
-                seen += 1 + len(filenames)
-                if seen >= cls._PROBE_LIMIT or time.monotonic() >= stop:
-                    return cls._PROBE_LIMIT
-        return seen
+            pending = [root]
+            while pending:
+                probe.entries += 1
+                cls._probe_directory(probe, pending, pruned, size_limit, notebook_limit)
+                if probe.entries >= cls._PROBE_LIMIT or time.monotonic() >= stop:
+                    probe.entries = cls._PROBE_LIMIT
+                    return probe
+        return probe
+
+    @classmethod
+    def _probe_directory(
+        cls,
+        probe: _TreeProbe,
+        pending: list[Path],
+        pruned: AbstractSet[str],
+        size_limit: int,
+        notebook_limit: int,
+    ) -> None:
+        """List the next pending directory into *probe*, queueing its unpruned subdirectories."""
+        try:
+            with os.scandir(pending.pop()) as listing:
+                for entry in listing:
+                    if entry.is_dir(follow_symlinks=False):
+                        if entry.name not in pruned:
+                            pending.append(Path(entry.path))
+                        continue
+                    probe.entries += 1
+                    if entry.is_file(follow_symlinks=False) and not _never_read_by_name(entry.name):
+                        cls._probe_file(probe, entry, size_limit, notebook_limit)
+        except OSError:
+            pass  # an unlistable directory is the walk's to report
+
+    @classmethod
+    def _probe_file(
+        cls, probe: _TreeProbe, entry: os.DirEntry[str], size_limit: int, notebook_limit: int
+    ) -> None:
+        """Add a regular file's size to *probe* when the reader would accept it.
+
+        A notebook over ``size_limit`` is accepted for its code cells; the
+        bytes past that limit are mostly saved outputs, read but not analysed
+        as source, so they count at the cheaper rate.
+        """
+        try:
+            size = entry.stat(follow_symlinks=False).st_size
+        except OSError:
+            return  # vanished since listing: the walk reports it
+        lower = entry.name.lower()
+        if lower.endswith(".ipynb"):
+            if size <= notebook_limit:
+                probe.source_bytes += min(size, size_limit)
+                probe.read_bytes += max(0, size - size_limit)
+        elif size > size_limit:
+            return
+        elif lower.endswith(cls._SOURCE_SUFFIXES):
+            probe.source_bytes += size
+        else:
+            probe.read_bytes += size
+
+
+@dataclass
+class _TreeProbe:
+    """What ``FilesystemConnector._probe_tree`` saw: entries, and the bytes the reader would analyse."""
+
+    entries: int = 0
+    source_bytes: int = 0
+    read_bytes: int = 0
 
 
 # A file over max_file_size that the scanner would read leaves coverage
