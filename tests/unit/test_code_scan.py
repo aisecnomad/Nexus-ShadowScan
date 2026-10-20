@@ -670,6 +670,30 @@ def test_notebook_magic_text_in_a_multiline_string_preserves_import_binding(
     assert any(finding.kind == Kind.AGENT for finding in findings)
 
 
+@pytest.mark.parametrize(
+    ("opening", "closing"),
+    [('!echo """', '!echo """'), ("%env X='''", "%env Y='''"), ("!echo '", "!echo '")],
+)
+def test_quotes_in_notebook_magic_lines_do_not_open_python_strings(tmp_path, run_connector, opening, closing):
+    # Shell and magic text is not Python: its quotes must not hide the closing
+    # magic line inside a string and leave the cell unparseable.
+    cell = opening + "\n" + _LANGCHAIN_AGENT + closing + "\n"
+    (tmp_path / "agent.ipynb").write_text(_notebook(cell))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+    assert any(finding.kind == Kind.AGENT for finding in findings)
+
+
+def test_notebook_magic_masking_after_the_relex_limit_masks_every_magic_line():
+    from shadowscan.connectors.code.source_text import _MAGIC_RELEX_LIMIT, _without_ipython_lines
+
+    text = '!echo "\n' * (_MAGIC_RELEX_LIMIT + 4) + "import os\n"
+    normalized = _without_ipython_lines(text)
+    assert len(normalized) == len(text)
+    assert normalized.splitlines()[:-1] == ["0" + " " * 6] * (_MAGIC_RELEX_LIMIT + 4)
+    assert normalized.endswith("import os\n")
+
+
 def test_notebook_magic_string_protection_isolated_to_each_cell():
     from shadowscan.connectors.code.source_text import _without_ipython_lines
 

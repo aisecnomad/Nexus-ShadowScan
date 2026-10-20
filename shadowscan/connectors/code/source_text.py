@@ -261,24 +261,44 @@ def _without_ipython_lines(text: str, cells: _CellSpans = ()) -> str:
     return "".join(pieces)
 
 
+# Characters whose removal from a masked line can change how the rest of a cell lexes.
+_LEXICAL_CHARACTERS = frozenset("\"'#\\")
+# Re-lexes per cell before the remaining magic lines are masked unconditionally.
+_MAGIC_RELEX_LIMIT = 32
+
+
 def _without_cell_ipython_lines(cell: str) -> str:
-    """Normalize one cell without treating command-looking string content as code."""
+    """Normalize one cell without treating command-looking string content as code.
+
+    Lines are masked top to bottom against the cell as already masked, so a quote
+    in a shell or magic line (``!echo '''``) cannot open a string that hides a
+    later magic line. Past ``_MAGIC_RELEX_LIMIT`` re-lexes the remaining magic
+    lines are masked unconditionally, as they were before string awareness.
+    """
     single_line = len(cell.splitlines()) == 1
-    if not (_IPYTHON_LINE.search(cell) or single_line and _IPYTHON_AUTOMAGIC.match(cell)):
+    pattern = _IPYTHON_AUTOMAGIC if single_line and _IPYTHON_AUTOMAGIC.match(cell) else _IPYTHON_LINE
+    if not pattern.search(cell):
         return cell
-    spans, _ = noncode_ranges(cell, "python")
+    source = cell
+    spans, _ = noncode_ranges(source, "python")
     starts = [start for start, _ in spans]
-
-    def inert(match: re.Match[str]) -> str:
-        position = match.start(2)
-        index = bisect_right(starts, position) - 1
-        if index >= 0 and position < spans[index][1]:
-            return match[0]
-        return match[1] + "0" + " " * (len(match[2]) - 1)
-
-    source = _IPYTHON_LINE.sub(inert, cell)
-    if single_line:
-        source = _IPYTHON_AUTOMAGIC.sub(inert, source)
+    relexes = 0
+    position = 0
+    while (match := pattern.search(source, position)) is not None:
+        position = match.end()
+        index = bisect_right(starts, match.start(2)) - 1
+        if index >= 0 and match.start(2) < spans[index][1]:
+            continue
+        command = match[2]
+        source = source[: match.start(2)] + "0" + " " * (len(command) - 1) + source[match.end(2) :]
+        if _LEXICAL_CHARACTERS.isdisjoint(command):
+            continue
+        relexes += 1
+        if relexes > _MAGIC_RELEX_LIMIT:
+            spans, starts = [], []
+        else:
+            spans, _ = noncode_ranges(source, "python")
+            starts = [start for start, _ in spans]
     return source
 
 
