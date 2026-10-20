@@ -920,7 +920,9 @@ as inert expressions, as IPython rewrites them, so they do not keep the import
 binder from the notebook. Supported package-manager commands without `%`, such
 as `pip install openai` and `uv pip install openai`, are treated as automagic
 only when the entire input cell is a single line. Unknown command forms and
-invalid multiline cells remain unparsed coverage gaps.
+invalid multiline cells remain unparsed coverage gaps. Command-looking text
+inside a Python string is retained unchanged, including closing triple quotes;
+string boundaries are judged separately in each cell.
 Jupyter runs code cells one at a time, so each cell is
 lexed on its own. A cell can be declared another language: by a cell magic that
 runs, renders or writes its body as something else (`%%bash`, `%%sh`,

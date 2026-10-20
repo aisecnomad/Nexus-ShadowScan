@@ -8,6 +8,10 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## Unreleased
 
+- Preserve notebook import binding when a multiline string contains magic-like
+  command text; keep string-span protection isolated to each code cell.
+
+
 Current source adds bounded staged-file hooks, readiness and remediation guidance,
 offline terminal triage, a candidate public API contract, a pinned benchmark
 companion and verified release attachments. Signature loading uses faster native

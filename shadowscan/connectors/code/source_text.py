@@ -14,6 +14,7 @@ from __future__ import annotations
 import ast
 import re
 import tomllib
+from bisect import bisect_right
 from collections.abc import Iterator, Sequence
 from typing import Any
 
@@ -250,20 +251,35 @@ def _without_ipython_lines(text: str, cells: _CellSpans = ()) -> str:
     absent cell spans, ``text`` is one cell.
     """
 
-    def inert(match: re.Match[str]) -> str:
-        return match[1] + "0" + " " * (len(match[2]) - 1)
-
-    source = _IPYTHON_LINE.sub(inert, text)
     pieces: list[str] = []
     previous = 0
-    for start, end in cells or ((0, len(source)),):
-        cell = source[start:end]
-        if len(cell.splitlines()) == 1:
-            cell = _IPYTHON_AUTOMAGIC.sub(inert, cell)
-        pieces.extend((source[previous:start], cell))
+    for start, end in cells or ((0, len(text)),):
+        cell = text[start:end]
+        pieces.extend((text[previous:start], _without_cell_ipython_lines(cell)))
         previous = end
-    pieces.append(source[previous:])
+    pieces.append(text[previous:])
     return "".join(pieces)
+
+
+def _without_cell_ipython_lines(cell: str) -> str:
+    """Normalize one cell without treating command-looking string content as code."""
+    single_line = len(cell.splitlines()) == 1
+    if not (_IPYTHON_LINE.search(cell) or single_line and _IPYTHON_AUTOMAGIC.match(cell)):
+        return cell
+    spans, _ = noncode_ranges(cell, "python")
+    starts = [start for start, _ in spans]
+
+    def inert(match: re.Match[str]) -> str:
+        position = match.start(2)
+        index = bisect_right(starts, position) - 1
+        if index >= 0 and position < spans[index][1]:
+            return match[0]
+        return match[1] + "0" + " " * (len(match[2]) - 1)
+
+    source = _IPYTHON_LINE.sub(inert, cell)
+    if single_line:
+        source = _IPYTHON_AUTOMAGIC.sub(inert, source)
+    return source
 
 
 def _within(offset: int, spans: Sequence[tuple[int, int]]) -> bool:

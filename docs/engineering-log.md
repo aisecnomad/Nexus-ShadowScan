@@ -44,6 +44,10 @@ coverage gaps. Hypothesis's `.hypothesis` example database joins the documented
 default tool-cache exclusions; disabling those exclusions restores its scope.
 Supported IPython package-manager automagic is normalized within a single-line
 notebook cell, while unknown forms and malformed multiline cells remain gaps.
+Review follow-up preserves string and comment spans for explicit magics and
+shell commands as well: command-looking lines inside a multiline string cannot
+remove its closing quotes or discard executable import binding. String spans
+are computed separately per cell, so one unfinished cell cannot mask another.
 
 Generic credential-assignment matching avoids repeated regex work inside long
 failed identifiers while preserving long valid assignments, match spans and

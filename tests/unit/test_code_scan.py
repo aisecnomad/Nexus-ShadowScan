@@ -656,6 +656,33 @@ def test_automagic_rewrite_preserves_cell_offsets_and_other_cell_content():
     ]
 
 
+@pytest.mark.parametrize("line", ["pip install", "%pip install", "!pip install", "%%time"])
+@pytest.mark.parametrize("setup", ["", "%pip install langchain\n"])
+def test_notebook_magic_text_in_a_multiline_string_preserves_import_binding(
+    tmp_path, run_connector, line, setup
+):
+    # A command-looking line can close a Python string. Removing it also
+    # removes the quotes and previously discarded executable import binding.
+    cell = setup + 'notes = """installation instructions\n' + line + '"""\n' + _LANGCHAIN_AGENT
+    (tmp_path / "agent.ipynb").write_text(_notebook(cell))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.warnings and not ctx.stats.errors
+    assert any(finding.kind == Kind.AGENT for finding in findings)
+
+
+def test_notebook_magic_string_protection_isolated_to_each_cell():
+    from shadowscan.connectors.code.source_text import _without_ipython_lines
+
+    first = 'notes = """unfinished string\n'
+    second = "%pip install openai\n"
+    text = first + "\n" + second
+    start = len(first) + 1
+    normalized = _without_ipython_lines(text, ((0, len(first)), (start, len(text))))
+    assert normalized[:start] == text[:start]
+    assert normalized[start:].strip() == "0"
+    assert len(normalized) == len(text)
+
+
 def test_percent_continuation_lines_in_a_notebook_are_python(tmp_path, run_connector):
     # "% name" continuing an expression is the modulo operator, not a magic.
     cell = 'greeting = ("Hello %s"\n            % name)\n' + _LANGCHAIN_AGENT
