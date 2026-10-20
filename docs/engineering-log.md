@@ -45,6 +45,20 @@ Counts and figures quoted in an entry are those of its date.
   benchmark-suite submodule commit. About 90 external links on other hosts
   could not be reached from the sweep environment and remain unverified.
 
+### Forward-compatible coverage-gap reasons in report readers (October 20)
+
+- `validate_coverage_summary` no longer refuses a report whose published
+  coverage gap carries a reason category this version does not know (#264):
+  a newer scanner's category is accepted when it has the exact shape of this
+  version's own categories, a short lowercase slug (`[a-z0-9][a-z0-9-]{0,31}`),
+  so `diff` and `merge` can still compare and republish the report, and a
+  newer consumer of the republished report keeps the category verbatim. Every
+  previously refused forged value (control characters, path-shaped text,
+  non-strings, uppercase, overlong) is still refused, and this version's own
+  records stay strict: `CoverageGap` rejects an unknown reason at creation.
+  Regression tests cover acceptance, the preserved slug, the still-strict
+  write path and the still-refused forgeries.
+
 ### Local scan usability, companion benchmarks and release evidence (October 20)
 
 Added `shadowscan code --quick` for bounded scans of exact staged Git blobs,
@@ -100,7 +114,6 @@ dependency locks, permission references and failure guidance. The sample
 Dockerfile uses a verified multi-platform image digest; the benchmark npm
 installer already uses its reviewed lock. The runtime lock carries the same
 aiohttp 3.14.5 advisory fix as the existing dependency/bug-fix PR.
-
 
 ### Correlation disclosure privacy, manifest-defect inventory retention and MCP URL precision (October 20)
 

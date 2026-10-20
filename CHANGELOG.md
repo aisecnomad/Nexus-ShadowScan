@@ -29,6 +29,9 @@ A diff-scoped scan under Git older than 2.45 names that requirement instead of
 asking whether the ref is valid, the example Falco rules emit the namespace and
 pod the eBPF reader needs, and the release and migration notes cover the
 attribution, correlation-group and dependency-floor changes.
+Report readers
+accept a newer scanner's slug-shaped coverage-gap reason instead of refusing
+the report; forged values stay refused and the write path stays strict.
 
 ## 0.1.2 — 2026-10-08
 
