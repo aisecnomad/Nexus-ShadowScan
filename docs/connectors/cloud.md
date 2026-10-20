@@ -302,6 +302,13 @@ are synthetic, modeled on the installed SDK models; they were not validated
 against a live account.
 
 ## `cloud.gcp`
+
+List response-shape defects and invalid or repeated pagination tokens record
+`unparsed-input`; an exhausted page budget records `analysis-limit`. Empty
+responses, provider error envelopes and reported unavailable locations record
+`upstream-error`. These categories are independent of the URL and project name;
+all still leave the scan incomplete.
+
 Service Usage (AI APIs enabled), Vertex AI reasoning engines (Agent Engine)
 and endpoints per location, Dialogflow CX agents, Discovery Engine /
 Agentspace engines, Cloud Run services, Cloud Functions, project IAM bindings,

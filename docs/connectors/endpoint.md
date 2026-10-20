@@ -195,9 +195,13 @@ Elsewhere a store's directory counts only with the store's own layout below
 it: Ollama's `manifests` or `blobs`, a Hugging Face `models--<org>--<name>`
 directory, or a model file (`.gguf`, `.safetensors`, ...). An application's
 `jan/models` directory, or a user named jan with a `models` directory, is no
-model store. A name that only
-contains one of them is not enough. A product name that is also a common
-word, a given name or another program's name — Make (also GNU make), Goose
+model store. Home-directory recognition requires an absolute Unix or Windows
+path or the exact `~`, `$HOME`, `${HOME}` or `%USERPROFILE%` prefix; it does
+not expand variables or resolve accounts. Relative `home/u`, `root`, drive-relative
+`C:Users/u`, named-tilde text and traversal components do not establish that
+home-directory shortcut. Traversal also withholds layout-based model-store
+attribution. A name that only contains one of them is not enough.
+A product name that is also a common word, a given name or another program's name — Make (also GNU make), Goose
 (Homebrew's `goose` is the pressly/goose database migration tool), Jan,
 `lms`, Continue, Replicate, Cohere and Rivet — counts only in its own
 product's context: an application bundle or executable that product installs,
@@ -205,7 +209,10 @@ or a directory it keeps, as the endpoint catalog lists them (`Jan.app`,
 `Jan.exe`, `Goose.app`, `~/.config/goose`, LM Studio's `LM Studio.app`,
 `~/.lmstudio` and `~/.cache/lm-studio` for `lms`, `~/.continue`), anywhere on
 the path (`/Applications/Goose.app/Contents/MacOS/goose`, `~/.lmstudio/bin/lms`,
-the older `~/.cache/lm-studio/bin/lms`). An
+the older `~/.cache/lm-studio/bin/lms`). Windows install directories also supply
+context: `AppData/Local/Programs/Jan`, `AppData/Local/Programs/LM Studio` and
+`Program Files/LM Studio`; the last two retain a bundled `lms.exe` inventory
+row without treating an unrelated `lms.exe` as LM Studio. An
 `.app` or `.exe` suffix or a dot-directory alone is no context: Make
 (Integromat), Replicate and Cohere have no desktop application, so `make.exe`
 (GNU make under Chocolatey, MSYS2 or GnuWin32), `Make.app`, `~/.make`,
@@ -228,7 +235,7 @@ ports:
 | Falco | JSON alerts (`json_output: true`) | `output_fields`: `proc.name`, `fd.sip.name`/`fd.rip.name`/`fd.sip`/`fd.rip`, `fd.sport`/`fd.rport`, `k8s.ns.name`, `k8s.pod.name` |
 | Tracee | JSON events | `processName`, `kubernetes.podName`/`podNamespace`, and every sockaddr map in `args` (`sin_addr`/`sin6_addr`, `sin_port`/`sin6_port`), each scored |
 | Hubble | `hubble observe -o json` flows, wrapped under `flow` or bare | every `destination_names` entry (a CDN-shared address resolves from several names, and the AI host need not come first), or `IP.destination` when there are none, the `l4` TCP/UDP `destination_port`, and the client workload from `source.namespace`/`pod_name` |
-| Flat | Records exported by other collectors | `process_name`/`binary` or a `process` object, every one of `destination`/`remote_addr`/`hostname`/`server.address`/`url` and of `port`/`destination_port`, each scored, `namespace`, `pod`/`pod_name`; a record that also carries a key a native reader claims (a string `eventName` with `processName`, or `rule`/`priority` with an `output_fields` map) and has flat destination or port fields is read both ways, and every destination and port either reading finds is scored, with the native fields filling the gaps in the flat ones — a Falco alert's own `hostname` and a bare Hubble flow's `destination` endpoint are not flat fields and are never read as destinations |
+| Flat | Records exported by other collectors | `process_name`/`binary` or a `process` object, every one of `destination`/`remote_addr`/`hostname`/`server.address`/`url` and of `port`/`destination_port`, each scored, `namespace`, `pod`/`pod_name`; a record that also carries a key a native reader claims (a string `eventName` with `processName`, or `rule`/`priority` with an `output_fields` map) and has flat destination or port fields is read both ways, and every destination and port either reading finds is scored, with the native fields filling the gaps in the flat ones — every native event's top-level `hostname` is its sensor or log shipper, never a destination; a bare Hubble flow's `destination` endpoint map is not a flat field, while a wrapper's separately enriched top-level `destination` is read |
 
 Kernel-level events usually carry numeric destination addresses, so Tetragon
 and Tracee connects contribute local model ports and process names; AI host
@@ -240,7 +247,12 @@ every Google API the bundled signatures name: `aiplatform`,
 `contactcenteraiplatform`, `notebooks` and `agentregistry` on `googleapis.com`,
 with regional prefixes (`us-central1-aiplatform`, `eu-documentai`) and as the
 mutual-TLS endpoints Google client libraries use with a client certificate
-(`aiplatform.mtls.googleapis.com`). Other `googleapis.com` names, such as
+(`aiplatform.mtls.googleapis.com`), plus the service-specific Private Service
+Connect form (`aiplatform-prodpsc.p.googleapis.com`). The known service and
+endpoint name must together fit a DNS label. This matches an observed service
+name; it does not establish private routing or infer an AI service from a
+shared address. See Google's [endpoint DNS format](https://docs.cloud.google.com/vpc/docs/configure-private-service-connect-apis#use_an_endpoint).
+Other `googleapis.com` names, such as
 `fonts` or `storage`, which Google front-end addresses also resolve from, are
 not. A record that matches none of these
 shapes is not analyzed: the connector records one warning and marks the scan
