@@ -266,16 +266,18 @@ names across servers. The `tool-poisoning` tag keeps its description rules: an
 data, secrets, credentials or prompts, an invisible or bidirectional control
 character (zero-width and directional marks, embeddings, overrides and isolates,
 the word joiner and invisible operators U+2060-U+2064, a byte-order mark or Unicode
-tag characters), a URL, a "use/call/invoke the ..." tool reference, or a model
+tag characters), a "use/call/invoke the ..." tool reference, or a model
 provider host name, anywhere in the first 64 KiB, the window the instruction
-audit reads. Descriptions are
+audit reads. An ordinary reference URL alone does not raise the tag: it is
+retained as separately explained zero-weight `instruction:external-url`
+evidence, while a model-provider API host still raises it. Descriptions are
 also screened with the code surface's bounded instruction-content rules —
 content concealed in raw HTML comments, fetch-and-execute or decode-and-execute
 phrasing — and for terminal control sequences that can conceal or overwrite
 what an operator reads; each hit raises `tool-poisoning` with zero-weight
 explanatory evidence, and content-rule hits add their own tags
-(`hidden-instructions`, `remote-code-fetch`, `invisible-text`). These rules also
-match documentation links, quoted examples and prohibitions, so the tag
+(`hidden-instructions`, `remote-code-fetch`, `invisible-text`). These rules still
+match quoted examples and prohibitions, so the tag
 describes a review candidate, not verified intent or execution. A tool name
 duplicating another installed server's tool carries the `tool-name-shadowing`
 tag, which maps to threat references and a default risk weight of 10.

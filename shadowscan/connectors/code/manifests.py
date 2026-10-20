@@ -25,7 +25,11 @@ from shadowscan.connectors.code.container_context import kubernetes_images
 from shadowscan.connectors.code.lockfiles import LOCKFILE_NAMES, LockfileError, LockInventory, parse_lockfile
 from shadowscan.signatures.matcher import _run_regex, pattern_timeout
 from shadowscan.utils.safe_json import strict_json_loads
-from shadowscan.utils.safe_yaml import YAMLResourceLimitError, strict_bounded_safe_load
+from shadowscan.utils.safe_yaml import (
+    YAMLIntegrityError,
+    YAMLResourceLimitError,
+    strict_bounded_safe_load,
+)
 
 # Regex execution here runs outside the signature matcher. A per-pattern
 # ceiling well above the matcher's 100 ms keeps ordinary large manifests from
@@ -976,10 +980,22 @@ def _yaml_line_matches(pattern: re.Pattern[str], text: str, deadline: float) -> 
 
 
 def parse_compose_or_k8s(text: str) -> ManifestResult:
-    """docker-compose, Kubernetes manifests, Helm values, CI configs: images + env keys."""
+    """docker-compose, Kubernetes manifests, Helm values, CI configs: images + env keys.
+
+    A YAML integrity failure (for example one duplicated mapping key, which a
+    deployer may still accept last-wins) withholds the structural Kubernetes
+    workload attribution and is reported as a parse defect, but the generic
+    line-oriented inventory below still runs: a one-line defect must not hide
+    an otherwise-inventoried image from the artifact inventory. Resource-limit
+    failures still fail the whole file; their input earned no bounded read.
+    """
     res = ManifestResult()
     lines = _LineIndex(text)
-    workload_images = kubernetes_images(text)
+    try:
+        workload_images = kubernetes_images(text)
+    except YAMLIntegrityError as exc:
+        workload_images = set()
+        res.errors.append(f"manifest parsing failed ({type(exc).__name__})")
     deadline = monotonic() + _pattern_timeout()
     for m in _yaml_line_matches(_YAML_IMAGE, text, deadline):
         value, line = m.group(1), lines.at(m.start())

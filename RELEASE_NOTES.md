@@ -155,6 +155,16 @@ and the
 
 ### What changes in scan results
 
+- Large correlation groups disclose tokens and counts only within their own
+  verified scope partition. Report filtering recomputes the counts from retained
+  findings and removes a token when fewer than two members remain.
+- A duplicate-key YAML defect still reports a parse failure and withholds
+  structural Kubernetes attribution, while preserving the generic image and
+  environment inventory. Resource-limit failures still fail the whole file.
+- An ordinary documentation URL alone no longer marks an MCP tool description
+  as `tool-poisoning`; it stays as zero-weight contextual evidence. Other
+  instruction indicators and model-provider API hosts retain their detection.
+
 - New commands: `shadowscan endpoint` scans a workstation profile's AI client
   configuration; `shadowscan merge` combines JSON reports from several machines
   into one fleet report; `shadowscan mcp-registry snapshot` writes a listing to pin.
