@@ -66,15 +66,16 @@ Counts and figures quoted in an entry are those of its date.
   The packs ship inside the installed package, which the trust model trusts,
   and `python -m shadowscan.signatures.validate` still loads them with the
   bounded pure-Python loader; custom packs always use it.
-- `shadowscan code --preflight` lists the static coverage gaps a full scan
-  would record (files over the size limit, links, non-regular entries, walk
-  limits) through the connector's own walk and accounting, reading no other
-  content: the ShadowScan checkout in 2.4 seconds instead of 96. It exits 0
-  when it found none and 3 when a full scan would be incomplete. It reports no
-  finding, always carries a `subset-scan` marker, and refuses `--output`,
-  `--format` and `--incremental`, so it cannot be kept as a scan result. Tests
-  check that its reasons equal the full scan's on trees whose only gaps are
-  static.
+- `shadowscan code --preflight` (main's readiness check, merged with this
+  branch's static-gap listing) now also lists, for an ordinary root, the static
+  coverage gaps a full scan would record (files over the size limit, links,
+  non-regular entries, walk limits) through the connector's own walk and
+  accounting, reading no other content: the ShadowScan checkout in 2.4 seconds
+  instead of 96. They appear under `roots[].static_gaps` of the
+  `shadowscan.code-preflight/v1` document; it exits 3 when a root is blocked or
+  a static gap would leave the full scan incomplete, and 0 otherwise. It reports
+  no finding (`scan_performed: false`). Tests check that its reasons equal the
+  full scan's on trees whose only gaps are static.
 - `shadowscan code --max-file-size BYTES` sets the filesystem connector's
   `max_file_size` without a configuration file.
 - The exit-3 explanation on stderr is followed by one remediation line per
@@ -82,6 +83,128 @@ Counts and figures quoted in an entry are those of its date.
   [incomplete scans guide](getting-started/incomplete-scans.md). Like the
   summary line, the remediation names options and configuration keys only,
   never a path or value.
+
+### DNS snapshot proposal and offline boundary regression (October 20)
+
+Recorded the remaining #210 enhancement as a concrete proposal with a separate
+explicit-opt-in collector, strict versioned snapshot and deterministic local
+replay. The acceptance plan specifies TTL and exact-vantage checks, ambiguous
+and conflicting evidence, bounded collection/replay, cancellation and no
+synthetic client-contact or agent claims. Resolver transport/dependency and
+artifact interface remain review decisions; no live collector, resolver option
+or egress was added. The network guide links the proposal. An explicit test
+guards resolver calls and packet sends during ordinary offline network scans;
+the existing hermetic DNS fixture alone would have hidden a resolver call.
+The proposal stays open; these tests do not claim live DNS acceptance.
+
+### Forward-compatible coverage-gap reasons in report readers (October 20)
+
+- `validate_coverage_summary` no longer refuses a report whose published
+  coverage gap carries a reason category this version does not know (#264):
+  a newer scanner's category is accepted when it has the exact shape of this
+  version's own categories, a short lowercase slug (`[a-z0-9][a-z0-9-]{0,31}`),
+  so `diff` and `merge` can still compare and republish the report, and a
+  newer consumer of the republished report keeps the category verbatim. Every
+  previously refused forged value (control characters, path-shaped text,
+  non-strings, uppercase, overlong) is still refused, and this version's own
+  records stay strict: `CoverageGap` rejects an unknown reason at creation.
+  Regression tests cover acceptance, the preserved slug, the still-strict
+  write path and the still-refused forgeries.
+### Local scan usability, companion benchmarks and release evidence (October 20)
+
+Added `shadowscan code --quick` for bounded scans of exact staged Git blobs,
+without working-tree substitutions, hooks, filters or network access. The
+reported scope cannot establish repository-wide absence or resolve baseline
+findings. Links, conflicts, submodules and unread or over-budget staged content
+fail closed. Temporary or alternate Git indexes are refused before any Git
+read; the hook requires `git add` followed by plain `git commit`. The incremental
+cache does not reuse working-tree results for staged content. `--preflight` reports readiness in its own schema and explicitly
+states that no scan ran; an explicitly supplied empty signature index is now
+honored rather than replaced by a full signature load.
+
+Incomplete exits suggest category-specific remediation without echoing source
+content. The existing per-root coverage budget and parser/redaction bounds are
+unchanged. A normal small application completes; deliberately adversarial
+redaction/parser fixtures still make the unrestricted scanner checkout
+incomplete. The documented self-scan configuration declares those exclusions.
+The requested 500 ms cold-scan target remains unmet; measured results and the
+scope limitations are documented in the local pre-commit guide.
+Optional native signature-pack event parsing reduces a seven-process quick-scan
+median from 835 ms to 616 ms on the same local fixture. Python composition and
+construction retain all resource and duplicate-key checks, with the original
+parser as fallback. Six additional offline application/library examples
+complete under the unchanged defaults; they do not establish field reliability.
+
+Added offline terminal report browsing with literal, sanitized display, bounded
+input and unchanged incomplete status across filtering. The proposed 1.0 public
+Python facade and CLI/report contracts have behavioral regressions; the package
+remains alpha pending independent review and acceptance gates.
+
+The README is below 300 lines and the changelog summarizes releases. Detailed
+examples, detection matrices, benchmark disclosures and prior change entries
+remain on the documentation site with their consistency checks. The existing
+STRIDE threat model now includes a trust-boundary diagram; the dated September
+hardening log is published as historical, AI-assisted evidence.
+
+Benchmark corpora, harnesses, recorded results and their tests move to a public
+companion pinned by a Git submodule. Original bytes, Git blobs, modes and source
+revision are retained in a migration manifest. Core evaluation stays local;
+a required CI job validates and tests the exact companion pin. All 28 existing
+harness function-complexity ceilings are retained in a separate parent ratchet,
+with no increases. The documented self-scan excludes that separately tested
+companion, so it also completes in an ordinary uninitialized checkout; the
+local benchmark guide remains in scope. Historical results retain their original source/tool
+provenance and are not new runs.
+
+The release workflow can attach original Sigstore provenance/SBOM bundles and
+checksummed assets to an existing maintainer-created release after protected
+production publication. It verifies source, workflow, run, tag and asset digests,
+refuses mismatched existing assets and never creates a release or tag. A
+read-only weekly connector inventory tracks actual registry declarations,
+dependency locks, permission references and failure guidance. The sample
+Dockerfile uses a verified multi-platform image digest; the benchmark npm
+installer already uses its reviewed lock. The runtime lock carries the same
+aiohttp 3.14.5 advisory fix as the existing dependency/bug-fix PR.
+
+### Correlation disclosure privacy, manifest-defect inventory retention and MCP URL precision (October 20)
+
+Fixes for #268, #267 and #214, each found by an earlier coding-agent review
+and deliberately deferred from the integrations that recorded them.
+
+- Large-exact-group truncation disclosures no longer carry the unsalted
+  `sha256([kind, value])` token or a member count that spans scope partitions
+  (#268). The `identifier_group_id` and `group_size` a member discloses are
+  now those of its own exact-scope partition and equal its `related_groups`
+  token, so per-tenant report slices cannot be joined on an identifier-equality
+  assertion the link policy refuses across conflicting or unverified scopes; a
+  member outside an exact partition keeps the omission disclosure alone.
+- Report pruning recomputes `related_groups` member counts and
+  `related_truncation` group sizes over retained findings and drops a
+  membership or token that fewer than two retained findings back (#268), the
+  rule `related`/`related_details`/`related_candidates` already followed: a
+  report must not link to, or count, findings it omits.
+- `PythonDispatches` memoizes dispatch verdicts per (module, symbol) instead
+  of re-walking a helper module's functions for every consumer (#268). A newly
+  observed local root or a colliding module copy invalidates the affected
+  cache entries, so import shadowing still vetoes a previously proven verdict;
+  budget errors are never cached and still raise.
+  Follow-up review bounds verdict caching to functions in the bounded AST
+  inventory: arbitrary missing import names cannot grow it, and a lookup before
+  a helper's source arrives cannot cache a false verdict against that helper.
+- A YAML integrity defect (for example one duplicated mapping key, which a
+  deployer may still accept last-wins) no longer erases a compose/Kubernetes
+  file's generic image inventory (#267). The structural `kubernetes_workload`
+  attribution stays withheld and the parse defect is still reported, so the
+  scan's incompleteness accounting is unchanged; resource-limit failures still
+  fail the whole file.
+- An ordinary reference URL alone no longer raises the MCP `tool-poisoning`
+  tag (#214). The URL is retained as separately explained zero-weight
+  `instruction:external-url` evidence; a model-provider API host, instruction
+  wording, tool references, hidden characters, content rules and audit
+  indicators raise the tag as before, anywhere in the same 64 KiB window.
+- `ScanResult.summary()` and the engine's split-run aggregation share one
+  incomplete-reason merge helper (`merged_incomplete_reasons`), the #264
+  refactor item, so the two counts cannot drift. No behavior change.
 
 ### Two CPython 3.11 serial-run test flakes no longer depend on GC timing (October 19)
 
@@ -4296,7 +4419,8 @@ That review is not independent human review.
 
 - `benchmarks/shadowbench/` and `tools/shadowbench/`: two benchmark tracks
   that measure shadow AI agent discovery across all nine surfaces, from #193
-  and #194 (`python -m tools.shadowbench {cases|estate} <command>`). #195
+  and #194 (the `tools.shadowbench` cases/estate entry point, now retained in
+  [the companion](https://github.com/aisecnomad/Nexus-ShadowBench/tree/main/tools/shadowbench)). #195
   landed them as `synthetic` and `estate`; the track it called `synthetic`
   is `cases` here, since both tracks are synthetic, and this entry describes
   both tracks after the review fixes below. The *cases* track generates

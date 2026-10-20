@@ -1,6 +1,6 @@
 """Deterministic, diff-friendly JSON for the committed contract snapshots.
 
-``tools.cli_surface``, ``tools.public_api`` and ``tools.connector_inventory``
+``tools.cli_surface`` and ``tools.public_api``
 write their snapshots with :func:`dumps`: keys in the order the generator
 built them, two-space indentation, and every object a ``leaf`` predicate
 selects on one line, so the diff of one changed option, signature or

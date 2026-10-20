@@ -55,6 +55,7 @@ report.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -185,6 +186,27 @@ def _is_amount(value: object) -> bool:
     )
 
 
+# The exact shape of this version's reason categories: short lowercase slugs.
+# No path separator, dot, space or control character passes, so the forged
+# values the strict check refused stay refused.
+_REASON_SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,31}\Z")
+
+
+def _acceptable_reason(reason: object) -> bool:
+    """A known category, or a slug-shaped one a newer scanner version added.
+
+    Reports cross versions: ``diff`` and ``merge`` must still compare a report
+    whose gap carries a category this version does not know (#264), rather
+    than refuse it. The unknown slug is preserved verbatim, so a newer
+    consumer of a republished report keeps its meaning; a consumer that
+    groups by category treats it as ``other``. This version's own records
+    stay strict: :class:`CoverageGap` rejects an unknown reason at creation.
+    """
+    return reason in INCOMPLETE_REASONS or (
+        isinstance(reason, str) and _REASON_SLUG.fullmatch(reason) is not None
+    )
+
+
 def _valid_gap(gap: object) -> bool:
     return (
         isinstance(gap, dict)
@@ -195,7 +217,7 @@ def _valid_gap(gap: object) -> bool:
         and gap["kind"] in (BLINDING, PARTIAL)
         and _is_count(gap["entries"])
         and type(gap["full_weight"]) is bool
-        and gap["reason"] in INCOMPLETE_REASONS
+        and _acceptable_reason(gap["reason"])
         and gap["relevance"] in ("low", "high")
     )
 

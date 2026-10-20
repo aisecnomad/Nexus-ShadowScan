@@ -6,10 +6,9 @@ name: Release candidate evidence
 # then waits for approval in the protected environment of that name, checks out
 # nothing and uploads the exact attested wheel and sdist through PyPI trusted
 # publishing; no package-index token is stored anywhere. A pypi upload also
-# requires the maintainer's tag v<version> on the reviewed commit. After a
-# pypi upload, the github-release-assets job attaches the same attested files
-# and their Sigstore bundles to a draft GitHub release for that tag. Reviewing
-# and publishing the draft stays a maintainer action.
+# requires the maintainer's tag v<version> on the reviewed commit. A GitHub
+# release stays a separate maintainer action. An explicit opt-in attaches
+# verified evidence to an existing release after protected PyPI publication.
 on:
   workflow_dispatch:
     inputs:
@@ -42,6 +41,11 @@ on:
           - none
           - testpypi
           - pypi
+      attach_github_release:
+        description: Attach verified evidence to an existing GitHub release for this version (pypi only)
+        required: true
+        default: false
+        type: boolean
 
 permissions: {}
 concurrency:
@@ -234,10 +238,10 @@ jobs:
           SBOM_BUNDLE: ${{ steps.sbom.outputs.bundle-path }}
         run: |
           mkdir attestations
-          # Sigstore bundles. After a pypi upload, the github-release-assets job
-          # attaches both to the draft GitHub release, versioned, and the
-          # provenance bundle once more as nexusshadowscan-<version>.intoto.jsonl
-          # (docs/operations/publishing.md).
+          # Sigstore bundles. The .sigstore.json suffix is the one release-signature
+          # checks, such as OpenSSF Scorecard's Signed-Releases, look for among the
+          # assets of a GitHub release. The optional release-assets job verifies
+          # and attaches these original bundles; it never creates a release.
           cp "$PROVENANCE_BUNDLE" attestations/provenance.sigstore.json
           cp "$SBOM_BUNDLE" attestations/sbom.sigstore.json
       - id: upload
@@ -396,146 +400,33 @@ jobs:
           packages-dir: dist/
           repository-url: ${{ inputs.publish == 'testpypi' && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
 
-  github-release-assets:
-    needs: [publication-input, publication-gate, publish]
-    if: inputs.publish == 'pypi' && github.ref == 'refs/heads/main'
+  release-assets:
+    needs: [publication-input, publish]
+    if: inputs.attach_github_release && inputs.publish == 'pypi' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # Runs only after a successful pypi upload. Attaches the uploaded wheel and
-    # sdist, SHA256SUMS and their Sigstore bundles to a draft GitHub release for
-    # the tag the gate checked, creating the draft when the tag has no release.
-    # It never creates or moves a tag, never publishes or edits a release and
-    # never replaces an attached file: the maintainer reviews the draft and
-    # publishes it. No checkout, no OIDC token and no third-party action: the
-    # runner's GitHub CLI does the work, and writing the release is the job's
-    # only permission.
+    timeout-minutes: 15
+    # Separate approval and token from package publishing; no OIDC permission.
+    # Only the stdlib verification helper from the reviewed source is executed.
+    environment:
+      name: pypi
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.publication-input.outputs.artifact_id }}
           path: publication-input
           digest-mismatch: error
-      - name: Stage the attested files and their bundles as release assets
-        working-directory: publication-input
-        run: |
-          set -euo pipefail
-          sha256sum --check SHA256SUMS
-          wheels=(nexusshadowscan-*.whl)
-          sdists=(nexusshadowscan-*.tar.gz)
-          if [ "${#wheels[@]}" -ne 1 ] || [ ! -f "${wheels[0]}" ]; then
-            echo "expected exactly one scanner wheel" >&2
-            exit 1
-          fi
-          if [ "${#sdists[@]}" -ne 1 ] || [ ! -f "${sdists[0]}" ]; then
-            echo "expected exactly one scanner sdist" >&2
-            exit 1
-          fi
-          version="${wheels[0]#nexusshadowscan-}"
-          version="${version%%-*}"
-          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]; then
-            echo "wheel version $version is not a public release version" >&2
-            exit 1
-          fi
-          if [ "${sdists[0]}" != "nexusshadowscan-$version.tar.gz" ]; then
-            echo "sdist ${sdists[0]} does not match wheel version $version" >&2
-            exit 1
-          fi
-          assets="$RUNNER_TEMP/release-assets"
-          mkdir "$assets"
-          cp -- "${wheels[0]}" "${sdists[0]}" SHA256SUMS "$assets/"
-          # One Sigstore bundle per file: the provenance bundle covers every
-          # candidate file, SHA256SUMS included; the SBOM bundle covers the
-          # wheel and the sdist.
-          cp -- attestations/provenance.sigstore.json "$assets/nexusshadowscan-$version.provenance.sigstore.json"
-          cp -- attestations/sbom.sigstore.json "$assets/nexusshadowscan-$version.sbom.sigstore.json"
-          # The same provenance bundle as JSON Lines, one Sigstore bundle per
-          # line, the form `gh attestation download` writes and
-          # `gh attestation verify --bundle` reads. Its signed DSSE payload is
-          # an in-toto statement with the SLSA v1 provenance predicate. The
-          # .intoto.jsonl suffix is the one OpenSSF Scorecard's Signed-Releases
-          # check counts as provenance.
-          jq --compact-output . attestations/provenance.sigstore.json \
-            > "$assets/nexusshadowscan-$version.intoto.jsonl"
-          if [ "$(wc -l < "$assets/nexusshadowscan-$version.intoto.jsonl")" -ne 1 ]; then
-            echo "the provenance bundle is not one JSON document" >&2
-            exit 1
-          fi
-          printf 'VERSION=%s\nRELEASE_ASSETS=%s\n' "$version" "$assets" >> "$GITHUB_ENV"
-      - name: Verify the staged files against the staged bundles, as a downloader would
+      - name: Verify and attach evidence to the existing release without overwriting
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          cd "$RELEASE_ASSETS"
-          signer="$GITHUB_REPOSITORY/.github/workflows/release.yml"
-          for file in nexusshadowscan-*.whl nexusshadowscan-*.tar.gz SHA256SUMS; do
-            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" \
-              --bundle "nexusshadowscan-$VERSION.intoto.jsonl" \
-              --signer-workflow "$signer" --source-ref refs/heads/main \
-              --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
-          done
-          for file in nexusshadowscan-*.whl nexusshadowscan-*.tar.gz; do
-            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" \
-              --bundle "nexusshadowscan-$VERSION.sbom.sigstore.json" \
-              --predicate-type https://cyclonedx.org/bom \
-              --signer-workflow "$signer" --source-ref refs/heads/main \
-              --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
-          done
-      - name: Attach the verified assets to a draft release for the reviewed tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          tag="v$VERSION"
-          # The publication gate read the tag before the approval wait, and the
-          # tag ruleset keeps it. Read it again here, so that nothing is
-          # attached to a release of another commit.
-          if ! tagged="$(gh api "repos/$GITHUB_REPOSITORY/commits/refs/tags/$tag" --jq .sha)"; then
-            echo "tag $tag does not exist" >&2
-            exit 1
-          fi
-          if [ "$tagged" != "$GITHUB_SHA" ]; then
-            echo "tag $tag points at $tagged, not the reviewed commit $GITHUB_SHA" >&2
-            exit 1
-          fi
-          state="$RUNNER_TEMP/release-state"
-          mkdir "$state"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft \
-            > "$state/is-draft" 2> "$state/view-error"; then
-            echo "Release $tag exists (draft: $(cat "$state/is-draft")); attaching the files it lacks"
-          elif [ "$(cat "$state/view-error")" = "release not found" ]; then
-            # A draft is visible only to people with write access; GitHub does
-            # not notify watchers or mark it latest until it is published.
-            # --verify-tag refuses to create a tag that does not exist.
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
-              --title "NexusShadowScan $VERSION" \
-              --notes "Draft created by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID after the PyPI upload of $GITHUB_SHA. Replace these notes with the $VERSION section of RELEASE_NOTES.md, check the assets, then publish."
-          else
-            cat "$state/view-error" >&2
-            exit 1
-          fi
-          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
-            > "$state/attached"
-          mkdir "$state/attached-files"
-          uploads=()
-          for path in "$RELEASE_ASSETS"/*; do
-            name="${path##*/}"
-            if ! grep -Fxq -- "$name" "$state/attached"; then
-              uploads+=("$path")
-              continue
-            fi
-            # Never replace an attached file. An identical one stays; a
-            # different one stops the job before anything is uploaded.
-            gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$name" \
-              --dir "$state/attached-files"
-            if ! cmp -s -- "$path" "$state/attached-files/$name"; then
-              echo "release $tag already has a different $name; review it, delete it by hand and re-run this job" >&2
-              exit 1
-            fi
-            echo "$name is already attached with identical bytes"
-          done
-          if [ "${#uploads[@]}" -gt 0 ]; then
-            gh release upload "$tag" --repo "$GITHUB_REPOSITORY" "${uploads[@]}"
-          fi
+          python -m tools.release.assets --upload \
+            --directory publication-input --repository "$GITHUB_REPOSITORY" \
+            --commit "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID"

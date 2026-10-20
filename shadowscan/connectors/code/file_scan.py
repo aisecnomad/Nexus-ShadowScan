@@ -279,7 +279,9 @@ class FileScanner:
         self.cross_file = CrossFileSources(self)
 
     def preflight_file(self, scan: _ScanState, rel: str, path: Path, proj_root: str) -> None:
-        """Record the size-limit gap ``scan_file`` would record for one file, analyzing nothing (``preflight``).
+        """Record the size-limit gap ``scan_file`` would record for one file, analyzing nothing.
+
+        Used by the ``preflight`` mode.
 
         Every file counts as examined, as in a full scan, so the coverage budget
         is judged against the same entries. A file the passes would not read and

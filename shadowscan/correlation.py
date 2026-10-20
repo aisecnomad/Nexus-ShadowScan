@@ -546,32 +546,38 @@ def _large_identifier_groups(groups: _Groups) -> None:
 def _record_large_identifier_group(kind: str, value: str, members: dict[str, _CorrelationKey]) -> None:
     if len({(entry.finding.connector, entry.finding.surface) for entry in members.values()}) < 2:
         return
-    identifier_group_id = hashlib.sha256(json.dumps([kind, value]).encode()).hexdigest()
     partitions: dict[tuple[bool, tuple[tuple[str, str], ...]], list[_CorrelationKey]] = {}
     for entry in members.values():
-        _record_truncation(
-            entry.finding,
-            {
+        partitions.setdefault((entry.globally_scoped, tuple(sorted(entry.scope.items()))), []).append(entry)
+    for partition, entries in sorted(partitions.items()):
+        # The group token is salted with the partition's scope, so per-tenant
+        # report slices cannot be joined on an identifier-equality assertion
+        # the link policy refuses to make across conflicting or unverified
+        # scopes. A member outside an exact-scope partition gets the omission
+        # disclosure alone: no token and no count that spans other scopes.
+        exact = (
+            len(entries) >= 2
+            and _exact_scope(kind, entries[0], entries[0])
+            and len({(entry.finding.connector, entry.finding.surface) for entry in entries}) >= 2
+        )
+        group_id = hashlib.sha256(json.dumps([kind, value, partition]).encode()).hexdigest()
+        for entry in entries:
+            details: dict[str, Any] = {
                 "reason": "identifier-group-limit",
-                "identifier_group_id": identifier_group_id,
                 "key_type": kind,
-                "group_size": len(members),
                 "pairwise_group_limit": _MAX_CORRELATION_GROUP,
                 "limitation": (
                     "Pairwise expansion omitted. Exact memberships, where available, use identical "
                     "verified scopes; compatible partial scopes are not merged."
                 ),
-            },
-        )
-        partitions.setdefault((entry.globally_scoped, tuple(sorted(entry.scope.items()))), []).append(entry)
-    for partition, entries in sorted(partitions.items()):
-        if len(entries) < 2 or not _exact_scope(kind, entries[0], entries[0]):
-            continue
-        if len({(entry.finding.connector, entry.finding.surface) for entry in entries}) < 2:
-            continue
-        group_id = hashlib.sha256(json.dumps([kind, value, partition]).encode()).hexdigest()
-        for entry in entries:
-            _record_group_member(entry, group_id, kind, dict(partition[1]), len(entries))
+            }
+            if exact:
+                details["identifier_group_id"] = group_id
+                details["group_size"] = len(entries)
+            _record_truncation(entry.finding, details)
+        if exact:
+            for entry in entries:
+                _record_group_member(entry, group_id, kind, dict(partition[1]), len(entries))
 
 
 def _pairs(groups: _Groups) -> Any:

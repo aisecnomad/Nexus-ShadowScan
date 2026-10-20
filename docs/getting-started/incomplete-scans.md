@@ -35,7 +35,8 @@ jq -r '.stats[].coverage.details[]? | "\(.reason)\t\(.kind)\t\(.path)"' report.j
 
 ## Check the static limits first: `--preflight`
 
-`shadowscan code PATH --preflight` runs the scanner's own walk, exclusions,
+`shadowscan code PATH --preflight` first checks that the root can be opened
+safely, then runs the scanner's own walk, exclusions,
 size limits and coverage accounting, and records the gaps that need no file
 content to decide: files over `--max-file-size`, symbolic links and submodules
 that leave the tree, non-regular entries, and the walk's own limits. It reads
@@ -48,11 +49,12 @@ shadowscan code . --preflight --exclude 'data/**/*.json'   # exit 0: none left
 shadowscan code . --exclude 'data/**/*.json'               # the full scan
 ```
 
-The preflight exits 0 when it found no static gap and 3 when a full scan would
-be incomplete because of one. It is a subset by construction: it reports no
-finding, its header always says `INCOMPLETE SCAN (subset-scan ...)`, and it
-refuses `--output`, `--format` and `--incremental`, so its output cannot be
-kept as a scan result. A clean preflight does not promise a complete scan:
+The preflight exits 0 when the root is ready and it found no static gap, and 3
+when a root is blocked or a full scan would be incomplete because of a static
+gap; the files are listed under `roots[].static_gaps` in `--format json`. It
+reports no finding and its `shadowscan.code-preflight/v1` document says
+`scan_performed: false`, so its output cannot be mistaken for a scan result. A
+clean preflight does not promise a complete scan:
 content can still fail to parse, a matching budget or deadline can still run
 out.
 
@@ -66,7 +68,7 @@ out.
 | `unparsed-input` | A file the scanner selects (a manifest, an MCP or agent configuration, source) that does not parse or decode: an unrendered template, a deliberately malformed test fixture, JSON with duplicate keys. | Fix or exclude it. `--profile ci` declares these under test, example, documentation and generated paths as counted omissions, and judges a directory as a template when its path or its manifest's project name holds template syntax (`{{`, `{%`, `${`); agent configuration is never declared. An empty or whitespace-only manifest, agent manifest or MCP configuration is a note, not a gap, and a Continue `uses:` block reference is an MCP server, not a defect. |
 | `sanitization-limit` | A file's credential-redaction context could not be established, so its excerpts were withheld. Detection still ran. | Exclude the file if it is not deployed content. |
 | `analysis-limit` | A per-file or per-scan analysis budget: the credential quota (more distinct credentials of one format in one file than are reported), model-identifier literals, syntax-tree nodes. | Review the named files. `--profile ci` declares analysis limits under test, example, documentation and generated paths, never credential limits. |
-| `subset-scan` | `--triage` or `--preflight`: a subset by design. | Run without it for a full result. |
+| `subset-scan` | `--triage`: a subset by design. | Run without it for a full result. |
 | `unscanned-input` | Selected input that was not read, such as a Git LFS pointer in place of its file. | `git lfs pull`, or exclude it. |
 | `access-denied`, `upstream-error` | Live connectors: missing scopes, API or network failures. | Grant the scopes in the connector's guide; re-run. |
 

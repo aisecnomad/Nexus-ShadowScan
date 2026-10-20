@@ -50,13 +50,10 @@ WRITE_SCOPES = {
     ("scorecard.yml", "analysis"): {"security-events", "id-token"},
     ("release.yml", "attest"): {"attestations", "id-token"},
     ("release.yml", "publish"): {"id-token"},
-    # Attaches the uploaded files to a draft GitHub release; see _release_assets_violations.
-    ("release.yml", "github-release-assets"): {"contents"},
+    ("release.yml", "release-assets"): {"contents"},
     ("docs.yml", "deploy"): {"pages", "id-token"},
     ("stale.yml", "stale"): {"issues", "pull-requests"},
     ("labels.yml", "sync"): {"issues"},
-    # Runs no repository code; only opens or updates the drift tracking issue.
-    ("connector-inventory.yml", "report"): {"issues"},
 }
 # The aggregate floor AGENTS.md and CONTRIBUTING.md document.
 COVERAGE_FLOOR = 80.0
@@ -366,21 +363,21 @@ def _run_violations(workflow_name: str, workflow: dict[str, Any]) -> list[str]:
     return problems
 
 
-# Publication is a manual maintainer action (AGENTS.md). No workflow publishes a
+# Publication is a manual maintainer action (AGENTS.md). No workflow creates a
 # release, image or tag, and only one step uploads a package: the pinned
 # trusted-publishing action in release.yml's `publish` job, which runs only when
 # the maintainer dispatches it and approves its protected environment.
 # _release_publish_violations pins those gates; the same step anywhere else, or
-# any other upload command, is still a violation. After that upload, one
-# `gh release create` and one `gh release upload` in release.yml's
-# `github-release-assets` job attach the same files to a draft release, which
-# the maintainer publishes; _release_assets_violations pins that job.
+# any other upload command, is still a violation. One separately approved,
+# opt-in helper attaches verified assets to an existing maintainer-created
+# release; _release_assets_violations pins that narrower write boundary.
 SANCTIONED_UPLOAD = ("release.yml", "publish")
-SANCTIONED_RELEASE_ASSETS = ("release.yml", "github-release-assets")
 _TRUSTED_PUBLISH_ACTION = re.compile(r"pypa/gh-action-pypi-publish@[0-9a-f]{40}")
+_ASSET_UPLOAD = "python -m tools.release.assets --upload"
 _PUBLICATION = {
     "GitHub release": re.compile(
         r"\bgh\s+release\s+(?:create|upload|edit)\b|softprops/action-gh-release|ncipollo/release-action"
+        r"|\bpython -m tools\.release\.assets --upload\b"
     ),
     "package upload": re.compile(
         r"\btwine\s+upload\b|\b(?:uv|poetry|flit|hatch|pdm)\s+publish\b|pypi-publish"
@@ -400,20 +397,20 @@ def _publication_violations(text: str) -> list[str]:
 
 
 def _without_sanctioned_upload(workflow_name: str, workflow: dict[str, Any], text: str) -> str:
-    """The workflow text minus one copy of each sanctioned publication command, when its job has exactly one."""
+    """The workflow text minus one copy of the sanctioned upload step, when that job has exactly one."""
     if workflow_name != SANCTIONED_UPLOAD[0]:
         return text
     job = workflow["jobs"].get(SANCTIONED_UPLOAD[1])
     steps = job.get("steps", []) if isinstance(job, dict) else []
     uploads = [step.get("uses", "") for step in steps if "pypi-publish" in step.get("uses", "")]
-    if len(uploads) == 1 and _TRUSTED_PUBLISH_ACTION.fullmatch(uploads[0]):
-        # One copy only: a second copy of the same step in another job stays a violation.
-        text = text.replace(f"uses: {uploads[0]}", "", 1)
-    commands = _release_commands(workflow["jobs"].get(SANCTIONED_RELEASE_ASSETS[1]))
-    for subcommand in ("create", "upload"):
-        matching = [command for command in commands if command.startswith(f"gh release {subcommand} ")]
-        if len(matching) == 1:
-            text = re.sub(rf"\bgh\s+release\s+{subcommand}\b", "", text, count=1)
+    if len(uploads) != 1 or not _TRUSTED_PUBLISH_ACTION.fullmatch(uploads[0]):
+        return text
+    # One copy only: a second copy of the same step in another job stays a violation.
+    text = text.replace(f"uses: {uploads[0]}", "", 1)
+    assets = workflow["jobs"].get("release-assets", {})
+    scripts = [step.get("run", "") for step in assets.get("steps", [])]
+    if sum(script.count(_ASSET_UPLOAD) for script in scripts) == 1:
+        text = text.replace(_ASSET_UPLOAD, "", 1)
     return text
 
 
@@ -486,89 +483,39 @@ def _release_publish_violations(workflow: dict[str, Any]) -> list[str]:
     return problems
 
 
-_RELEASE_ASSETS_DISPATCH = {"inputs.publish == 'pypi'", "github.ref == 'refs/heads/main'"}
-_GH_RELEASE_COMMAND = re.compile(r"\bgh\s+release\s+[\w-]+[^\n]*")
-# `gh api` with a method, field or body writes; a release or ref path is caught by _PUBLICATION.
-_GH_API_WRITE = re.compile(
-    r"\bgh\s+api\b[^\n]*\s(?:-X|--method|-f|-F|--field|--raw-field|--input)(?:[\s=]|$)"
-)
-_GIT_COMMAND = re.compile(r"(?:^|[\s;&|(])git\s")
-
-
-def _join_continuations(script: str) -> str:
-    """A shell script with continuation lines joined, so that one command is one line."""
-    return re.sub(r"\\\n", " ", script)
-
-
-def _release_commands(job: Any) -> list[str]:
-    """Each `gh release` command in the job's scripts, continuation lines joined and blanks collapsed."""
-    if not isinstance(job, dict):
-        return []
-    scripts = _join_continuations("\n".join(step.get("run", "") for step in job.get("steps", [])))
-    return [" ".join(match.group().split()) for match in _GH_RELEASE_COMMAND.finditer(scripts)]
-
-
-def _first_step(steps: list[dict[str, Any]], command: str) -> int | None:
-    """The index of the first step with a line that starts with ``command``, not a comment mentioning it."""
-    for index, step in enumerate(steps):
-        if any(
-            line.strip().startswith(command) for line in _join_continuations(step.get("run", "")).splitlines()
-        ):
-            return index
-    return None
-
-
 def _release_assets_violations(workflow: dict[str, Any]) -> list[str]:
-    """The release-asset job attaches only the uploaded, verified files, and only to a draft it never publishes."""
-    name = SANCTIONED_RELEASE_ASSETS[1]
-    job = workflow["jobs"].get(name)
-    if not isinstance(job, dict):
-        return [f"{name}: job is missing"]
+    """Only explicit dispatch can attach verified bytes to an existing release."""
     problems = []
-    if _if_clauses(job) != _RELEASE_ASSETS_DISPATCH:
-        problems.append(f"{name}: must run only when the maintainer dispatches publish: pypi on main")
-    needs = job.get("needs", [])
-    if not {"publication-input", "publish"} <= set([needs] if isinstance(needs, str) else needs):
-        problems.append(f"{name}: must wait for the pypi upload")
+    dispatch = _triggers(workflow).get("workflow_dispatch") or {}
+    option = (dispatch.get("inputs") or {}).get("attach_github_release") or {}
+    if option.get("type") != "boolean" or option.get("default") is not False:
+        problems.append("release assets: attachment must default to false")
+    job = workflow["jobs"].get("release-assets", {})
+    if _if_clauses(job) != {
+        "inputs.attach_github_release",
+        "inputs.publish == 'pypi'",
+        "github.ref == 'refs/heads/main'",
+    }:
+        problems.append("release assets: require explicit production dispatch on main")
+    if set(job.get("needs", [])) != {"publication-input", "publish"}:
+        problems.append("release assets: require successful protected publication")
+    if job.get("environment") != {"name": "pypi"}:
+        problems.append("release assets: require protected pypi approval")
     if job.get("permissions") != {"contents": "write"}:
-        problems.append(f"{name}: contents write must be its only permission")
+        problems.append("release assets: grant contents write only")
     steps = job.get("steps", [])
-    actions = [step["uses"] for step in steps if "uses" in step]
-    if any(not action.startswith("actions/download-artifact@") for action in actions):
-        problems.append(f"{name}: must use no action but download-artifact (no checkout, no release action)")
-    if not actions or any(
-        (step.get("with") or {}).get("artifact-ids") != "${{ needs.publication-input.outputs.artifact_id }}"
-        for step in steps
-        if "uses" in step
+    downloads = [step for step in steps if step.get("uses", "").startswith("actions/download-artifact@")]
+    if len(downloads) != 1 or downloads[0].get("with", {}).get("artifact-ids") != (
+        "${{ needs.publication-input.outputs.artifact_id }}"
     ):
-        problems.append(f"{name}: must attach only the attested publication-input artifact")
-    script = "\n".join(step.get("run", "") for step in steps)
-    if "sha256sum --check SHA256SUMS" not in script:
-        problems.append(f"{name}: must verify the attested digests before attaching them")
-    verified = _first_step(steps, "gh attestation verify ")
-    attached = _first_step(steps, "gh release upload ")
-    if (
-        verified is None
-        or ".intoto.jsonl" not in _join_continuations(steps[verified].get("run", ""))
-        or (attached is not None and attached <= verified)
-    ):
-        problems.append(f"{name}: must verify the staged files against their bundles before attaching them")
-    if _BUILD_OR_INSTALL.search(script) or _GIT_COMMAND.search(script) or _GH_API_WRITE.search(script):
-        problems.append(f"{name}: must not build, install, run git or write through gh api")
-    commands = _release_commands(job)
-    allowed = ("gh release view ", "gh release download ", "gh release create ", "gh release upload ")
-    if any(not command.startswith(allowed) for command in commands):
-        problems.append(f"{name}: may only view, download, create a draft and upload; publishing is manual")
-    creates = [command.split() for command in commands if command.startswith("gh release create ")]
-    if len(creates) != 1 or not {"--draft", "--verify-tag"} <= set(creates[0]) or "--target" in creates[0]:
-        problems.append(
-            f"{name}: must create one draft release, for an existing tag only (--draft --verify-tag)"
-        )
-    uploads = [command.split() for command in commands if command.startswith("gh release upload ")]
-    if len(uploads) != 1 or any(word.startswith("--clobber") for word in uploads[0]):
-        problems.append(f"{name}: must upload once and never replace an attached file (no --clobber)")
-    if any(word.startswith("--draft=") for command in commands for word in command.split()):
-        problems.append(f"{name}: must not publish the draft")
+        problems.append("release assets: download only this run's verified candidate")
+    scripts = [step.get("run", "") for step in steps if "run" in step]
+    expected = (
+        "python -m tools.release.assets --upload --directory publication-input "
+        '--repository "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID"'
+    )
+    if len(scripts) != 1 or " ".join(scripts[0].replace("\\\n", "").split()) != expected:
+        problems.append("release assets: only the reviewed verification/attachment helper may run")
     return problems
 
 
@@ -585,7 +532,7 @@ def _workflow_violations(path: Path) -> list[str]:
         *_run_violations(path.name, workflow),
         *_publication_violations(text),
         *(_release_publish_violations(workflow) if path.name == SANCTIONED_UPLOAD[0] else []),
-        *(_release_assets_violations(workflow) if path.name == SANCTIONED_RELEASE_ASSETS[0] else []),
+        *(_release_assets_violations(workflow) if path.name == SANCTIONED_UPLOAD[0] else []),
     ]
 
 
@@ -941,8 +888,8 @@ _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format 
         pytest.param(
             ".github/workflows/ci.yml",
             _replace(
-                "      - run: ruff check shadowscan tests tools benchmarks\n",
-                "      - run: ruff check shadowscan tests tools benchmarks\n        continue-on-error: true\n",
+                "      - run: ruff check shadowscan tests tools\n",
+                "      - run: ruff check shadowscan tests tools\n        continue-on-error: true\n",
             ),
             "sets continue-on-error",
             id="step-continue-on-error",
@@ -1088,112 +1035,17 @@ _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format 
         pytest.param(
             ".github/workflows/release.yml",
             _replace(
-                "      id-token: write\n    steps:\n"
-                "      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2\n"
-                "        with:\n          artifact-ids: ${{ needs.publication-input.outputs.artifact_id }}",
-                "      id-token: write\n    steps:\n"
-                "      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2\n"
-                "        with:\n          artifact-ids: ${{ needs.build.outputs.artifact_id }}",
+                "artifact-ids: ${{ needs.publication-input.outputs.artifact_id }}\n"
+                "          path: publication-input\n"
+                "          digest-mismatch: error\n"
+                "      - name: Stage only",
+                "artifact-ids: ${{ needs.build.outputs.artifact_id }}\n"
+                "          path: publication-input\n"
+                "          digest-mismatch: error\n"
+                "      - name: Stage only",
             ),
-            "publish: must upload only the attested publication-input artifact",
+            "only the attested publication-input artifact",
             id="publish-unassembled-artifact",
-        ),
-        pytest.param(
-            ".github/workflows/release.yml",
-            _replace_last(
-                "artifact-ids: ${{ needs.publication-input.outputs.artifact_id }}",
-                "artifact-ids: ${{ needs.build.outputs.artifact_id }}",
-            ),
-            "github-release-assets: must attach only the attested publication-input artifact",
-            id="release-assets-unassembled-artifact",
-        ),
-        pytest.param(
-            ".github/workflows/release.yml",
-            _replace_last("          sha256sum --check SHA256SUMS\n", ""),
-            "github-release-assets: must verify the attested digests",
-            id="release-assets-without-digest-check",
-        ),
-        pytest.param(
-            ".github/workflows/release.yml",
-            lambda text: text.replace("gh attestation verify", "echo"),
-            "must verify the staged files against their bundles",
-            id="release-assets-without-bundle-verification",
-        ),
-        pytest.param(
-            ".github/workflows/release.yml",
-            _replace("--draft --verify-tag", "--verify-tag"),
-            "must create one draft release",
-            id="release-assets-published-release",
-        ),
-        pytest.param(
-            ".github/workflows/release.yml",
-            _replace("--draft --verify-tag", "--draft"),
-            "for an existing tag only",
-            id="release-assets-tag-created-on-the-fly",
-        ),
-        pytest.param(
-            ".github/workflows/release.yml",
-            _replace('gh release upload "$tag"', 'gh release upload --clobber "$tag"'),
-            "never replace an attached file",
-            id="release-assets-clobber",
-        ),
-        pytest.param(
-            ".github/workflows/release.yml",
-            _replace(
-                "    if: inputs.publish == 'pypi' && github.ref == 'refs/heads/main'\n",
-                "    if: inputs.publish != 'none' && github.ref == 'refs/heads/main'\n",
-            ),
-            "must run only when the maintainer dispatches publish: pypi",
-            id="release-assets-on-testpypi",
-        ),
-        pytest.param(
-            ".github/workflows/release.yml",
-            _replace(
-                "    needs: [publication-input, publication-gate, publish]\n",
-                "    needs: [publication-input, publication-gate]\n",
-            ),
-            "must wait for the pypi upload",
-            id="release-assets-before-upload",
-        ),
-        pytest.param(
-            ".github/workflows/release.yml",
-            _replace(
-                "    permissions:\n      contents: write\n",
-                "    permissions:\n      contents: write\n      id-token: write\n",
-            ),
-            "contents write must be its only permission",
-            id="release-assets-with-oidc",
-        ),
-        pytest.param(
-            ".github/workflows/release.yml",
-            _replace(
-                "      - name: Stage the attested files and their bundles as release assets\n",
-                "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"
-                "        with:\n          persist-credentials: false\n"
-                "      - name: Stage the attested files and their bundles as release assets\n",
-            ),
-            "must use no action but download-artifact",
-            id="checkout-in-release-assets-job",
-        ),
-        pytest.param(
-            ".github/workflows/release.yml",
-            _replace(
-                "      - name: Attach the verified assets to a draft release for the reviewed tag\n",
-                f"      - uses: softprops/action-gh-release@{'a' * 40} # v2\n"
-                "      - name: Attach the verified assets to a draft release for the reviewed tag\n",
-            ),
-            "GitHub release",
-            id="release-action-in-release-assets-job",
-        ),
-        pytest.param(
-            ".github/workflows/release.yml",
-            _replace(
-                "          test -s attestations/sbom.sigstore.json\n",
-                "          test -s attestations/sbom.sigstore.json\n"
-                "          gh release upload v0.1.1 nexusshadowscan-*.whl\n",
-            ),
-            "GitHub release: `gh release upload`",
-            id="second-release-upload-outside-release-assets-job",
         ),
         pytest.param(
             ".github/workflows/release.yml",
@@ -1326,7 +1178,7 @@ def test_ci_gate_waits_for_every_job_and_cannot_skip_failed_dependencies() -> No
     assert set(gate["needs"]) == set(jobs) - {"gate"}
     assert not any(job.get("continue-on-error") for job in jobs.values())
     assert not any(step.get("continue-on-error") for step in gate["steps"])
-    for name in ("docs", "test-macos", "test", "container-security"):
+    for name in ("docs", "test-macos", "test", "container-security", "benchmark-tests"):
         assert "if" not in jobs[name], f"{name} must always run"
     assert jobs["dco"]["if"] == "github.event_name == 'pull_request'"
     assert jobs["dco"]["uses"] == "./.github/workflows/dco.yml"
@@ -1378,6 +1230,7 @@ def test_ci_gate_executes_fail_closed(
             "TEST_RESULT": tests,
             "DCO_RESULT": dco,
             "CONTAINER_RESULT": "success",
+            "BENCHMARK_RESULT": "success",
         },
     )
     assert (result.returncode == 0) is passes, result.stdout + result.stderr
@@ -1530,10 +1383,34 @@ def test_ci_gate_blocks_unavailable_container_assurance(container: str) -> None:
             "TEST_RESULT": "success",
             "DCO_RESULT": "success",
             "CONTAINER_RESULT": container,
+            "BENCHMARK_RESULT": "success",
         },
     )
     assert result.returncode != 0
     assert "CONTAINER_RESULT" in result.stderr
+
+
+@pytest.mark.parametrize("benchmark", ["failure", "cancelled", "skipped", ""])
+def test_ci_gate_blocks_unavailable_benchmark_assurance(benchmark: str) -> None:
+    script = _load(GITHUB / "workflows" / "ci.yml")["jobs"]["gate"]["steps"][0]["run"]
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env={
+            **os.environ,
+            "EVENT_NAME": "pull_request",
+            "DOCS_RESULT": "success",
+            "MACOS_RESULT": "success",
+            "TEST_RESULT": "success",
+            "DCO_RESULT": "success",
+            "CONTAINER_RESULT": "success",
+            "BENCHMARK_RESULT": benchmark,
+        },
+    )
+    assert result.returncode != 0
+    assert "BENCHMARK_RESULT" in result.stderr
 
 
 def test_container_scan_uses_verified_tool_fresh_database_and_exact_image() -> None:
@@ -2173,99 +2050,65 @@ def test_workflows_do_not_publish_releases_packages_or_tags(path: Path) -> None:
 
 
 def test_the_sanctioned_upload_is_the_only_exemption() -> None:
-    """Without its exemptions, release.yml has one package upload and one draft release's create and upload."""
+    """Both manual uploads are explicit, scoped exemptions; release/tag creation stays forbidden."""
     text = (GITHUB / "workflows" / "release.yml").read_text(encoding="utf-8")
-    violations = sorted(_publication_violations(text))
-    assert len(violations) == 3, violations
-    assert violations[0].startswith("GitHub release: `gh release create`"), violations
-    assert violations[1].startswith("GitHub release: `gh release upload`"), violations
-    assert violations[2].startswith("package upload: `pypi-publish`"), violations
+    violations = _publication_violations(text)
+    assert len(violations) == 2, violations
+    assert any(item.startswith("package upload: `pypi-publish`") for item in violations)
+    assert any(_ASSET_UPLOAD in item for item in violations)
 
 
 def test_release_workflow_uploads_only_through_the_gated_publish_job() -> None:
     workflow = _load(GITHUB / "workflows" / "release.yml")
     assert _trigger_names(workflow) == {"workflow_dispatch"}
     assert not _release_publish_violations(workflow)
-    assert not _release_assets_violations(workflow)
-    # Only the attestation and publish jobs hold an OIDC token, only the
-    # release-asset job may write repository contents, and none of them
+    # Only the attestation and publish jobs hold an OIDC token, and neither
     # checks out or runs repository code.
     for name, job in workflow["jobs"].items():
-        permissions = job.get("permissions") or {}
-        if permissions.get("id-token") == "write":
+        if (job.get("permissions") or {}).get("id-token") == "write":
             assert name in {"attest", "publish"}
-            assert not any(step.get("uses", "").startswith("actions/checkout@") for step in job["steps"])
-        if permissions.get("contents") == "write":
-            assert name == "github-release-assets"
             assert not any(step.get("uses", "").startswith("actions/checkout@") for step in job["steps"])
     assert workflow["jobs"]["publication-input"]["permissions"] == {}
 
 
 @pytest.mark.parametrize(
-    "commands,expected",
-    [
-        pytest.param([], "must create one draft release", id="no-release-commands"),
-        pytest.param(
-            ['gh release create "$tag" --verify-tag', 'gh release upload "$tag" a'],
-            "must create one draft release",
-            id="published-release",
-        ),
-        pytest.param(
-            ['gh release create "$tag" --draft', 'gh release upload "$tag" a'],
-            "for an existing tag only",
-            id="tag-created-on-the-fly",
-        ),
-        pytest.param(
-            ['gh release create "$tag" --draft --verify-tag --target main', 'gh release upload "$tag" a'],
-            "for an existing tag only",
-            id="tag-target",
-        ),
-        pytest.param(
-            ['gh release create "$tag" --draft --verify-tag', 'gh release upload "$tag" --clobber a'],
-            "never replace an attached file",
-            id="clobber",
-        ),
-        pytest.param(
-            [
-                'gh release create "$tag" --draft --verify-tag',
-                'gh release upload "$tag" a',
-                'gh release edit "$tag" --draft=false',
-            ],
-            "publishing is manual",
-            id="publish-the-draft",
-        ),
-        pytest.param(
-            [
-                'gh release create "$tag" --draft --verify-tag',
-                'gh release upload "$tag" a',
-                'gh release delete-asset "$tag" a --yes',
-            ],
-            "publishing is manual",
-            id="delete-asset",
-        ),
-        pytest.param(
-            [
-                'gh release create "$tag" --draft --verify-tag',
-                'gh release upload "$tag" a',
-                'gh api -X PATCH "repos/$GITHUB_REPOSITORY/commits/x"',
-            ],
-            "write through gh api",
-            id="api-write",
-        ),
-        pytest.param(
-            ['gh release create "$tag" --draft --verify-tag', 'gh release upload "$tag" a', "git tag v0.1.1"],
-            "run git",
-            id="git-tag",
-        ),
-    ],
+    "mutation", ["default", "if", "needs", "environment", "permissions", "artifact", "code"]
 )
-def test_release_asset_job_rule_rejects_publishing_commands(commands: list[str], expected: str) -> None:
+def test_release_asset_attachment_gates_reject_mutation(mutation):
     workflow = _load(GITHUB / "workflows" / "release.yml")
-    job = workflow["jobs"]["github-release-assets"]
-    release_step = next(step for step in job["steps"] if "gh release upload" in step.get("run", ""))
-    release_step["run"] = "\n".join(commands)
-    problems = _release_assets_violations(workflow)
-    assert any(expected in problem for problem in problems), problems
+    assert not _release_assets_violations(workflow)
+    job = workflow["jobs"]["release-assets"]
+    if mutation == "default":
+        _triggers(workflow)["workflow_dispatch"]["inputs"]["attach_github_release"]["default"] = True
+    elif mutation == "if":
+        job["if"] = "github.ref == 'refs/heads/main'"
+    elif mutation == "needs":
+        job["needs"] = ["publication-input"]
+    elif mutation == "environment":
+        job.pop("environment")
+    elif mutation == "permissions":
+        job["permissions"]["id-token"] = "write"
+    elif mutation == "artifact":
+        next(step for step in job["steps"] if "download-artifact@" in step.get("uses", ""))["with"][
+            "artifact-ids"
+        ] = "${{ needs.build.outputs.artifact_id }}"
+    else:
+        next(step for step in job["steps"] if "run" in step)["run"] += "\ngh release create v0.1.3"
+    assert _release_assets_violations(workflow)
+
+
+def test_connector_inventory_workflow_has_no_write_identity_or_live_scan():
+    workflow = _load(GITHUB / "workflows" / "connector-inventory.yml")
+    assert _trigger_names(workflow) == {"schedule", "workflow_dispatch"}
+    assert workflow["permissions"] == {"contents": "read"}
+    assert list(workflow["jobs"]) == ["inventory"]
+    job = workflow["jobs"]["inventory"]
+    assert "permissions" not in job
+    assert _if_clauses(job) == {"github.ref == 'refs/heads/main'"}
+    script = "\n".join(step.get("run", "") for step in job["steps"])
+    assert "python -m tools.connector_inventory --check" in script
+    assert "shadowscan scan" not in script
+    assert not _publication_violations(script)
 
 
 _REVIEWED = "a" * 40
@@ -2432,202 +2275,6 @@ def test_publication_input_rejects_an_sdist_of_another_version(tmp_path: Path) -
     )
     assert result.returncode != 0
     assert "does not match wheel version 0.1.1" in result.stderr
-
-
-# A stand-in for the runner's GitHub CLI: it records every call, keeps one release in GH_STATE and
-# answers like gh does ("release not found", "asset under the same name already exists").
-_GH_RELEASE_STUB = """
-import json, os, shutil, sys
-from pathlib import Path
-
-state = Path(os.environ["GH_STATE"])
-args = sys.argv[1:]
-with (state / "calls.jsonl").open("a", encoding="utf-8") as log:
-    log.write(json.dumps(args) + "\\n")
-repo, tag = os.environ["GITHUB_REPOSITORY"], "v" + os.environ["EXPECTED_VERSION"]
-release = state / "release"
-assets = release / "assets"
-
-
-def fail(message, code=1):
-    print(message, file=sys.stderr)
-    sys.exit(code)
-
-
-if args[:2] == ["attestation", "verify"]:
-    if os.environ.get("VERIFY_FAILS") == args[2]:
-        fail("verification failed")
-    sys.exit(0)
-if args == ["api", f"repos/{repo}/commits/refs/tags/{tag}", "--jq", ".sha"]:
-    if not os.environ.get("TAGGED"):
-        fail("HTTP 404: No commit found for SHA")
-    print(os.environ["TAGGED"])
-    sys.exit(0)
-if args[:1] != ["release"] or args[2:5] != [tag, "--repo", repo]:
-    fail(f"unexpected gh call: {args}", 64)
-command, rest = args[1], args[5:]
-if command == "view":
-    if os.environ.get("VIEW_ERROR"):
-        fail(os.environ["VIEW_ERROR"])
-    if not release.exists():
-        fail("release not found")
-    if rest == ["--json", "isDraft", "--jq", ".isDraft"]:
-        print((release / "draft").read_text(encoding="utf-8"))
-    elif rest == ["--json", "assets", "--jq", ".assets[].name"]:
-        print("\\n".join(sorted(path.name for path in assets.iterdir())))
-    else:
-        fail(f"unexpected gh call: {args}", 64)
-elif command == "create" and rest[:2] == ["--draft", "--verify-tag"] and not release.exists():
-    assets.mkdir(parents=True)
-    (release / "draft").write_text("true", encoding="utf-8")
-elif command == "download" and rest[0::2] == ["--pattern", "--dir"]:
-    shutil.copy(assets / rest[1], Path(rest[3]) / rest[1])
-elif command == "upload":
-    if any((assets / Path(path).name).exists() for path in rest):
-        fail("asset under the same name already exists")
-    for path in rest:
-        shutil.copy(path, assets / Path(path).name)
-else:
-    fail(f"unexpected gh call: {args}", 64)
-"""
-_RELEASE_ASSETS = (
-    "SHA256SUMS",
-    "nexusshadowscan-0.1.1-py3-none-any.whl",
-    "nexusshadowscan-0.1.1.intoto.jsonl",
-    "nexusshadowscan-0.1.1.provenance.sigstore.json",
-    "nexusshadowscan-0.1.1.sbom.sigstore.json",
-    "nexusshadowscan-0.1.1.tar.gz",
-)
-
-
-@pytest.mark.parametrize(
-    "scenario,passes",
-    [
-        pytest.param("new", True, id="creates-a-draft-and-attaches-everything"),
-        pytest.param("published-with-wheel", True, id="adds-what-an-existing-release-lacks"),
-        pytest.param("rerun", True, id="identical-files-already-attached"),
-        pytest.param("different-asset", False, id="never-replaces-a-different-file"),
-        pytest.param("tag-elsewhere", False, id="tag-on-another-commit"),
-        pytest.param("no-tag", False, id="tag-missing"),
-        pytest.param("view-error", False, id="release-lookup-error-is-not-absence"),
-        pytest.param("unverified", False, id="bundle-verification-fails"),
-        pytest.param("tampered", False, id="distribution-changed-after-attestation"),
-    ],
-)
-def test_release_assets_job_executes_fail_closed(tmp_path: Path, scenario: str, passes: bool) -> None:
-    """Run the job's scripts against a stub GitHub CLI: a draft at most, verified files only, nothing replaced."""
-    if shutil.which("jq") is None:
-        pytest.skip("jq, which the hosted runner provides, is required")
-    steps = _load(GITHUB / "workflows" / "release.yml")["jobs"]["github-release-assets"]["steps"]
-    scripts = [step["run"] for step in steps if "run" in step]
-    candidate = tmp_path / "publication-input"
-    (candidate / "attestations").mkdir(parents=True)
-    provenance = {"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json", "dsseEnvelope": {"x": [1]}}
-    (candidate / "attestations" / "provenance.sigstore.json").write_text(
-        json.dumps(provenance, indent=2), encoding="utf-8"
-    )
-    (candidate / "attestations" / "sbom.sigstore.json").write_text('{"sbom": true}', encoding="utf-8")
-    (candidate / "nexusshadowscan-0.1.1-py3-none-any.whl").write_bytes(b"wheel")
-    (candidate / "nexusshadowscan-0.1.1.tar.gz").write_bytes(b"sdist")
-    sums = subprocess.run(
-        ["sha256sum", "nexusshadowscan-0.1.1-py3-none-any.whl", "nexusshadowscan-0.1.1.tar.gz"],
-        cwd=candidate,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
-    (candidate / "SHA256SUMS").write_text(sums, encoding="utf-8")
-    if scenario == "tampered":
-        (candidate / "nexusshadowscan-0.1.1.tar.gz").write_bytes(b"substituted after attestation")
-    state = tmp_path / "gh-state"
-    attached = state / "release" / "assets"
-    if scenario in {"published-with-wheel", "rerun", "different-asset"}:
-        attached.mkdir(parents=True)
-        (state / "release" / "draft").write_text("false", encoding="utf-8")
-        shutil.copy(candidate / "nexusshadowscan-0.1.1-py3-none-any.whl", attached)
-    if scenario == "rerun":
-        shutil.copy(candidate / "nexusshadowscan-0.1.1.tar.gz", attached)
-        shutil.copy(candidate / "SHA256SUMS", attached)
-        shutil.copy(candidate / "attestations" / "sbom.sigstore.json", attached / _RELEASE_ASSETS[4])
-        shutil.copy(candidate / "attestations" / "provenance.sigstore.json", attached / _RELEASE_ASSETS[3])
-        (attached / _RELEASE_ASSETS[2]).write_text(json.dumps(provenance, separators=(",", ":")) + "\n")
-    if scenario == "different-asset":
-        (attached / "SHA256SUMS").write_text("another candidate\n", encoding="utf-8")
-    stub = tmp_path / "bin"
-    stub.mkdir()
-    (stub / "gh").write_text(f"#!{sys.executable}\n{_GH_RELEASE_STUB}", encoding="utf-8")
-    (stub / "gh").chmod(0o700)
-    runner_temp = tmp_path / "runner-temp"
-    runner_temp.mkdir()
-    github_env = tmp_path / "github-env"
-    github_env.touch()
-    env = {
-        "PATH": f"{stub}{os.pathsep}{os.environ['PATH']}",
-        "GH_STATE": str(state),
-        "GH_TOKEN": "not-a-real-token",
-        "GITHUB_ENV": str(github_env),
-        "GITHUB_REPOSITORY": "aisecnomad/Nexus-ShadowScan",
-        "GITHUB_RUN_ID": "1",
-        "GITHUB_SERVER_URL": "https://github.com",
-        "GITHUB_SHA": _REVIEWED,
-        "RUNNER_TEMP": str(runner_temp),
-        "EXPECTED_VERSION": "0.1.1",
-        "TAGGED": {"tag-elsewhere": "b" * 40, "no-tag": ""}.get(scenario, _REVIEWED),
-        "VIEW_ERROR": "HTTP 502: Bad Gateway" if scenario == "view-error" else "",
-        "VERIFY_FAILS": "nexusshadowscan-0.1.1.tar.gz" if scenario == "unverified" else "",
-    }
-    state.mkdir(exist_ok=True)
-    result = None
-    for index, script in enumerate(scripts):
-        result = subprocess.run(
-            ["bash", "-e", "-c", script],
-            cwd=candidate if index == 0 else tmp_path,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-        if result.returncode != 0:
-            break
-        # The runner exports what a step appends to GITHUB_ENV to the steps after it.
-        for line in github_env.read_text(encoding="utf-8").splitlines():
-            key, _, value = line.partition("=")
-            env[key] = value
-    assert result is not None
-    assert (result.returncode == 0) is passes, result.stdout + result.stderr
-    assert "unexpected gh call" not in result.stderr
-    log = state / "calls.jsonl"
-    calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
-    release_calls = [call[1] for call in calls if call[0] == "release"]
-    # Nothing but a draft is ever created, and nothing attached is replaced or removed.
-    assert set(release_calls) <= {"view", "create", "download", "upload"}
-    if not passes:
-        assert "upload" not in release_calls and "create" not in release_calls, calls
-        if scenario == "different-asset":
-            assert "already has a different SHA256SUMS" in result.stderr
-        if scenario == "tag-elsewhere":
-            assert f"points at {'b' * 40}, not the reviewed commit {_REVIEWED}" in result.stderr
-        if scenario == "view-error":
-            assert "HTTP 502" in result.stderr
-        return
-    assert sorted(path.name for path in attached.iterdir()) == list(_RELEASE_ASSETS)
-    assert (state / "release" / "draft").read_text() == ("true" if scenario == "new" else "false")
-    assert release_calls.count("create") == (1 if scenario == "new" else 0)
-    assert release_calls.count("upload") == (0 if scenario == "rerun" else 1)
-    jsonl = (attached / "nexusshadowscan-0.1.1.intoto.jsonl").read_text(encoding="utf-8")
-    assert jsonl.splitlines() == [json.dumps(provenance, separators=(",", ":"))]
-    verified = {
-        (call[2], call[call.index("--bundle") + 1], "--predicate-type" in call)
-        for call in calls
-        if call[:2] == ["attestation", "verify"]
-    }
-    assert verified == {
-        ("nexusshadowscan-0.1.1-py3-none-any.whl", "nexusshadowscan-0.1.1.intoto.jsonl", False),
-        ("nexusshadowscan-0.1.1.tar.gz", "nexusshadowscan-0.1.1.intoto.jsonl", False),
-        ("SHA256SUMS", "nexusshadowscan-0.1.1.intoto.jsonl", False),
-        ("nexusshadowscan-0.1.1-py3-none-any.whl", "nexusshadowscan-0.1.1.sbom.sigstore.json", True),
-        ("nexusshadowscan-0.1.1.tar.gz", "nexusshadowscan-0.1.1.sbom.sigstore.json", True),
-    }
 
 
 def test_pages_requires_explicit_manual_publication_from_main() -> None:

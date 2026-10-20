@@ -1,7 +1,7 @@
 # Scan this checkout with its own scanner and finish with a COMPLETE report (exit 0).
 #
 # A plain `shadowscan code .` in this repository exits 3 (incomplete): a few files hold
-# deliberately limit-tripping test vectors or oversize benchmark data, and the scanner fails
+# deliberately limit-tripping test vectors or an uninitialized benchmark companion, and the scanner fails
 # closed on them instead of skipping them silently. This file names those paths, so the scan
 # completes, and a new file that trips a limit anywhere else still fails it. Two more paths are
 # excluded only to keep planted test inputs and retained logs out of the report; each entry says
@@ -21,10 +21,10 @@ connectors:
   - name: code.filesystem
     paths: [".."]
     exclude:
-      # Needed for a complete scan. Benchmark corpora and results: three data files above the 1 MB
-      # default max_file_size, and a planted shadow-agent estate, prompt-injection text and MCP
-      # launch commands whose findings would merge into this repository's own root-level findings.
-      - benchmarks
+      # The optional companion is a separate scope: ordinary checkouts do not initialize it.
+      # Its exact pin, preserved inputs, harness tests and complexity limits have a required CI job.
+      # Exclude its missing or initialized tree here; the local benchmarks/README.md stays scanned.
+      - benchmark-suite
       # Report content only; the scan completes without it. Retained AI-assisted review logs and
       # their evidence files, whose text would change what the root-level finding says.
       - archive

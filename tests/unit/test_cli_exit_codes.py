@@ -100,6 +100,7 @@ def test_incomplete_scan_exits_3_and_names_the_reason_category(tmp_path):
     assert result.exit_code == 3, result.output
     assert "scan incomplete (exit 3): oversize-file 1" in result.stderr
     assert "contract.json" not in result.stderr
+    assert "raise the limit with --max-file-size BYTES" in " ".join(result.stderr.split())
     assert json.loads(result.stdout)["summary"]["incomplete_reasons"] == {"oversize-file": 1}
 
 
@@ -113,6 +114,7 @@ def test_exit_3_line_names_undecodable_source_as_unparsed_input_whatever_its_pat
     assert result.exit_code == 3, result.output
     assert "scan incomplete (exit 3): unparsed-input 1;" in result.stderr
     assert json.loads(result.stdout)["summary"]["incomplete_reasons"] == {"unparsed-input": 1}
+    assert "did not parse or decode" in " ".join(result.stderr.split())
 
 
 def test_ci_profile_turns_a_declared_omission_into_exit_0(tmp_path):

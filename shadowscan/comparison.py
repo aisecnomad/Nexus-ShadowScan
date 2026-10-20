@@ -296,6 +296,16 @@ def build_collection_scope(
     return scope
 
 
+def _change_scope_reason(spec: ConnectorSpec) -> str | None:
+    if spec.name != "code.filesystem":
+        return None
+    if spec.config.get("staged"):
+        return "staged-scoped collection is not a repository inventory"
+    if spec.config.get("diff_base"):
+        return "diff-scoped collection is not a repository inventory"
+    return None
+
+
 def _collection_scope(
     config: ScanConfig,
     index: SignatureIndex,
@@ -328,10 +338,10 @@ def _collection_scope(
                 return {**unavailable, "reason": "configuration contains private comparison values"}
             inputs.append(live_input)
             continue
-        if spec.name == "code.filesystem" and spec.config.get("diff_base"):
+        if change_reason := _change_scope_reason(spec):
             # Which files were read depends on Git state outside the configuration, and
             # unchanged files are not read at all: absence is not evidence of resolution.
-            return {**unavailable, "reason": "diff-scoped collection is not a repository inventory"}
+            return {**unavailable, "reason": change_reason}
         options = dict(spec.config)
         for key in PATH_KEYS:
             val = options.get(key)

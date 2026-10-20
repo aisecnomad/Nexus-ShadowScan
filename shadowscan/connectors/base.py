@@ -224,7 +224,7 @@ class ConnectorContext:
         gateway_identity_key_stable: bool = False,
     ) -> None:
         self.config: dict[str, Any] = dict(config or {})
-        self.index: SignatureIndex = index or get_index()
+        self.index: SignatureIndex = index if index is not None else get_index()
         self.log = logger or logging.getLogger("shadowscan")
         self.input_path = input_path or self.config.get("input")
         self.workdir = workdir

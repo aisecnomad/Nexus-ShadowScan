@@ -40,7 +40,15 @@ from shadowscan.governance import apply_declared_governance
 from shadowscan.incremental import IncrementalCache
 from shadowscan.mcp_registry import LoadedRegistries, enrich_mcp_findings, load_registries
 from shadowscan.merge import merge
-from shadowscan.models import Finding, ScanResult, ScanStats, Surface, detached_copy, now_iso
+from shadowscan.models import (
+    Finding,
+    ScanResult,
+    ScanStats,
+    Surface,
+    detached_copy,
+    merged_incomplete_reasons,
+    now_iso,
+)
 from shadowscan.registries import (
     RECORD_KEY,
     REGISTRY_TYPES,
@@ -647,9 +655,7 @@ class _ConnectorRunner:
             combined.extend(child_findings)
             parts.append(child_stats)
         cached_count = sum(s.cached for s in parts)
-        reasons: Counter[str] = Counter()
-        for part in parts:
-            reasons.update(part.incomplete_reasons)
+        reasons = merged_incomplete_reasons(parts)
         stats = ScanStats(
             connector=spec.id,
             started_at=min(s.started_at for s in parts),
@@ -662,7 +668,7 @@ class _ConnectorRunner:
             skipped=all(s.skipped for s in parts),
             cached=cached_count == len(parts),
             coverage=combine_coverage_summaries(s.coverage for s in parts),
-            incomplete_reasons=dict(reasons),
+            incomplete_reasons=reasons,
             declared_omissions=sum(s.declared_omissions for s in parts),
             declared_paths=[path for s in parts for path in s.declared_paths][:MAX_DECLARED_PATHS],
         )
@@ -1777,6 +1783,52 @@ def _prune_related(findings: list[Finding]) -> None:
                 f.metadata[key] = remaining
             else:
                 f.metadata.pop(key, None)
+    _prune_group_disclosures(findings)
+
+
+def _prune_group_disclosures(findings: list[Finding]) -> None:
+    """Recompute compact group memberships and truncation counts over retained findings.
+
+    ``related_groups`` and ``related_truncation`` carry no finding IDs, but a
+    membership token held by fewer than two retained findings points at an
+    omitted finding, and a count of members below the confidence threshold
+    discloses findings the report leaves out. Memberships shrink to the
+    retained count or disappear; truncation entries keep the omission
+    disclosure itself and lose a token or count the report can no longer back.
+    """
+    counts: Counter[str] = Counter()
+    for f in findings:
+        for item in f.metadata.get("related_groups", []):
+            if isinstance(item, dict) and isinstance(item.get("group_id"), str):
+                counts[item["group_id"]] += 1
+    for f in findings:
+        memberships = [
+            {**item, "member_count": counts[item["group_id"]]}
+            for item in f.metadata.get("related_groups", [])
+            if isinstance(item, dict) and counts.get(item.get("group_id", ""), 0) >= 2
+        ]
+        if memberships:
+            f.metadata["related_groups"] = memberships
+        else:
+            f.metadata.pop("related_groups", None)
+        omissions = f.metadata.get("related_truncation")
+        if not isinstance(omissions, list):
+            continue
+        pruned: list[dict[str, Any]] = []
+        for item in omissions:
+            if not isinstance(item, dict):
+                continue
+            token = item.get("identifier_group_id")
+            if isinstance(token, str):
+                item = dict(item)
+                if counts.get(token, 0) >= 2:
+                    item["group_size"] = counts[token]
+                else:
+                    item.pop("identifier_group_id", None)
+                    item.pop("group_size", None)
+            if item not in pruned:
+                pruned.append(item)
+        f.metadata["related_truncation"] = pruned
 
 
 def _prune_runtime_links(findings: list[Finding]) -> None:

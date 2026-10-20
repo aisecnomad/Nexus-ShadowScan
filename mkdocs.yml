@@ -69,8 +69,6 @@ plugins:
 markdown_extensions:
   - admonition
   - pymdownx.details
-  # Mermaid fences render as diagrams (Material loads Mermaid in the browser);
-  # SECURITY.md and the threat model draw the trust boundaries with one.
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -102,7 +100,7 @@ nav:
       - Incomplete scans (exit 3): getting-started/incomplete-scans.md
       - Command reference: reference/cli.md
       - Stability policy: reference/stability.md
-      - Detection matrix: reference/detection-matrix.md
+      - Product guide: reference/product-guide.md
   - Connectors:
       - Overview: connectors.md
       - Code: connectors/code.md
@@ -116,6 +114,7 @@ nav:
       - Network: connectors/network.md
       - Runtime processes: connectors/runtime.md
       - Configuration reference: connectors/reference.md
+      - Connector inventory bot: operations/connector-inventory.md
   - Concepts:
       - Architecture: architecture.md
       - Signatures: signatures.md
@@ -134,6 +133,8 @@ nav:
       - Operational controls: operations/operational-controls.md
       - Scheduled drift detection: operations/drift.md
       - Fleet dashboard: operations/dashboard.md
+      - Terminal triage: operations/terminal-triage.md
+      - Local pre-commit scans: operations/code-precommit.md
       - Control evidence report: operations/controls.md
       - AI bill of materials: operations/ai-bom.md
       - OCSF events: operations/ocsf.md
@@ -146,6 +147,7 @@ nav:
       - OpenSSF Best Practices evidence: operations/openssf-best-practices.md
       - Security alert triage (2026-10-18): operations/security-alert-triage.md
       - External reviewer packet: operations/reviewer-packet.md
+      - Hardening log (2026-09-24): history/consolidated-review-2026-09-24.md
   - Community: community.md
   - Development:
       - Contributing: contributing.md
@@ -153,9 +155,11 @@ nav:
       - Governance: governance.md
       - "Proposals: agent governance": proposals/agent-governance.md
       - "Proposals: interactive triage": proposals/interactive-triage-tui.md
+      - "Proposal: DNS observation snapshots": proposals/dns-observation-snapshots.md
       - Maintainer onboarding: maintainer-onboarding.md
       - Merge policy enforcement: operations/merge-policy.md
       - Publishing a release: operations/publishing.md
+      - Threat model: security/threat-model.md
       - AI Review Gate: security/ai-review-gate.md
       - ADRs:
           - adrs/index.md
@@ -166,6 +170,7 @@ nav:
           - "ADR-005: Code scanner module boundaries": adrs/005-code-scanner-module-boundaries.md
   - API Reference:
       - api/index.md
+      - Compatibility and 1.0: api/compatibility.md
       - Core:
           - Engine: api/engine.md
           - Models: api/models.md
@@ -196,16 +201,11 @@ nav:
       - Utilities:
           - HTTP client: api/http.md
           - Redaction: api/redaction.md
-  - Security:
-      - Security policy: security.md
-      - Threat model: security/threat-model.md
-      - Controls and limits: security/controls.md
-      - Redaction: security/redaction.md
-      - "Hardening log (self-review)": security/hardening-log.md
-  - Changes:
-      - Release notes: release-notes.md
-      - Changelog: changelog.md
-      - Engineering log: engineering-log.md
+  - Security: security.md
+  - Release notes: release-notes.md
+  - Changelog: changelog.md
+  - Engineering log: engineering-log.md
+  - Archived change detail: history/changelog-detail.md
 
 extra:
   social:

@@ -18,7 +18,7 @@ from collections.abc import Callable, Iterator
 from configparser import ConfigParser
 from configparser import Error as ConfigError
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any
+from typing import IO, TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from shadowscan.utils.files import open_confined_directory, open_confined_file
@@ -484,16 +484,17 @@ def run_bounded_metadata(
     max_bytes: int = MAX_METADATA_OUTPUT_BYTES,
     strict_utf8: bool = False,
 ) -> subprocess.CompletedProcess[str]:
-    """Read metadata subprocess output within one combined byte/time budget.
+    """Read bounded Git metadata, decoding identifiers strictly when requested."""
+    result = run_bounded_git_bytes(cmd, env, ctx, timeout=timeout, max_bytes=max_bytes)
+    return subprocess.CompletedProcess(
+        cmd,
+        result.returncode,
+        stdout=result.stdout.decode("utf-8", errors="strict" if strict_utf8 else "replace"),
+        stderr="",
+    )
 
-    Git commit fields and diagnostics are untrusted and can expand far beyond
-    their compressed objects. Read both pipes incrementally, retain only bounded
-    stdout, and discard stderr after charging it to the same budget. Nonblocking
-    pipes avoid reader threads that could outlive cancellation. Every failed read
-    kills and reaps the process group before its descriptors are closed.
-    Immutable IDs and tree paths select strict_utf8 so invalid bytes cannot
-    silently become a different identifier; human author text remains lenient.
-    """
+
+def _metadata_deadline(ctx: ConnectorContext, timeout: float, max_bytes: int) -> float:
     if os.name != "posix":
         raise ValueError("bounded Git metadata access is unavailable on this platform")
     if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
@@ -506,10 +507,29 @@ def run_bounded_metadata(
     deadline = time.monotonic() + timeout
     if ctx.deadline is not None:
         deadline = min(deadline, ctx.deadline)
+    return deadline
+
+
+def run_bounded_git_bytes(
+    cmd: list[str],
+    env: dict[str, str],
+    ctx: ConnectorContext,
+    *,
+    timeout: float = 20.0,
+    max_bytes: int = MAX_METADATA_OUTPUT_BYTES,
+    stdin: IO[bytes] | None = None,
+) -> subprocess.CompletedProcess[bytes]:
+    """Read exact bytes under one combined stdout/stderr byte and wall-time budget.
+
+    A caller-supplied regular temporary input file permits batch object reads without
+    a pipe writer that could deadlock. Subprocess groups are killed and reaped on
+    every failed read. No decoder can change the bytes of a staged source file.
+    """
+    deadline = _metadata_deadline(ctx, timeout, max_bytes)
     proc = subprocess.Popen(  # noqa: S603 - argv list, never a shell; refs validated and the environment stripped by safe_git_env
         cmd,
         env=env,
-        stdin=subprocess.DEVNULL,
+        stdin=stdin if stdin is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         bufsize=0,
@@ -542,23 +562,14 @@ def run_bounded_metadata(
                         raise MetadataOutputLimitError("git metadata output limit exceeded")
                     if key.data:
                         stdout.extend(chunk)
-        while True:
-            ctx.check_deadline()
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise MetadataTimeoutError("git metadata completion deadline exceeded")
-            try:
-                status = proc.wait(timeout=min(remaining, 0.05))
-                break
-            except subprocess.TimeoutExpired:
-                continue
+        status = _wait_for_metadata(proc, ctx, deadline)
         if status != 0:
             _stop_clone(proc)
         return subprocess.CompletedProcess(
             cmd,
             status,
-            stdout=stdout.decode("utf-8", errors="strict" if strict_utf8 else "replace"),
-            stderr="",
+            stdout=bytes(stdout),
+            stderr=b"",
         )
     except BaseException:
         _stop_clone(proc)
@@ -568,6 +579,18 @@ def run_bounded_metadata(
             proc.stdout.close()
         if proc.stderr is not None:
             proc.stderr.close()
+
+
+def _wait_for_metadata(proc: subprocess.Popen[bytes], ctx: ConnectorContext, deadline: float) -> int:
+    while True:
+        ctx.check_deadline()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise MetadataTimeoutError("git metadata completion deadline exceeded")
+        try:
+            return proc.wait(timeout=min(remaining, 0.05))
+        except subprocess.TimeoutExpired:
+            continue
 
 
 def exceeds_clone_size(size: object, unit: int, max_bytes: int) -> bool:

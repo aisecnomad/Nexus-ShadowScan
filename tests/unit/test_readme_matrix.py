@@ -1,4 +1,4 @@
-"""The generated detection matrix (docs/reference/detection-matrix.md) stays derived from the shipped catalogs."""
+"""The generated README detection matrix stays derived from the shipped catalogs."""
 
 from __future__ import annotations
 

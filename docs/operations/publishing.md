@@ -31,11 +31,13 @@ or replace independent human review.
 | `publication-input` | Reassembles the attested bytes and checks for exactly one wheel and one sdist of the same version. | none |
 | `publication-gate` | Runs only when `publish` is `testpypi` or `pypi`. Requires one wheel and one sdist whose digests match, a public release version (no `.dev`, `.post` or local part), and, for `pypi`, the tag `v<version>` on the reviewed commit. | `contents: read` |
 | `publish` | Waits for approval in the protected environment named by `publish`. Checks out nothing, verifies the digests, and uploads only that wheel and sdist with [`pypa/gh-action-pypi-publish`](https://github.com/pypa/gh-action-pypi-publish), which checks their metadata and adds PEP 740 attestations. | `id-token` only |
+| `release-assets` | Optional, after successful `pypi` publication and another protected `pypi` approval. Verifies the original bundles against the exact source SHA and release workflow, checks the existing tag/release, and attaches the candidate and bundles without replacing mismatched assets. Never creates a release or tag. | `contents: write` only |
 
 With the default `publish: none`, the workflow builds and attests a review
 bundle and uploads nothing. `tests/test_repository_policy.py` fails CI if any
 of these gates is removed, or if any other workflow, job or command uploads a
-package.
+package. `attach_github_release` defaults to `false`. It is effective only
+with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
 
 ## One-time setup
 
@@ -77,7 +79,7 @@ package.
 1. **Prepare the candidate.** Set the same version in `pyproject.toml`,
    `shadowscan/__init__.py` and `CITATION.cff` (CI checks that they match).
    Date the release headings in `CHANGELOG.md`, `docs/engineering-log.md` and
-   `docs/release-notes.md` and remove "unreleased" from them. Merge through the normal review process.
+   `RELEASE_NOTES.md` and remove "unreleased" from them. Merge through the normal review process.
 2. **Review and accept the exact commit**, as the
    [release process](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/GOVERNANCE.md#release-process)
    requires. A green CI run is not that review.
@@ -129,6 +131,14 @@ package.
    `ruleset_readback`, and `publish: pypi`, then approve the `pypi`
    deployment. The gate rejects the
    run unless `v<version>` points at `expected_commit`.
+
+   To attach evidence automatically, first create a **draft GitHub release**
+   for that existing tag, with the version's release notes. Set
+   `-f attach_github_release=true` on this production dispatch. After the
+   index upload succeeds, approve the separate `release-assets` job in the
+   protected `pypi` environment. This attaches to your existing draft; it
+   does not publish it. A draft supports attachment before GitHub makes an
+   immutable release final. Existing mutable releases are also supported.
 6. **Verify what was published.** Both files must be on the index, and each
    must match its attestation. Download them into a hash-locked environment,
    so that preparing the sdist's metadata uses the locked backend rather than
@@ -171,85 +181,72 @@ package.
    commit with that backend; treat it as a release incident. Release 0.1.2
    predates the sdist: it was a wheel built with `pip wheel` from a
    `git archive`, and was attested as `aisecnomad/Project-Nexus` before the rename.
-7. **Review and publish the draft GitHub release.** After a `pypi` upload,
-   the `github-release-assets` job of the same run downloads the attested
-   `publication-input` artifact, checks it with `sha256sum --check`, verifies
-   every file against its own Sigstore bundle, and attaches to a **draft**
-   release for `v<version>` (creating the draft when the tag has no release,
-   or adding to an existing release):
+7. **Optionally, publish the GitHub release by hand** after checking the
+   index and its fresh-install smoke test. If step 5 attached the evidence to
+   your draft, verify the job's asset digest receipt and publish that draft.
+   The workflow never creates or publishes a GitHub release.
 
-   | Asset | What it is |
-   | --- | --- |
-   | `nexusshadowscan-<version>-py3-none-any.whl`, `nexusshadowscan-<version>.tar.gz` | the exact files uploaded to PyPI |
-   | `SHA256SUMS` | digests of the candidate files |
-   | `nexusshadowscan-<version>.provenance.sigstore.json` | Sigstore bundle of the SLSA provenance, covering every candidate file |
-   | `nexusshadowscan-<version>.sbom.sigstore.json` | Sigstore bundle of the CycloneDX SBOM attestation, covering the wheel and sdist |
-   | `nexusshadowscan-<version>.intoto.jsonl` | the provenance bundle as JSON Lines, one bundle per line |
+   The attachment job executes the standard-library helper
+   `tools/release/assets.py` from the reviewed source. It verifies the
+   original Sigstore bundles with GitHub CLI, constraining the repository,
+   `release.yml`, `refs/heads/main`, source SHA, signer SHA and hosted-runner
+   identity. It checks the candidate's recorded run, checksums and tag, then
+   uploads all checksummed candidate files (including the wheel, sdist,
+   runtime SBOM and dependency locks), `SHA256SUMS`,
+   `provenance.sigstore.json` and `sbom.sigstore.json`.
+   It reads back GitHub's SHA-256 asset digests. A retry skips matching assets;
+   a conflicting or unverifiable asset fails, without `--clobber`.
+   Partial upload failures must be investigated before retrying the failed
+   job. Do not rerun the successful PyPI upload just to retry attachments.
 
-   The job has only `contents: write`, checks out nothing, has no OIDC token,
-   re-reads the tag and refuses to attach when it does not point at the run's
-   commit, never creates or moves a tag, never publishes or edits a release,
-   and never replaces an attached file (an identical one is skipped; a
-   different one fails the job). It does not run for `testpypi` or `none`, or
-   when the upload failed.
+   For manual attachment, download `release-publication-input-<SHA>` from the
+   exact production run. A verification-only check is:
 
-   The `.sigstore.json` and `.intoto.jsonl` suffixes are the ones OpenSSF
-   Scorecard's Signed-Releases check counts as signatures and provenance
-   (`probes/releasesAreSigned` and `probes/releasesHaveProvenance` in
-   ossf/scorecard). Scorecard sees only published releases, so the check
-   changes only once the maintainer publishes the draft.
+   ```bash
+   python -m tools.release.assets --directory publication-input \
+     --repository aisecnomad/Nexus-ShadowScan --commit "$commit" --run-id "$run_id"
+   ```
 
-   The maintainer then opens the draft, replaces its notes with the version's
-   `docs/release-notes.md` section, checks that the assets match the table above
-   and `SHA256SUMS`, and publishes it by hand. Anyone can check a downloaded
-   file without the attestation store, against the bundles in the same
-   release:
+   Set `commit` and `run_id` to the reviewed SHA and successful production
+   run first. Only a maintainer adds `--upload` to attach the verified files
+   to an existing release; the default command performs no mutation.
+
+   The provenance bundle covers every candidate file, `SHA256SUMS` included.
+   Anyone can verify a downloaded file against the original bundle from the
+   same release:
 
    ```bash
    gh attestation verify "nexusshadowscan-$version-py3-none-any.whl" \
-     --repo aisecnomad/Nexus-ShadowScan \
-     --bundle "nexusshadowscan-$version.intoto.jsonl" \
+     --repo aisecnomad/Nexus-ShadowScan --bundle provenance.sigstore.json \
      --signer-workflow aisecnomad/Nexus-ShadowScan/.github/workflows/release.yml \
-     --source-ref refs/heads/main --deny-self-hosted-runners
-   gh attestation verify "nexusshadowscan-$version-py3-none-any.whl" \
-     --repo aisecnomad/Nexus-ShadowScan \
-     --bundle "nexusshadowscan-$version.sbom.sigstore.json" \
-     --predicate-type https://cyclonedx.org/bom
-   sha256sum --check --ignore-missing SHA256SUMS
+     --source-ref refs/heads/main --source-digest "$commit" --signer-digest "$commit" \
+     --deny-self-hosted-runners
    ```
 
-   **Backfilling v0.1.2 (maintainer-run, once).** Release 0.1.2 predates this
-   job and carries only the wheel and the evidence zip. Its attestations exist
-   in the attestation store; it was attested as `aisecnomad/Project-Nexus` before the rename. A maintainer
-   with write access downloads the wheel's attestations, checks them, and
-   attaches them to the existing release. Nothing here changes the published
-   wheel, the tag or the notes, and `gh release upload` without `--clobber`
-   refuses to replace an existing asset.
+   For the SBOM bundle, add `--predicate-type https://cyclonedx.org/bom` and
+   use `--bundle sbom.sigstore.json`. Verification identifies build provenance;
+   it does not prove independent review or tenant acceptance.
 
-   ```bash
-   mkdir v0.1.2-backfill && cd v0.1.2-backfill
-   gh release download v0.1.2 --repo aisecnomad/Nexus-ShadowScan \
-     --pattern 'nexusshadowscan-0.1.2-py3-none-any.whl'
-   wheel=nexusshadowscan-0.1.2-py3-none-any.whl
-   # Writes sha256:<digest>.jsonl, one Sigstore bundle per line.
-   gh attestation download "$wheel" --repo aisecnomad/Nexus-ShadowScan
-   digest="$(sha256sum "$wheel" | cut -d' ' -f1)"
-   bundles="sha256:$digest.jsonl"
-   gh attestation verify "$wheel" --repo aisecnomad/Nexus-ShadowScan --bundle "$bundles"
-   # Split the provenance from any SBOM attestation by predicate type.
-   jq -c 'select((.dsseEnvelope.payload | @base64d | fromjson | .predicateType)
-     | startswith("https://slsa.dev/provenance/"))' "$bundles" \
-     > nexusshadowscan-0.1.2.intoto.jsonl
-   head -n 1 nexusshadowscan-0.1.2.intoto.jsonl > nexusshadowscan-0.1.2.provenance.sigstore.json
-   gh attestation verify "$wheel" --repo aisecnomad/Nexus-ShadowScan \
-     --bundle nexusshadowscan-0.1.2.intoto.jsonl
-   gh release upload v0.1.2 --repo aisecnomad/Nexus-ShadowScan \
-     nexusshadowscan-0.1.2.intoto.jsonl nexusshadowscan-0.1.2.provenance.sigstore.json
-   ```
+   As checked on October 20, 2026, the upstream OpenSSF Scorecard
+   [signature probe](https://github.com/ossf/scorecard/blob/main/probes/releasesAreSigned/impl.go)
+   recognizes `.sigstore.json` assets by filename, without verifying their
+   signatures. Our helper verifies the original bundles cryptographically;
+   their filenames qualify for Scorecard's signature category, worth 8 per
+   release under its current
+   [evaluator](https://github.com/ossf/scorecard/blob/main/checks/evaluation/signed_releases.go).
+   Its separate
+   [provenance probe](https://github.com/ossf/scorecard/blob/main/probes/releasesHaveProvenance/impl.go)
+   recognizes `.intoto.jsonl` filenames for the 10-point category. Preserve
+   the original Sigstore format; do not rename bundles to satisfy that check.
 
-   If `jq` selects nothing or more than one provenance line, stop and check
-   the downloaded file by hand rather than attaching it. If verification
-   rejects the current repository name for 0.1.2, verify 0.1.2 with `--repo aisecnomad/Project-Nexus` instead.
+   The probes inspect the first five release entries and skip entries without
+   assets. The evaluator rounds down the average of the resulting per-release
+   scores, including zero for releases with neither recognized asset type.
+   Attaching these verified bundles therefore does not guarantee a
+   Signed-Releases score of 10. The
+   [aggregate score](https://github.com/ossf/scorecard#aggregate-score)
+   also weights other checks by risk; an overall score above 8.5 requires an
+   observed Scorecard result and is not promised by this workflow.
 8. **Open the next candidate.** Bump the version (for example to `0.1.3`) and
    add a new unreleased section to the changelog and release notes.
 

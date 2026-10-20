@@ -25,7 +25,7 @@ from tools.evaluation.evaluate import (
     summarize,
 )
 
-SAB_HOLDOUT = Path(__file__).parents[1] / "benchmarks" / "sab-holdout" / "corpus.json"
+SAB_HOLDOUT = Path(__file__).parents[1] / "tools" / "evaluation" / "sab_holdout_corpus.json"
 
 
 def _corpus(

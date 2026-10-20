@@ -1,7 +1,7 @@
 # Command reference
 
 Every `shadowscan` command and its options. The
-[README](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/README.md#command-reference)
+[README](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/README.md)
 lists them in one table; `shadowscan <command> --help` prints the options of
 the installed version, which is authoritative where this page and it differ.
 [`cli-surface.json`](cli-surface.json) records the same surface for the
@@ -41,7 +41,7 @@ shadowscan code . --inventory ./inventory --fail-on high   # with inventory reco
 | `--profile ci` | Declare unread links, non-regular entries, unparsed content, analysis limits and, with credential detection off, oversize files under test, fixture, documentation, example and generated paths (below the file's project root) as counted omissions instead of gaps; every other gap is judged by the coverage budget as usual, and agent configuration and credential limits are never declared (conflicts with `--strict-coverage` and `--max-coverage-gap 0`) |
 | `--triage` | Fast subset scan (manifests, MCP/agent configs, flows, IaC only) |
 | `--max-file-size BYTES` | Read files up to this size (default 1,000,000); a larger analyzable file is a coverage gap |
-| `--preflight` | Local PATHS only: list the files over the size limit, links and other static coverage gaps a full scan would record, reading no other content; exits 3 when they would leave the scan incomplete, 0 otherwise; terminal output only, no finding is reported (see [incomplete scans](../getting-started/incomplete-scans.md)) |
+| `--preflight` | Local PATHS only: check that each root can be opened safely (with `--quick`, the staged snapshot) and, for an ordinary root, list the files over the size limit, links and other static coverage gaps a full scan would record, reading no other content; emits `shadowscan.code-preflight/v1` (table or `--format json`), no finding; exits 3 when a root is blocked or a static gap would leave the scan incomplete, 0 otherwise (see [incomplete scans](../getting-started/incomplete-scans.md) and [staged-file checks](../operations/code-precommit.md#what-preflight-checks)) |
 
 ### `shadowscan scan -c CONFIG`
 

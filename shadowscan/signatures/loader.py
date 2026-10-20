@@ -256,7 +256,35 @@ def _pack_files(directory: Path, *, custom: bool) -> list[Path]:
 
 
 class _UniqueKeyLoader(BoundedSafeLoader):
-    """Reject duplicate YAML keys instead of silently retaining the last value."""
+    """Reject duplicate keys, optionally accelerating only YAML event parsing.
+
+    The native loader supplies events, never composed nodes or Python objects:
+    BoundedSafeLoader retains every composition, expansion and construction
+    check. Platforms without LibYAML keep the original Python parser.
+    """
+
+    def __init__(self, stream: Any) -> None:
+        # Enforce the original input budget before giving bytes to LibYAML.
+        super().__init__(stream)
+        native = getattr(yaml, "CSafeLoader", None)
+        # A readable stream was consumed by super(); keep its original parser.
+        self._events = native(stream) if native is not None and isinstance(stream, (str, bytes)) else None
+
+    def check_event(self, *choices: Any) -> bool:
+        if self._events is not None:
+            return bool(self._events.check_event(*choices))
+        return bool(super().check_event(*choices))
+
+    def peek_event(self) -> Any:
+        return self._events.peek_event() if self._events is not None else super().peek_event()
+
+    def get_event(self) -> Any:
+        return self._events.get_event() if self._events is not None else super().get_event()
+
+    def dispose(self) -> None:
+        if self._events is not None:
+            self._events.dispose()
+        super().dispose()
 
 
 def _unique_mapping(loader: _UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False) -> dict[str, Any]:

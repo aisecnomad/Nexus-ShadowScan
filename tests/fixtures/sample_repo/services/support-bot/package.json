@@ -4,7 +4,6 @@
   "dependencies": {
     "ai": "^4.0.0",
     "@ai-sdk/openai": "^1.0.0",
-    "@anthropic-ai/claude-code": "2.1.304",
     "@anthropic-ai/sdk": "^0.30.0",
     "@modelcontextprotocol/sdk": "^1.2.0",
     "@slack/bolt": "^3.0.0",

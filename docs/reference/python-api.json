@@ -765,6 +765,7 @@
       },
       "Surface": {"kind": "enum", "bases": ["builtins.str", "enum.Enum"], "members": {"CODE": "code", "IDENTITY": "identity", "GATEWAY": "gateway", "LOWCODE": "lowcode", "SAAS": "saas", "CLOUD": "cloud", "ENDPOINT": "endpoint", "NETWORK": "network", "RUNTIME": "runtime"}},
       "detached_copy": {"kind": "function", "signature": "(finding: Any) -> Finding"},
+      "merged_incomplete_reasons": {"kind": "function", "signature": "(parts: Iterable[ScanStats]) -> dict[str, int]"},
       "now_iso": {"kind": "function", "signature": "() -> str"}
     },
     "shadowscan.registries": {
@@ -998,7 +999,8 @@
         },
         "members": {
           "compile": {"kind": "method", "signature": "(self) -> None"},
-          "compiled": {"kind": "property"}
+          "compiled": {"kind": "property"},
+          "defer": {"kind": "method", "signature": "(self) -> None"}
         }
       },
       "Signature": {
@@ -1021,7 +1023,7 @@
           "source": "str | None"
         },
         "members": {
-          "validate": {"kind": "method", "signature": "(self) -> None"}
+          "validate": {"kind": "method", "signature": "(self, *, defer: bool = False) -> None"}
         }
       },
       "SignatureIndex": {
@@ -1055,7 +1057,7 @@
         }
       },
       "get_index": {"kind": "function", "signature": "(extra_dirs: list[str] | None = None, reload: bool = False, *, allow_override: bool = False) -> SignatureIndex"},
-      "load_signatures": {"kind": "function", "signature": "(extra_dirs: Sequence[str | os.PathLike[str]] | None = None, include_builtin: bool = True, *, allow_override: bool = False, libyaml_builtin: bool = True) -> list[Signature]"}
+      "load_signatures": {"kind": "function", "signature": "(extra_dirs: Sequence[str | os.PathLike[str]] | None = None, include_builtin: bool = True, *, allow_override: bool = False, libyaml_builtin: bool = True, defer_builtin: bool = False) -> list[Signature]"}
     },
     "shadowscan.triage": {
       "PROVIDERS": {"kind": "constant", "type": "dict"},

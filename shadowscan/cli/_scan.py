@@ -153,6 +153,19 @@ def _code_options(
 )
 @click.option("--no-secrets", is_flag=True, help="skip credential detection")
 @click.option(
+    "--quick",
+    is_flag=True,
+    help="scan changed staged Git blobs only (default PATH: .); no unstaged edits or whole-repository claim",
+)
+@click.option(
+    "--preflight",
+    is_flag=True,
+    help=(
+        "check local root access and quick-mode inputs, and list the static coverage gaps (files over "
+        "--max-file-size, links) a full scan would record, without running a scan"
+    ),
+)
+@click.option(
     "--strict-coverage",
     is_flag=True,
     help="strict accounting: every coverage gap is an error (exit 3), none budgeted, discounted or declared",
@@ -187,15 +200,6 @@ def _code_options(
     help="read files up to this size; a larger analyzable file is a coverage gap (default: 1000000)",
 )
 @click.option(
-    "--preflight",
-    is_flag=True,
-    help=(
-        "local PATHS only: list the files over --max-file-size, links and other static coverage gaps a "
-        "full scan would record, reading no other content; exits 3 when they would leave it incomplete, "
-        "0 otherwise; prints to the terminal only"
-    ),
-)
-@click.option(
     "--diff-base",
     default=None,
     help=(
@@ -213,18 +217,21 @@ def code(
     exclude: tuple[str, ...],
     no_default_excludes: bool,
     no_secrets: bool,
+    quick: bool,
+    preflight: bool,
     strict_coverage: bool,
     include_tests: bool,
     triage: bool,
     profile: str | None,
     max_file_size: int | None,
-    preflight: bool,
     diff_base: str | None,
     opts: ScanOptions,
 ) -> None:
     """Scan local directories and/or remote repositories for agent code, MCP, coding agents, IaC and
     secrets."""
     specs: list[ConnectorSpec] = []
+    if quick:
+        paths = _quick_paths(paths, bool(github_org or github_repo or gitlab_group or diff_base or triage))
     common = _code_options(
         exclude,
         no_default_excludes,
@@ -236,11 +243,14 @@ def code(
         opts.max_coverage_gap,
         max_file_size,
     )
+    if quick:
+        common["staged"] = True
+    if preflight:
+        _code_preflight(
+            paths, common, opts, remote=bool(github_org or github_repo or gitlab_group), mode=mode
+        )
     if diff_base and not paths:
         raise click.UsageError("--diff-base applies only to local PATHS")
-    if preflight:
-        _check_preflight(paths, bool(github_org or github_repo or gitlab_group), triage, diff_base, opts)
-        common["preflight"] = True
     if mode and not (github_org or github_repo or gitlab_group):
         raise click.UsageError("--mode applies only to --github-org, --github-repo or --gitlab-group")
     if paths:
@@ -265,25 +275,25 @@ def code(
         specs.append(ConnectorSpec(name="code.gitlab", config=gl))
     if not specs:
         raise click.UsageError("give at least one PATH, --github-org/--github-repo or --gitlab-group")
-    _cli._run_scan(opts.config(specs), opts, preflight=preflight)
+    _cli._run_scan(opts.config(specs), opts)
 
 
-def _check_preflight(
-    paths: tuple[str, ...], remote: bool, triage: bool, diff_base: str | None, opts: ScanOptions
+def _code_preflight(
+    paths: tuple[str, ...], common: dict[str, Any], opts: ScanOptions, *, remote: bool, mode: str | None
 ) -> None:
-    """Refuse a preflight that could be mistaken for a scan or that cannot be judged statically.
+    if remote or mode:
+        raise click.UsageError("--preflight supports local PATHS only")
+    from shadowscan.cli._code_preflight import code_preflight
 
-    A preflight reports no finding, so it never writes a report file or a machine-readable
-    format that a pipeline might keep as a scan result; and it reads local trees only.
-    """
-    if not paths or remote:
-        raise click.UsageError("--preflight applies only to local PATHS")
-    if triage or diff_base:
-        raise click.UsageError("--preflight conflicts with --triage and --diff-base")
-    if opts.output or opts.fmt != "table":
-        raise click.UsageError("--preflight prints to the terminal only; drop --output and --format")
-    if opts.incremental:
-        raise click.UsageError("--preflight reads no content to reuse; drop --incremental")
+    code_preflight(paths or (".",), common, opts)
+
+
+def _quick_paths(paths: tuple[str, ...], conflict: bool) -> tuple[str, ...]:
+    if conflict:
+        raise click.UsageError(
+            "--quick requires local Git roots and conflicts with remote, diff-base and triage"
+        )
+    return paths or (".",)
 
 
 # ------------------------------------------------------------------- gateway

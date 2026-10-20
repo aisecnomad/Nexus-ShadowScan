@@ -211,7 +211,7 @@ def _remediation_lines(reasons: dict[str, int]) -> list[str]:
 
 
 def _incomplete_explanation(result: ScanResult) -> str:
-    """Why the scan exits 3, by reason category, and what to do about each; the diagnostics stay in the report.
+    """Why the scan exits 3, by reason category, and what to do about each; details stay in the report.
 
     The categories come from the connectors' own message vocabulary and name no path or value,
     so they can go to a terminal or a CI log that the private report does not reach. Nor does
@@ -234,46 +234,13 @@ def _incomplete_explanation(result: ScanResult) -> str:
     return note
 
 
-def _static_gap_reasons(result: ScanResult) -> dict[str, int]:
-    """The reason counts of a preflight, without the subset marker every preflight carries."""
-    return {k: v for k, v in result.summary()["incomplete_reasons"].items() if k != "subset-scan"}
-
-
-def _preflight_exit_code(result: ScanResult) -> int:
-    """3 when the static gaps a preflight found would leave a full scan incomplete, else 0."""
-    summary = result.summary()
-    if _static_gap_reasons(result) or not summary["incomplete_reasons"]:
-        # A connector that failed or was skipped recorded no reason at all.
-        return 3
-    return 0
-
-
-def _preflight_explanation(result: ScanResult, code: int) -> str:
-    """The preflight verdict for stderr: path-free, as the exit-3 explanation is."""
-    if code == 0:
-        return (
-            "preflight: no static coverage gap found; nothing was analyzed, so a full scan can still be "
-            "incomplete for content (unparsed input, matching budgets, deadlines)"
-        )
-    reasons = _static_gap_reasons(result)
-    detail = incomplete_reasons_text(reasons) if reasons else "a connector was skipped or recorded no diagnostic"
-    note = (
-        f"preflight: a full scan would be incomplete (exit 3): {detail}; the files are listed above "
-        "and under stats[].coverage.details"
-    )
-    remediation = _remediation_lines(reasons)
-    if remediation:
-        note += "\nto resolve:\n" + "\n".join(remediation)
-    return note
-
-
-def _explain_incomplete(result: ScanResult, *, preflight: bool = False, code: int = 3) -> None:
-    """Print the exit-3 or preflight explanation on stderr, best effort: a closed stream must not change the exit."""
-    text = _preflight_explanation(result, code) if preflight else _incomplete_explanation(result)
+def _explain_incomplete(result: ScanResult) -> None:
+    """Print the exit-3 explanation on stderr, best effort: a closed stream must not change the exit."""
+    text = _incomplete_explanation(result)
     # Each line is made terminal-safe on its own, so the line breaks between them stay line breaks.
     safe = "\n".join(terminal_text(line) for line in text.split("\n"))
     try:
-        err_console.print(Text(safe, style="yellow" if code else "green"))
+        err_console.print(Text(safe, style="yellow"))
     except Exception:  # noqa: BLE001, S110 - output streams may already be closed; the exit code must not change
         pass
 
@@ -329,7 +296,6 @@ def _run_and_emit(
     only: list[str] | None = None,
     *,
     extra_stats: list[ScanStats] | None = None,
-    preflight: bool = False,
 ) -> None:
     # Reuse a CLI-option watchdog already running during command preparation;
     # YAML-only and direct callers arm a local watchdog for engine/output work.
@@ -344,9 +310,7 @@ def _run_and_emit(
     owned_deadline = ctx is None or ctx.meta.get(_JOB_DEADLINE_CONTEXT_KEY) is None
     job_deadline = watchdog.expires_at if watchdog is not None else None
     try:
-        _run_and_emit_with_deadline(
-            cfg, fmt, output, verbose, max_rows, only, extra_stats, job_deadline, preflight=preflight
-        )
+        _run_and_emit_with_deadline(cfg, fmt, output, verbose, max_rows, only, extra_stats, job_deadline)
     finally:
         if watchdog is not None and owned_deadline:
             watchdog.cancel()
@@ -361,13 +325,10 @@ def _run_and_emit_with_deadline(
     only: list[str] | None = None,
     extra_stats: list[ScanStats] | None = None,
     job_deadline: float | None = None,
-    *,
-    preflight: bool = False,
 ) -> None:
     """Run the scan and emit its report; ``extra_stats`` (command-level diagnostics) join its stats.
 
-    ``job_deadline`` is the armed watchdog's ``time.monotonic()`` expiry, if any. A ``preflight``
-    exits 0 when it found no static gap and 3 when it did, whatever its subset marker says.
+    ``job_deadline`` is the armed watchdog's ``time.monotonic()`` expiry, if any.
     """
 
     def progress(cid: str, msg: str) -> None:
@@ -415,7 +376,7 @@ def _run_and_emit_with_deadline(
                     " workers[/red]",
                 )
             raise
-        code = _preflight_exit_code(result) if preflight else _exit_code(result, cfg.fail_on)
+        code = _exit_code(result, cfg.fail_on)
         if engine.abandoned_workers:
             # A timed-out connector's thread may still be blocked in an SDK call.
             # Python joins worker threads at interpreter exit, which would hold the
@@ -424,8 +385,8 @@ def _run_and_emit_with_deadline(
             _exit_abandoned_workers(
                 code, _abandoned_exit_message(result, code, len(engine.abandoned_workers))
             )
-        if preflight or code == 3:
-            _explain_incomplete(result, preflight=preflight, code=code)
+        if code == 3:
+            _explain_incomplete(result)
         sys.exit(code)
     except KeyboardInterrupt:
         # Interpreter exit would join the blocked workers, so keep an exit
@@ -704,7 +665,6 @@ def _run_scan(
     only: list[str] | None = None,
     *,
     extra_stats: list[ScanStats] | None = None,
-    preflight: bool = False,
 ) -> None:
     """Apply the shared security options, then run the scan and emit its report."""
     _apply_security_options(cfg, opts)
@@ -717,7 +677,6 @@ def _run_scan(
         opts.max_rows,
         only=only,
         extra_stats=extra_stats,
-        preflight=preflight,
     )
 
 
@@ -822,6 +781,7 @@ from shadowscan.cli import (  # noqa: E402, F401
     _merge,
     _scan,
     _signatures,
+    _triage,
 )
 
 # Backward-compat re-exports: tests monkeypatch these via "shadowscan.cli.<name>".
@@ -833,6 +793,7 @@ from shadowscan.reporters.dashboard import render_dashboard as render_dashboard 
 # modules import this package, and an import back from them would be a cycle.
 _COMMAND_MODULES = {
     "code": "_scan",
+    "triage_command": "_triage",
     "controls_command": "_controls",
     "dashboard_command": "_dashboard",
     "diff": "_diff",

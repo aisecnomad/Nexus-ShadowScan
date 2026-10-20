@@ -232,7 +232,7 @@ and observations in an offline export are not authenticated publisher evidence.
 Several of these rules were changed with the errors of the 2026-10-11
 ShadowBench estate run in view, so a later ShadowScan run on that estate is
 in-sample and does not measure them; see the estate README's
-[Bias and limits](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/estate/README.md#bias-and-limits).
+[Bias and limits](https://github.com/aisecnomad/Nexus-ShadowScan/blob/0792106b8d2cc09517f7f4ee2eeabf4f8eb8da2d/benchmarks/shadowbench/estate/README.md#bias-and-limits).
 
 ### October 14 repository rename, source distribution and OCSF vendor name (unreleased)
 

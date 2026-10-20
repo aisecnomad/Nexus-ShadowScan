@@ -30,19 +30,19 @@ install install-dev: ensure-python
 
 .PHONY: lint
 lint: ## Run ruff linter
-	ruff check shadowscan tests tools benchmarks
+	ruff check shadowscan tests tools
 
 .PHONY: format
 format: ## Run ruff formatter
-	ruff format shadowscan tests tools benchmarks
+	ruff format shadowscan tests tools
 
 .PHONY: format-check
 format-check: ## Check ruff formatting without changes
-	ruff format --check shadowscan tests tools benchmarks
+	ruff format --check shadowscan tests tools
 
 .PHONY: typecheck
 typecheck: ## Run mypy type checker
-	mypy shadowscan tools benchmarks
+	mypy shadowscan tools
 
 .PHONY: test
 test: ## Run the suite serially with coverage and the aggregate floor, as the traced CI leg does
@@ -225,16 +225,12 @@ cli-surface: ## Regenerate docs/reference/cli-surface.json, the frozen command-l
 python-api: ## Regenerate docs/reference/python-api.json, the frozen public Python API
 	python -m tools.public_api
 
-.PHONY: connector-inventory
-connector-inventory: ## Regenerate docs/connectors/inventory.json, the machine-readable connector inventory
-	python -m tools.connector_inventory
-
 .PHONY: readme-matrix
-readme-matrix: ## Regenerate the detection matrix (docs/reference/detection-matrix.md) from the signature packs and connector classes
+readme-matrix: ## Regenerate the README detection matrix from the signature packs and connector classes
 	python -m tools.readme_matrix
 
 .PHONY: readme-visuals
-readme-visuals: ## Regenerate the README banner, architecture diagrams and evaluation benchmark chart (docs/assets/*.svg)
+readme-visuals: ## Regenerate the README banner, architecture diagrams and benchmark chart (docs/assets/*.svg)
 	python -m tools.readme_visuals
 
 .PHONY: mapping-reference

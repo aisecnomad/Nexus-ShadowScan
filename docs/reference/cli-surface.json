@@ -33,12 +33,13 @@
           {"name": "exclude", "param_type": "option", "opts": ["--exclude"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": true, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
           {"name": "no_default_excludes", "param_type": "option", "opts": ["--no-default-excludes"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
           {"name": "no_secrets", "param_type": "option", "opts": ["--no-secrets"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "quick", "param_type": "option", "opts": ["--quick"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "preflight", "param_type": "option", "opts": ["--preflight"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
           {"name": "strict_coverage", "param_type": "option", "opts": ["--strict-coverage"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
           {"name": "include_tests", "param_type": "option", "opts": ["--include-tests"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
           {"name": "triage", "param_type": "option", "opts": ["--triage"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
           {"name": "profile", "param_type": "option", "opts": ["--profile"], "secondary_opts": [], "type": {"name": "choice", "choices": ["default", "ci"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
           {"name": "max_file_size", "param_type": "option", "opts": ["--max-file-size"], "secondary_opts": [], "type": {"name": "integer range", "min": 1, "max": null}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
-          {"name": "preflight", "param_type": "option", "opts": ["--preflight"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []},
           {"name": "diff_base", "param_type": "option", "opts": ["--diff-base"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
           {"name": "job_deadline_seconds", "param_type": "option", "opts": ["--job-deadline-seconds"], "secondary_opts": [], "type": {"name": "float"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
           {"name": "allow_instance_credentials", "param_type": "option", "opts": ["--allow-instance-credentials"], "secondary_opts": ["--deny-instance-credentials"], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
@@ -374,6 +375,18 @@
               {"name": "allow_signature_override", "param_type": "option", "opts": ["--allow-signature-override"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []}
             ]
           }
+        ]
+      },
+      {
+        "name": "triage",
+        "kind": "command",
+        "hidden": false,
+        "deprecated": false,
+        "params": [
+          {"name": "report", "param_type": "argument", "opts": ["report"], "secondary_opts": [], "type": {"name": "file", "exists": true, "file_okay": true, "dir_okay": false}, "nargs": 1, "multiple": false, "required": true, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "level", "param_type": "option", "opts": ["--level"], "secondary_opts": [], "type": {"name": "choice", "choices": ["critical", "high", "medium", "low", "info"]}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": null, "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "search", "param_type": "option", "opts": ["--search"], "secondary_opts": [], "type": {"name": "text"}, "nargs": 1, "multiple": false, "required": false, "is_flag": false, "count": false, "default": "", "envvar": null, "hidden": false, "deprecated_aliases": []},
+          {"name": "list_only", "param_type": "option", "opts": ["--list"], "secondary_opts": [], "type": {"name": "boolean"}, "nargs": 1, "multiple": false, "required": false, "is_flag": true, "count": false, "default": false, "envvar": null, "hidden": false, "deprecated_aliases": []}
         ]
       }
     ]

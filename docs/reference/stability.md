@@ -81,9 +81,9 @@ These may change in any release, without deprecation:
   changelog entry.
 - Everything under `tools/`, `benchmarks/` and `tests/`, which never ships.
 
-The [connector inventory](../connectors.md#connector-inventory)
-(`docs/connectors/inventory.json`) describes the built-in connectors for
-review; it is documentation, not part of the versioned contract.
+The [connector maintenance inventory](../operations/connector-inventory.md)
+describes the built-in connectors for review; it is documentation, not part of
+the versioned contract.
 
 ## Deprecation policy
 
@@ -135,7 +135,7 @@ the repository; the others are open.
 - [x] Every public module declares `__all__`; the public Python API is frozen
   as a snapshot with a drift test ([`python-api.json`](python-api.json)).
 - [x] Connector permissions and failure modes inventoried with a drift test
-  and a weekly check ([connector inventory](../connectors.md#connector-inventory)).
+  and a weekly check ([connector maintenance inventory](../operations/connector-inventory.md)).
 - [ ] Review the frozen surface itself. The Python snapshot declares every
   name the API reference pages render public, several hundred across the
   public modules. Trim what should not be supported through 1.x (an underscore

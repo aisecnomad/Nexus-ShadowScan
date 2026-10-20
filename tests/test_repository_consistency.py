@@ -275,18 +275,10 @@ def test_relative_markdown_links_and_anchors_resolve(markdown: Path) -> None:
 
 
 def test_markdown_checks_cover_benchmarks_but_not_the_frozen_estate() -> None:
-    """Benchmark READMEs and run reports are documentation; the estate's authored files are scan input."""
+    """Main checks its migration pointer; companion artifacts are outside the local docs gate."""
     checked = {path.relative_to(ROOT).as_posix() for path in _markdown_files()}
-    assert {
-        "benchmarks/README.md",
-        "benchmarks/shadowbench/README.md",
-        "benchmarks/shadowbench/cases/README.md",
-        "benchmarks/shadowbench/estate/README.md",
-        "benchmarks/shadowbench/estate/results/2026-10-11/REPORT.md",
-    } <= checked
-    frozen = {path.relative_to(ROOT).as_posix() for path in _FROZEN_MARKDOWN.rglob("*.md")}
-    assert frozen, "the estate's authored Markdown moved; point _FROZEN_MARKDOWN at it"
-    assert not frozen & checked
+    assert "benchmarks/README.md" in checked
+    assert not any(path.startswith("benchmark-suite/") for path in checked)
 
 
 _REPOSITORY_LINK = re.compile(
@@ -334,9 +326,6 @@ def _names_former_repository(line: str) -> bool:
     return bool(_FORMER_NAME.search(_FORMER_NAME_FORMS.sub("", line.strip())))
 
 
-_FIRST_RELEASED_SECTION = re.compile(r"^## \[?0\.", re.MULTILINE)
-
-
 def test_live_files_name_the_current_repository() -> None:
     """Regression: links, badges, clone commands and policy checks follow the repository rename."""
     tracked = subprocess.run(
@@ -351,11 +340,8 @@ def test_live_files_name_the_current_repository() -> None:
         except UnicodeDecodeError:
             continue
         if name in ("CHANGELOG.md", "docs/engineering-log.md"):
-            # Dated logs: the released sections record the name the repository had then. The
-            # changelog's headings follow Keep a Changelog (``## [0.1.2] - 2026-10-08``).
-            released = _FIRST_RELEASED_SECTION.search(text)
-            assert released is not None, f"{name} has no released section"
-            text = text[: released.start()]
+            # Dated logs: the released sections record the name the repository had then.
+            text = text[: text.index("\n## 0.")]
         stale.extend(
             f"{name}:{number}"
             for number, line in enumerate(text.splitlines(), start=1)
@@ -420,9 +406,8 @@ def test_readme_links_work_on_the_package_index() -> None:
     assert _pyproject()["project"]["readme"] == "README.md"
 
 
-# Root documents the site includes as snippets (CHANGELOG.md, SECURITY.md, GOVERNANCE.md), plus
-# README.md, CONTRIBUTING.md and RELEASE_NOTES.md (which now points to docs/release-notes.md), which
-# GitHub renders the same way.
+# Root documents the site includes as snippets (CHANGELOG.md, RELEASE_NOTES.md, SECURITY.md,
+# GOVERNANCE.md), plus README.md and CONTRIBUTING.md, which GitHub renders the same way.
 _SITE_ROOT_DOCS = (
     "CHANGELOG.md",
     "RELEASE_NOTES.md",
@@ -698,6 +683,10 @@ _CI_WORDS = re.compile(r"\b(?:CI|jobs?|runners?|matrix|workflows?|legs?|tests?|t
 # Spans that record an earlier interpreter set on purpose, and why.
 _DATED_INTERPRETER_SPANS = {
     ("docs/assurance-results.md", "3.11/3.12"): "the CI matrix when that dated result was recorded",
+    (
+        "docs/reference/product-guide.md",
+        "3.11–3.13",
+    ): "the published PyPI 0.1.2 release, moved with its versioned install instructions",
     ("README.md", "3.11–3.13"): "the published PyPI 0.1.2 release, whose metadata excludes Python 3.14",
     ("docs/getting-started/install.md", "3.11–3.13"): "the published PyPI 0.1.2 release, not current source",
 }
@@ -1344,10 +1333,12 @@ def test_secret_check_runs_on_the_same_files_in_the_hook_and_ci() -> None:
         for step in job.get("steps") or []
         if "tools/check_secrets.py" in str(step.get("run", ""))
     ]
-    assert len(steps) == 1, "CI must run the secret check exactly once per test job"
-    lines = [line.strip() for line in steps[0]["run"].splitlines()]
-    assert lines[0] == "set -euo pipefail", "a failed `git ls-files` must fail the step"
-    assert "git ls-files -z | xargs -0 python tools/check_secrets.py" in lines
+    assert len(steps) == 2, "CI must check the scanner and pinned companion independently"
+    assert {step.get("working-directory", ".") for step in steps} == {".", "benchmark-suite"}
+    for step in steps:
+        lines = [line.strip() for line in step["run"].splitlines()]
+        assert lines[0] == "set -euo pipefail", "a failed `git ls-files` must fail the step"
+        assert "git ls-files -z | xargs -0 python tools/check_secrets.py" in lines
 
 
 def test_pre_commit_hooks_select_files_with_types_or() -> None:
@@ -1526,17 +1517,15 @@ def test_signature_count_claims_are_recognised(text: str, claims: list[tuple[int
     assert _signature_claims(text) == claims
 
 
-# Root documents that describe the current tree. The site includes SECURITY.md and GOVERNANCE.md as
-# snippets, so a stale number there is published too. CHANGELOG.md and the engineering log
-# (docs/engineering-log.md) are dated logs that quote earlier counts and are left out, as are the
-# released sections of the release notes (docs/release-notes.md, formerly RELEASE_NOTES.md), which
-# quote the counts of their own version (see ``_current_text``). benchmarks/ is left out for the same reason: its READMEs and run
+# Root documents that describe the current tree. The site includes RELEASE_NOTES.md, SECURITY.md and
+# GOVERNANCE.md as snippets, so a stale number there is published too. CHANGELOG.md and the
+# engineering log (docs/engineering-log.md) are dated logs that quote earlier counts and are left
+# out, as are the released sections of RELEASE_NOTES.md, which quote the counts of their own
+# version (see ``_current_text``). benchmarks/ is left out for the same reason: its READMEs and run
 # reports describe runs made at a recorded commit, so a total stated there belongs to that commit.
 _CURRENT_ROOT_DOCS = ("README.md", "RELEASE_NOTES.md", "SECURITY.md", "GOVERNANCE.md", "CONTRIBUTING.md")
-# The first heading of a released section in the release notes: ``## 0.1.1 — 2026-10-08``.
+# The first heading of a released section in RELEASE_NOTES.md: ``## 0.1.1 — 2026-10-08``.
 _RELEASED_HEADING = re.compile(r"^## \d+\.\d+", re.MULTILINE)
-# The release notes (docs/release-notes.md) and the root RELEASE_NOTES.md that points to them.
-_RELEASE_NOTES_NAMES = frozenset({"release-notes.md", "RELEASE_NOTES.md"})
 
 
 # The dated engineering log quotes the counts of each entry's date, like CHANGELOG.md.
@@ -1565,38 +1554,29 @@ def _current_docs() -> list[Path]:
 def _current_text(path: Path) -> str:
     """The part of a document that describes the current tree.
 
-    The release notes keep one section per release below their ``## Unreleased`` section, and a
+    RELEASE_NOTES.md keeps one section per release below its ``## Unreleased`` section, and a
     released section states what that version shipped; only the text before the first released
     heading is checked. Every other document is checked whole.
     """
     text = _read(path)
-    if path.name in _RELEASE_NOTES_NAMES:
+    if path.name == "RELEASE_NOTES.md":
         match = _RELEASED_HEADING.search(text)
         if match is not None:
             return text[: match.start()]
     return text
 
 
-@pytest.mark.parametrize("name", sorted(_RELEASE_NOTES_NAMES))
-def test_release_notes_are_checked_up_to_the_first_released_section(tmp_path: Path, name: str) -> None:
+def test_release_notes_are_checked_up_to_the_first_released_section(tmp_path: Path) -> None:
     current = "# Release notes\n\n## Unreleased\n\n- 10 signatures and 20 signals\n\n"
     released = "## 0.1.1 — 2026-10-08\n\n- 5 signatures and 9 signals\n\n## 0.1.0\n\n- 4 signatures\n"
-    notes = tmp_path / name
+    notes = tmp_path / "RELEASE_NOTES.md"
     notes.write_text(current + released, encoding="utf-8")
     assert _current_text(notes) == current
     notes.write_text(current, encoding="utf-8")
     assert _current_text(notes) == current, "notes without a released section are checked whole"
     other = tmp_path / "README.md"
     other.write_text(current + released, encoding="utf-8")
-    assert _current_text(other) == current + released, "only the release notes are sliced"
-
-
-def test_the_release_notes_page_is_the_one_whose_released_sections_are_skipped() -> None:
-    """The long-form release notes moved from RELEASE_NOTES.md to docs/release-notes.md."""
-    notes = ROOT / "docs" / "release-notes.md"
-    assert notes in _current_docs() and notes.name in _RELEASE_NOTES_NAMES
-    assert _RELEASED_HEADING.search(_read(notes)), "docs/release-notes.md no longer has a released section"
-    assert "docs/release-notes.md" in _read(ROOT / "RELEASE_NOTES.md"), "RELEASE_NOTES.md must point there"
+    assert _current_text(other) == current + released, "only RELEASE_NOTES.md is sliced"
 
 
 def test_documented_signature_counts_match_the_shipped_packs(index) -> None:
@@ -1874,18 +1854,11 @@ _CSV_SEPARATOR_NAMES = {
 }
 _READ_DEADLINE_CLAIM = re.compile(r"within (\w+) the client timeout \((\d+) seconds by default\)")
 _READ_DEADLINE_FACTORS = {"twice": 2}
-# The implemented security controls and their limits; SECURITY.md held them until it was cut down to the
-# reporting policy and a threat model at a glance.
-SECURITY_CONTROLS = ROOT / "docs" / "security" / "controls.md"
 
 
 def _paragraphs(path: Path) -> list[str]:
     """Blank-line separated blocks of a document, each on one line."""
     return [" ".join(block.split()) for block in re.split(r"\n[ \t]*\n", _read(path))]
-
-
-# The page that explains the CSV formula markers to report consumers; the README did until it was cut down.
-CSV_MARKER_PAGE = ROOT / "docs" / "getting-started" / "quickstart.md"
 
 
 def test_documented_csv_markers_match_the_reporter() -> None:
@@ -1905,8 +1878,8 @@ def test_documented_csv_markers_match_the_reporter() -> None:
         for paragraph in _paragraphs(path)
         if "csv" in paragraph.lower() and "`'`" in paragraph
     ]
-    assert any(path == CSV_MARKER_PAGE for path, _ in claims), (
-        f"{_relative(CSV_MARKER_PAGE)} should describe the CSV markers"
+    assert any(path.name == "product-guide.md" for path, _ in claims), (
+        "Product guide should describe the CSV markers"
     )
     for path, paragraph in claims:
         missing = [name for name in names if name not in paragraph]
@@ -1920,9 +1893,7 @@ def test_documented_http_read_deadline_matches_the_client() -> None:
         for paragraph in _paragraphs(path)
         for match in _READ_DEADLINE_CLAIM.finditer(paragraph)
     ]
-    assert any(path == SECURITY_CONTROLS for path, _ in claims), (
-        f"{_relative(SECURITY_CONTROLS)} should state the read deadline"
-    )
+    assert any(path.name == "SECURITY.md" for path, _ in claims), "SECURITY.md should state the read deadline"
     expected = (http.READ_DEADLINE_FACTOR, http.DEFAULT_TIMEOUT * http.READ_DEADLINE_FACTOR)
     for path, match in claims:
         claimed = (_READ_DEADLINE_FACTORS.get(match.group(1)), int(match.group(2)))
@@ -1959,9 +1930,7 @@ _EXPLICIT_DEFAULT_TIMEOUT = re.compile(
 _CODE_FENCE = re.compile(r"^[ \t]*(`{3,}|~{3,})[^\n]*\n(.*?)^[ \t]*\1[ \t]*$", re.MULTILINE | re.DOTALL)
 # Dated records quote what a page or a configuration once said; prose may name the setting it warns
 # against. Only the configurations and commands people copy are checked.
-_DATED_RECORDS = frozenset(
-    {"CHANGELOG.md", "RELEASE_NOTES.md", "docs/release-notes.md", "docs/engineering-log.md"}
-)
+_DATED_RECORDS = frozenset({"CHANGELOG.md", "RELEASE_NOTES.md", "docs/engineering-log.md"})
 
 
 def _copyable_samples() -> Iterator[tuple[str, str]]:
@@ -2153,7 +2122,7 @@ _DEMO_ROW = re.compile(r"^ ([A-Z]+) +(\d+)  (\S+) +(\S+) +(\S+) +(.+?)\s*$", re.
 
 def test_readme_demo_output_matches_the_offline_demo(index) -> None:
     """The README's abridged example is the current result of the bundled offline demo."""
-    readme = _read(ROOT / "README.md")
+    readme = _read(ROOT / "docs/reference/product-guide.md")
     start = readme.index(_DEMO_COMMAND)
     block = readme[start : readme.index("```", start)]
     max_rows = int(block[len(_DEMO_COMMAND) :].split(None, 1)[0])
@@ -2215,72 +2184,53 @@ def test_abridged_excerpt_check_rejects_values_the_output_lacks() -> None:
     assert not _abridged({"missing": 1}, actual)
 
 
-def test_ci_guide_sarif_excerpt_is_the_first_result_of_the_offline_demo(index) -> None:
-    """The CI guide's abridged SARIF result (the README's until it was cut down) is current demo output."""
+def test_readme_sarif_excerpt_is_the_first_result_of_the_offline_demo(index) -> None:
+    """The README's abridged SARIF result is current output of the demo the CLI example shows."""
     from shadowscan.reporters.sarif import render_sarif
 
-    guide = _read(ROOT / "docs" / "operations" / "ci.md")
-    start = guide.index("The same scan as SARIF")
-    fence = guide.index("```json\n", start) + len("```json\n")
-    excerpt = json.loads(guide[fence : guide.index("```", fence)])
+    readme = _read(ROOT / "docs/reference/product-guide.md")
+    start = readme.index("The same scan as SARIF")
+    fence = readme.index("```json\n", start) + len("```json\n")
+    excerpt = json.loads(readme[fence : readme.index("```", fence)])
     result = Engine(ScanConfig.from_yaml(ROOT / "examples" / "shadowscan.offline.yaml"), index).run()
     first = json.loads(render_sarif(result))["runs"][0]["results"][0]
-    assert _abridged(excerpt, first), (
-        "docs/operations/ci.md SARIF excerpt is stale; rerun the demo with --format sarif"
-    )
+    assert _abridged(excerpt, first), "README SARIF excerpt is stale; rerun the demo with --format sarif"
 
 
-def test_detection_matrix_is_current() -> None:
-    """The detection matrix page is generated from the signature packs and connector classes."""
-    from tools.readme_matrix import PAGE, render, replace_block
+def test_readme_detection_matrix_is_current() -> None:
+    """The README detection matrix is generated from the signature packs and connector classes."""
+    from tools.readme_matrix import README, render, replace_block
 
-    text = PAGE.read_text(encoding="utf-8")
-    assert replace_block(text, render()) == text, f"{_relative(PAGE)} is stale; run `make readme-matrix`"
-
-
-def test_readme_links_the_detection_matrix_page() -> None:
-    """The matrix left the README for the docs site; the landing page must still lead to it."""
-    from tools.readme_matrix import PAGE
-
-    readme = _read(ROOT / "README.md")
-    assert f"https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/{_relative(PAGE)}" in readme
+    text = README.read_text(encoding="utf-8")
+    assert replace_block(text, render()) == text, "README detection matrix is stale; run `make readme-matrix`"
 
 
-_BENCHMARKS = ROOT / "benchmarks"
+_BENCHMARK_EVIDENCE = ROOT / "tools" / "benchmark_evidence.json"
 
 
 def _percentages(level: dict[str, Any]) -> str:
     return " / ".join(f"{level[key]:.1%}" for key in ("precision", "recall", "f1"))
 
 
-# The page holding the benchmark results table and its caveats; the README's Benchmarks section did until
-# the README was cut down to a landing page, which now only summarizes the caveat and links here.
-BENCHMARK_PAGE = ROOT / "docs" / "evaluation.md"
-BENCHMARK_HEADING = "## Benchmark results"
+def _readme_section(readme: str, heading: str) -> str:
+    """The README text from ``heading`` up to the next level-2 heading, wherever the section sits."""
+    start = readme.index(f"\n{heading}\n")
+    end = readme.find("\n## ", start + 1)
+    return readme[start : end if end != -1 else len(readme)]
 
 
-def _level2_section(text: str, heading: str) -> str:
-    """The text from ``heading`` up to the next level-2 heading, wherever the section sits."""
-    start = text.index(f"\n{heading}\n")
-    end = text.find("\n## ", start + 1)
-    return text[start : end if end != -1 else len(text)]
-
-
-def _benchmark_section() -> str:
-    return _level2_section(_read(BENCHMARK_PAGE), BENCHMARK_HEADING)
-
-
-def test_benchmark_table_quotes_the_committed_results() -> None:
-    """Every number in the published benchmark table comes from the committed metrics files."""
-    section = _benchmark_section()
+def test_readme_benchmark_table_quotes_the_committed_results() -> None:
+    """Every number in the README benchmark table comes from the committed metrics files."""
+    readme = _read(ROOT / "docs/reference/product-guide.md")
+    section = _readme_section(readme, "## Benchmarks")
+    evidence = json.loads(_BENCHMARK_EVIDENCE.read_text(encoding="utf-8"))
     estate_run = "shadowbench/estate/results/2026-10-11"
-    estate_metrics = json.loads((_BENCHMARKS / estate_run / "metrics.json").read_text(encoding="utf-8"))
-    corpus, tool = estate_metrics["corpus"], estate_metrics["tools"]["shadowscan"]
+    corpus, tool = evidence["estate"]["corpus"], evidence["estate"]["tool"]
     entity = tool["entity_level"]
     negatives = corpus["control"] + corpus["nearmiss"]
     assert entity["fp"] + entity["tn"] == negatives
     estate = [
-        f"blob/main/benchmarks/{estate_run}/REPORT.md",
+        f"/benchmarks/{estate_run}/REPORT.md",
         f"(2026-10-11, {tool['version']})",
         f"{corpus['entities']} authored vendor-format entities",
         f"{corpus['positive']} positive, {corpus['control']} control, {corpus['nearmiss']} near-miss",
@@ -2289,23 +2239,14 @@ def test_benchmark_table_quotes_the_committed_results() -> None:
         f"{entity['fp']} of {negatives} controls and near-misses flagged",
     ]
     code_run = "shadow-ai-discovery/results/2026-10-09"
-    code_metrics = json.loads((_BENCHMARKS / code_run / "metrics.json").read_text(encoding="utf-8"))
-    corpus, tool = code_metrics["corpus"], code_metrics["tools"]["shadowscan"]
+    corpus, tool = evidence["code"]["corpus"], evidence["code"]["tool"]
     repos = tool["repo_level"]
     # An incomplete run left content unread, so its clean control or near-miss
     # is not a clean result and the README has to say how many there were.
-    labels = {
-        entry["id"]: entry["class"]
-        for entry in json.loads(
-            (_BENCHMARKS / "shadow-ai-discovery" / "corpus.json").read_text(encoding="utf-8")
-        )["repos"]
-    }
-    incomplete_negatives = sum(
-        labels[repo] in {"control", "nearmiss"} for repo in tool["incomplete_runs"]["repos"]
-    )
+    incomplete_negatives = evidence["code"]["incomplete_negatives"]
     assert incomplete_negatives
     code = [
-        f"blob/main/benchmarks/{code_run}/REPORT.md",
+        f"/benchmarks/{code_run}/REPORT.md",
         f"(2026-10-09, {tool['version']})",
         f"{corpus['repos']} public repositories pinned by SHA",
         f"{corpus['positive']} positive, {corpus['control']} control, {corpus['nearmiss']} near-miss",
@@ -2319,22 +2260,19 @@ def test_benchmark_table_quotes_the_committed_results() -> None:
         "an incomplete clean run is not a clean result",
     ]
     missing = [claim for claim in estate + code if claim not in section]
-    assert not missing, "benchmark table no longer matches the committed metrics: " + repr(missing)
+    assert not missing, "README benchmark table no longer matches the committed metrics: " + repr(missing)
     assert "not** independent review" in section and "not** measured production precision" in section
-    # The README no longer carries the table, but it must keep the authorship caveat and lead to it.
-    readme = " ".join(_level2_section(_read(ROOT / "README.md"), "## Benchmarks").split())
-    assert "not** independent review" in readme and "not** measured production precision" in readme
-    assert "blob/main/docs/evaluation.md#benchmark-results" in readme
 
 
-def test_benchmark_estate_row_says_when_the_labels_were_frozen() -> None:
+def test_readme_estate_row_says_when_the_labels_were_frozen() -> None:
     """The estate's labels were frozen after every runnable tool ran once, not before any tool ran.
 
-    The README's benchmark table (now on the evaluation page) said the labels were "frozen before
-    any tool ran", but the estate protocol froze them after a label-completeness audit in which
-    every runnable tool ran once (the run report already says so).
+    The README's benchmark table said the labels were "frozen before any tool ran", but the
+    estate protocol froze them after a label-completeness audit in which every runnable tool
+    ran once (the run report already says so).
     """
-    section = " ".join(_benchmark_section().split())
+    readme = _read(ROOT / "docs/reference/product-guide.md")
+    section = " ".join(_readme_section(readme, "## Benchmarks").split())
     assert "frozen before any tool ran" not in section
     assert "label-completeness pass in which every runnable tool ran once" in section
 
@@ -2347,26 +2285,22 @@ def test_estate_benchmark_documents_say_later_shadowscan_runs_are_in_sample() ->
     the changelog entry for those rules, has to say so, and the benchmark-derived note-taker
     recognition is marked as such.
     """
+    readme = _read(ROOT / "docs/reference/product-guide.md")
     documents = {
-        _relative(BENCHMARK_PAGE): _benchmark_section(),
-        "README.md": _level2_section(_read(ROOT / "README.md"), "## Benchmarks"),
-        "benchmarks/shadowbench/README.md": _read(ROOT / "benchmarks/shadowbench/README.md"),
-        "benchmarks/shadowbench/estate/README.md": _read(ROOT / "benchmarks/shadowbench/estate/README.md"),
+        "README.md": _readme_section(readme, "## Benchmarks"),
     }
     unstated = [name for name, text in documents.items() if "in-sample" not in " ".join(text.split())]
     assert not unstated, f"no in-sample disclosure for later ShadowScan estate runs in {unstated}"
     # The estate row's "in-sample (below)" points at this explanation; the word alone in the
     # table cell must not stand in for it.
-    benchmarks = " ".join(documents[_relative(BENCHMARK_PAGE)].split())
+    benchmarks = " ".join(documents["README.md"].split())
     for statement in (
         "detection rules were changed with that run's errors in view",
         "fewer errors on it are not evidence of better field accuracy",
     ):
-        assert statement in benchmarks, (
-            f"{_relative(BENCHMARK_PAGE)} benchmark results no longer say: {statement!r}"
-        )
+        assert statement in benchmarks, f"README Benchmarks no longer says: {statement!r}"
     changelog = _read(ROOT / "CHANGELOG.md")
-    start = changelog.index("\n## [Unreleased]\n")
+    start = changelog.index("\n## Unreleased\n")
     unreleased = " ".join(changelog[start : changelog.index("\n## ", start + 1)].split())
     assert "in-sample" in unreleased
     assert re.search(r"Wudpecker and Tactiq[^.]*\(benchmark-derived", unreleased)
@@ -2476,12 +2410,35 @@ def _runnable(module: str) -> bool:
     return spec is not None
 
 
-def _module_problem(module: str) -> str | None:
+def _module_problem(module: str, *, companion: bool = False) -> str | None:
     if not all(part.isidentifier() for part in module.split(".")):
         return "is not a module name"
+    if companion and module.partition(".")[0] in {"tools", "benchmarks"}:
+        evidence = json.loads(_BENCHMARK_EVIDENCE.read_text(encoding="utf-8"))
+        if module not in evidence["companion_modules"]:
+            return "is not a declared module of the pinned companion"
+        return None
     if module.partition(".")[0] in _FIRST_PARTY and not _runnable(module):
         return "is not a runnable module in this checkout"
     return None
+
+
+def _companion_command_lines(text: str) -> set[int]:
+    """Only an explicit `cd benchmark-suite` in the same code block changes command roots."""
+    selected: set[int] = set()
+    fenced = companion = False
+    for number, line in enumerate(text.splitlines(), 1):
+        if _FENCE.match(line.strip()):
+            fenced = not fenced
+            companion = False
+        elif fenced:
+            if line.strip() == "cd benchmark-suite":
+                companion = True
+            elif line.strip().startswith("cd "):
+                companion = False
+            if companion:
+                selected.add(number)
+    return selected
 
 
 def test_documented_python_modules_are_read_from_code_only() -> None:
@@ -2515,8 +2472,19 @@ def test_documented_python_modules_are_read_from_code_only() -> None:
         "shadowscan.",
         "tools.no_such_tool",
         "shadowscan.signatures.validat",
+        "benchmarks.sab_realworld",
         "benchmarks.sab_realworl",
     ]
+    assert _module_problem("benchmarks.sab_realworld", companion=True) is None
+    assert _module_problem("benchmarks.sab_realworl", companion=True) is not None
+
+
+def test_companion_commands_require_an_explicit_checkout_root() -> None:
+    text = "```bash\ncd benchmark-suite\npython -m tools.verify_migration\n```\n"
+    assert _companion_command_lines(text) == {2, 3}
+    assert _companion_command_lines("`python -m tools.verify_migration`") == set()
+    assert _module_problem("tools.verify_migration") is not None
+    assert _module_problem("tools.verify_migration", companion=True) is None
 
 
 def test_documented_python_modules_exist() -> None:
@@ -2530,7 +2498,17 @@ def test_documented_python_modules_exist() -> None:
         f"{_relative(path)}:{number}: {module} {problem}"
         for path in _markdown_files()
         for number, module in _python_modules(_read(path))
-        if (problem := _module_problem(module)) is not None
+        if (
+            problem := _module_problem(
+                module,
+                companion=number in _companion_command_lines(_read(path))
+                or (
+                    path.is_relative_to(ROOT / "archive")
+                    and module in json.loads(_BENCHMARK_EVIDENCE.read_text())["companion_modules"]
+                ),
+            )
+        )
+        is not None
     ]
     assert not problems, "documented `python -m` commands that cannot run:\n" + "\n".join(problems)
 
@@ -2676,9 +2654,7 @@ def test_assurance_results_synthetic_case_count_matches_corpus() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "name", ["SECURITY.md", "docs/security/controls.md", "docs/production.md", "docs/connectors.md"]
-)
+@pytest.mark.parametrize("name", ["SECURITY.md", "docs/production.md", "docs/connectors.md"])
 def test_plugin_isolation_docs_name_the_parent_environment_route(name: str) -> None:
     """Regression: the guides said a process-mode worker is started without the credentials, but
     not that a plugin running as the scanner's user still reads every one of them from its

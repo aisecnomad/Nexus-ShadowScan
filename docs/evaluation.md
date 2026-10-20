@@ -23,64 +23,9 @@ these sets; the independent corpus was labeled separately, as described below.
 None is a random or representative sample of repositories, so none estimates
 field precision, recall or calibration; see the held-out procedure below.
 
-## Evidence and assurance limits
-
-- **Evaluation corpora** are author-written regression cases, not independent field-precision estimates. See [Run the reproducible corpora](#run-the-reproducible-corpora).
-- **Benchmarks against other tools** use inputs and labels the same maintainer wrote. They show behavior on those inputs, not field accuracy, and none is independent. See [benchmark results](#benchmark-results) and the [benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md).
-- **Assurance results** use a frozen corpus of 42 public files labeled by two AI reviewers, not independent human ground truth; only the baseline run is out of sample. See [assurance results](assurance-results.md).
-- **Canaries** validate named tenant controls when credentials are supplied; offline replay does not establish live acceptance. See [canaries](canaries.md).
-- **The acceptance verifier** validates supplied holdout and tenant evidence but cannot authenticate reviewer independence or manufacture tenant acceptance. See the [verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md).
-- Review [rollout acceptance](production.md#rollout-acceptance) before using a risk threshold as a production gate.
-
-## Benchmark results
-
-Offline results from this repository's own benchmarks. The maintainer wrote
-ShadowScan, both corpora, their labels and the harnesses, with AI coding
-assistants (Claude, Codex, Grok, Google Antigravity and others), so these numbers are
-regression evidence about the listed inputs. They are **not** independent review
-and **not** measured production precision or recall.
-
-| Track (run, version) | Inputs | ShadowScan result | Limits |
-|---|---|---|---|
-| [ShadowBench estate, nine surfaces](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/estate/results/2026-10-11/REPORT.md) (2026-10-11, 0.1.2) | 137 authored vendor-format entities for one fictional estate: 87 positive, 27 control, 23 near-miss | Entity precision / recall / F1 91.2% / 95.4% / 93.3%; 83 of 87 positives found; 8 of 50 controls and near-misses flagged | Authored artifacts; frozen after one label-completeness pass in which every runnable tool ran once (it added one secondary anchor and one tolerated pair and changed no label); later ShadowScan runs on it are in-sample (below) |
-| [Shadow AI discovery, code surface](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadow-ai-discovery/results/2026-10-09/REPORT.md) (2026-10-09, 0.1.2+7bdea5300551) | 87 public repositories pinned by SHA: 65 positive, 10 control, 12 near-miss; 839 expected facts | Fact precision / recall / F1 99.8% / 94.8% / 97.2% **after** tuning on this corpus (92.2% F1 before, in the [2026-10-08 run](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadow-ai-discovery/README.md#results-shadowscan-after-the-benchmark-driven-changes-2026-10-09)); 65 of 65 positive repositories flagged; 0 of 22 controls and near-misses flagged (4 of those 22 runs incomplete) | In-sample: the detection changes were driven by this corpus's errors, so these numbers measure fit to it, not field accuracy. 43 of 87 runs were incomplete (exit 3): fact counts are a lower bound, and an incomplete clean run is not a clean result |
-
-Each report also runs other open-source tools on their declared scope, which is
-narrower than nine surfaces; compare their in-scope columns in the report, not
-these headline numbers. After the 2026-10-11 estate run, ShadowScan's
-detection rules were changed with that run's errors in view (ambiguous Gemini
-names, Notion bots, gateway `/api/chat` and `/generate` routes, Kubernetes
-serving-engine images, n8n HTTP model calls, ServiceNow flow names, and the
-Wudpecker note-taker). A ShadowScan run on the estate after those changes is
-in-sample: fewer errors on it are not evidence of better field accuracy.
-ShadowScan's weakest surfaces in the
-[cases run](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/cases/results/2026-10-11/REPORT.md)
-are identity (57% entity precision at 97% recall) and SaaS (51% at 88%)
-against decoy-heavy exports, so read the per-surface tables before relying
-on any single surface. The
-[benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md)
-lists every benchmark with its protocol and limits.
-
-![Estate and in-scope recall per tool in the 2026-10-11 ShadowBench nine-surface cases run](assets/benchmarks-shadowbench-cases.svg)
-
-The chart is generated from the committed
-[ShadowBench cases run of 2026-10-11](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/cases/results/2026-10-11/REPORT.md):
-738 authored entities across nine surfaces. Estate recall charges each tool for
-the surfaces it does not cover, so it mostly measures coverage; compare the
-in-scope bars, and read the report's precision and decoy specificity before
-drawing any conclusion. ShadowScan marked 27 of its 326 scans incomplete there.
-The same authorship caveat applies: the maintainer wrote the corpus, the
-rubrics, the scorer and every tool's adapter.
-
-### Cross-benchmark summary
-
-![Cross-tool benchmark comparison — ShadowBench estate recall and Shadow AI Discovery value-level F1](assets/benchmarks-cross-tool.webp)
-
-*Left: estate recall on ShadowBench Cases (346 cases, 9 surfaces — unsupported surfaces count as misses). Right: value-level F1 on Shadow AI Discovery (87 repositories, code surface). Benchmarks are author-written and in-sample. See the [benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md) for methodology, limits, and reproduction steps.*
-
 ## Real-world repository benchmark against other tools
 
-`benchmarks/shadow-ai-discovery/` is a separate, code-surface benchmark on
+The companion's `benchmarks/shadow-ai-discovery/` is a separate, code-surface benchmark on
 pinned public repositories that compares ShadowScan's `code.filesystem`
 connector with other open-source discovery tools under one tool-neutral fact
 taxonomy. Its ground truth is session-labeled evidence with file pointers, not
@@ -109,8 +54,9 @@ completeness information.
 ## ShadowBench: nine surfaces against other tools
 
 `benchmarks/shadowbench/` extends that comparison to every discovery surface
-in two tracks, each with its own harness under `tools/shadowbench/`
-(`python -m tools.shadowbench`). The *cases* track generates platform-native
+in two tracks, each with its own harness under the companion's `tools/shadowbench/`.
+See the [pinned companion setup](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md)
+before running its commands. The *cases* track generates platform-native
 inputs at a recorded seed from written rubrics: identity, gateway, low-code,
 SaaS and cloud exports, developer home directories, network logs, process
 tables, loopback mock services and inert live processes. Each input has
@@ -125,7 +71,7 @@ adapter. They check behaviour on known inputs; they do not measure field
 precision or recall and are not a verdict on any vendor's product. Both
 scorers fail closed: a run that errored, timed out, was incomplete or is
 missing never earns a true negative. See
-[`benchmarks/shadowbench/README.md`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/README.md)
+[`benchmarks/shadowbench/README.md`](https://github.com/aisecnomad/Nexus-ShadowBench/blob/main/benchmarks/shadowbench/README.md)
 for how the tracks differ, and each track's README and newest `REPORT.md` for
 the method, the limits and the measured numbers.
 

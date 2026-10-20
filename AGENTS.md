@@ -54,10 +54,10 @@ Run `make check` or the commands in CONTRIBUTING.md. Pull requests must keep:
 - Connector work: `collect()` + `analyze()`, offline fixtures under
   `tests/fixtures/`, documentation in the connector's guide under
   `docs/connectors/` and its summary in `docs/connectors.md`, and a regenerated
-  `docs/connectors/reference.md` (`make connector-reference`) and README
+  `docs/connectors/reference.md` (`make connector-reference`) and product-guide
   detection matrix (`make readme-matrix`).
 - Signature work: YAML packs + validate + `make evaluate`, and a regenerated
-  README detection matrix (`make readme-matrix`). See `docs/signatures.md`.
+  product-guide detection matrix (`make readme-matrix`). See `docs/signatures.md`.
 - Mapping work: catalogs under `shadowscan/mappings/data/`,
   `python -m shadowscan.mappings.validate`, and a regenerated
   `docs/concepts/mappings-reference.md` (`make mapping-reference`). See

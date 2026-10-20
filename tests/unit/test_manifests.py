@@ -302,7 +302,9 @@ def test_unrelated_template_text_cannot_suppress_parsed_kubernetes_images(suffix
 def test_unrelated_template_markers_do_not_excuse_duplicate_kubernetes_fields(text):
     _, result = _deps("workload.yaml", text)
     assert result.errors == ["manifest parsing failed (YAMLIntegrityError)"]
-    assert not result.artifacts
+    # The parse defect withholds structural Kubernetes attribution (#267); the
+    # generic line inventory may still record what the defective file names.
+    assert not any(artifact.extra.get("kubernetes_workload") for artifact in result.artifacts)
 
 
 def test_kubernetes_list_and_flow_images_preserve_their_source_lines():
@@ -319,13 +321,19 @@ def test_kubernetes_list_and_flow_images_preserve_their_source_lines():
 
 @pytest.mark.parametrize("field", ["kind", "image"])
 def test_ambiguous_kubernetes_context_reports_a_manifest_parse_failure(field):
+    """A duplicate-key defect is reported, withholds the structural Kubernetes
+    attribution, and no longer erases the generic image inventory (#267)."""
     if field == "kind":
         text = "apiVersion: v1\nkind: Pod\nkind: ConfigMap\nimage: n8nio/n8n:1\n"
+        expected = [("n8nio/n8n:1", 4)]
     else:
         text = "apiVersion: v1\nkind: Pod\nspec:\n  containers:\n    - image: nginx:1\n      image: n8nio/n8n:1\n"
+        expected = [("nginx:1", 5), ("n8nio/n8n:1", 6)]
     _, result = _deps("workload.yaml", text)
     assert result.errors == ["manifest parsing failed (YAMLIntegrityError)"]
-    assert not result.artifacts
+    images = [artifact for artifact in result.artifacts if artifact.kind == "image"]
+    assert [(artifact.value, artifact.line) for artifact in images] == expected
+    assert not any(artifact.extra.get("kubernetes_workload") for artifact in result.artifacts)
 
 
 @pytest.mark.parametrize("suffix", ["", "metadata:\n  example: '{{ username }}'\n"])

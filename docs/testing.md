@@ -212,48 +212,16 @@ it fails, make the pattern linear (possessive quantifiers from the `regex` modul
 run under `pattern_timeout()`), bound its input, or add it to `ALLOWED` with the
 reason the sweep's input cannot reach it.
 
-## Make targets
-
-`make help` lists every target by section. The ones you need most:
-
-| Target | Description |
-|---|---|
-| `make install` | Editable install with dev + cloud + docs extras from hash-locked requirements |
-| `make install-dev` | Dev extras only (no cloud SDKs) |
-| `make lint` | Run ruff linter |
-| `make format` | Run ruff formatter |
-| `make typecheck` | Run mypy type checker |
-| `make complexity` | Fail when a function or module grows past `tools/complexity_baseline.json` |
-| `make test` | Test suite with coverage (80% floor) |
-| `make test-fast` | Tests without coverage, stop at first failure |
-| `make test-parallel` | Tests in parallel with pytest-xdist |
-| `make coverage-gate` | Per-connector 75% coverage floor |
-| `make signatures` | Validate all signature schemas |
-| `make mappings` | Validate mapping catalogs |
-| `make secrets` | Hardcoded credential gate |
-| `make self-scan` | Scan this checkout with ShadowScan itself; an incomplete scan fails |
-| `make audit` | pip-audit on environment and all lock files |
-| `make evaluate` | Run bundled regression corpora |
-| `make check` | All quality gates combined |
-| `make demo` | Run bundled offline demo |
-| `make docs` | Build MkDocs documentation site |
-| `make connector-reference` | Regenerate connector reference page |
-| `make readme-matrix` | Regenerate the [detection matrix](reference/detection-matrix.md) |
-| `make readme-visuals` | Regenerate banner and architecture SVGs |
-| `make build` | Build sdist and wheel |
-| `make docker` | Build container image |
-| `make clean` | Remove build artifacts and caches |
-
 ## Function and module size
 
 `make complexity` runs `python -m tools.complexity_gate`, which holds two measures to
 [`tools/complexity_baseline.json`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/complexity_baseline.json):
 
-- the McCabe complexity that ruff reports as `C901` for every function in `shadowscan/`, `tools/`
-  and `benchmarks/` with complexity above 15. A nested function counts into the function around
+- the McCabe complexity that ruff reports as `C901` for every function in `shadowscan/` and `tools/`
+  with complexity above 15. A nested function counts into the function around
   it, as in ruff, and a `noqa` comment does not hide a function from the gate;
 - the physical line count of every module of the `shadowscan` package above 2,000 lines.
-  The corpus and fixture modules under `tools/` and `benchmarks/` grow with their data, so only
+  The corpus and fixture modules under `tools/` grow with their data, so only
   their functions are held.
 
 The baseline lists what is already over a limit, each at its value today. Anything not listed
@@ -273,6 +241,25 @@ file it cannot parse, or a malformed baseline. It measures with the ruff in the 
 complexity is counted, the gate names the versions and `--update` or `--rebaseline` records the
 new counts. The names are qualified function names, so a function that is renamed or moved has to
 leave the baseline under its old name; it does not carry its room along.
+
+The moved harnesses retain a separate parent-side ratchet:
+`tools/benchmark_complexity_baseline.json` contains the 28 original harness
+ceilings extracted from source commit
+`0792106b8d2cc09517f7f4ee2eeabf4f8eb8da2d`, with no increases. After initializing
+the optional companion, run this from the main checkout:
+
+```bash
+python -m tools.benchmark_complexity
+```
+
+It verifies the exact companion gitlink before measuring the moved harness roots
+with the same C901 limit. Corpus artifacts remain excluded by the companion's
+reviewed Ruff configuration. It rejects new over-limit functions, increases and
+obsolete higher ceilings. `python -m tools.benchmark_complexity --update` only
+lowers or removes ceilings; it cannot authorize an increase. The required
+`benchmark-tests` CI job runs this check before the companion tests, so extracting
+the harnesses does not remove their complexity gate. The published companion
+files remain unchanged.
 
 ## What CI runs
 
