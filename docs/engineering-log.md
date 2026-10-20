@@ -65,6 +65,46 @@ installer already uses its reviewed lock. The runtime lock carries the same
 aiohttp 3.14.5 advisory fix as the existing dependency/bug-fix PR.
 
 
+### Correlation disclosure privacy, manifest-defect inventory retention and MCP URL precision (October 20)
+
+Fixes for #268, #267 and #214, each found by an earlier coding-agent review
+and deliberately deferred from the integrations that recorded them.
+
+- Large-exact-group truncation disclosures no longer carry the unsalted
+  `sha256([kind, value])` token or a member count that spans scope partitions
+  (#268). The `identifier_group_id` and `group_size` a member discloses are
+  now those of its own exact-scope partition and equal its `related_groups`
+  token, so per-tenant report slices cannot be joined on an identifier-equality
+  assertion the link policy refuses across conflicting or unverified scopes; a
+  member outside an exact partition keeps the omission disclosure alone.
+- Report pruning recomputes `related_groups` member counts and
+  `related_truncation` group sizes over retained findings and drops a
+  membership or token that fewer than two retained findings back (#268), the
+  rule `related`/`related_details`/`related_candidates` already followed: a
+  report must not link to, or count, findings it omits.
+- `PythonDispatches` memoizes dispatch verdicts per (module, symbol) instead
+  of re-walking a helper module's functions for every consumer (#268). A newly
+  observed local root or a colliding module copy invalidates the affected
+  cache entries, so import shadowing still vetoes a previously proven verdict;
+  budget errors are never cached and still raise.
+  Follow-up review bounds verdict caching to functions in the bounded AST
+  inventory: arbitrary missing import names cannot grow it, and a lookup before
+  a helper's source arrives cannot cache a false verdict against that helper.
+- A YAML integrity defect (for example one duplicated mapping key, which a
+  deployer may still accept last-wins) no longer erases a compose/Kubernetes
+  file's generic image inventory (#267). The structural `kubernetes_workload`
+  attribution stays withheld and the parse defect is still reported, so the
+  scan's incompleteness accounting is unchanged; resource-limit failures still
+  fail the whole file.
+- An ordinary reference URL alone no longer raises the MCP `tool-poisoning`
+  tag (#214). The URL is retained as separately explained zero-weight
+  `instruction:external-url` evidence; a model-provider API host, instruction
+  wording, tool references, hidden characters, content rules and audit
+  indicators raise the tag as before, anywhere in the same 64 KiB window.
+- `ScanResult.summary()` and the engine's split-run aggregation share one
+  incomplete-reason merge helper (`merged_incomplete_reasons`), the #264
+  refactor item, so the two counts cannot drift. No behavior change.
+
 ### Two CPython 3.11 serial-run test flakes no longer depend on GC timing (October 19)
 
 - The macOS 3.11 leg failed twice on #266's final head, each time on a

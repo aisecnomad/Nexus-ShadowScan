@@ -48,7 +48,11 @@ or replace the scoped tenant acceptance below.
 Cross-surface relationship consumers must now read `metadata.related_groups`
 as well as `related`: large exact-identifier groups and capped exact pairs
 retain compact memberships, with `related_truncation` explaining omitted
-pairwise expansion. These observations do not establish authorization or
+pairwise expansion. Group tokens, including the `identifier_group_id` a
+truncation entry carries, are salted with the member's exact-scope partition,
+so they join only within one verified scope; member counts are recomputed
+under report pruning, and a token or count fewer than two retained findings
+back is dropped. These observations do not establish authorization or
 runtime activity. No inventory binding or risk policy changes.
 
 Code scans can classify additional provider feedback loops and locally imported

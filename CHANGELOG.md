@@ -18,6 +18,12 @@ published or tagged; install a reviewed commit. Detection was tuned using the
 2026-10-11 ShadowBench estate errors, including Wudpecker and Tactiq name/domain
 rules (benchmark-derived), so later runs on that estate are in-sample.
 
+Correlation group disclosures now stay within verified scope partitions and
+reflect only retained findings. YAML integrity defects preserve generic image
+inventory while keeping scans incomplete, and ordinary reference URLs alone no
+longer flag MCP tool poisoning. Dispatch proof caching remains bounded and
+respects import shadowing; scan summaries share incomplete-reason aggregation.
+
 ## 0.1.2 — 2026-10-08
 
 Correct the production publication gate to query the fully qualified release tag
