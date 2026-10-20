@@ -49,7 +49,9 @@ companion pinned by a Git submodule. Original bytes, Git blobs, modes and source
 revision are retained in a migration manifest. Core evaluation stays local;
 a required CI job validates and tests the exact companion pin. All 28 existing
 harness function-complexity ceilings are retained in a separate parent ratchet,
-with no increases. Historical results retain their original source/tool
+with no increases. The documented self-scan excludes that separately tested
+companion, so it also completes in an ordinary uninitialized checkout; the
+local benchmark guide remains in scope. Historical results retain their original source/tool
 provenance and are not new runs.
 
 The release workflow can attach original Sigstore provenance/SBOM bundles and

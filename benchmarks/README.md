@@ -4,6 +4,9 @@ Corpora, historical results, harnesses and benchmark-only tests now live in
 [Nexus ShadowBench](https://github.com/aisecnomad/Nexus-ShadowBench). Main pins
 that repository as the optional `benchmark-suite` submodule. Normal scanner
 installation and regression evaluation need no submodule or network access.
+The documented self-scan profile excludes `benchmark-suite` as this separate
+CI-validated scope; unrestricted scans still report an unavailable submodule
+as incomplete.
 
 ```bash
 git submodule update --init --depth 1 -- benchmark-suite
