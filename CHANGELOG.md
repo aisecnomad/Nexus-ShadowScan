@@ -21,6 +21,10 @@ Malformed GCP list responses, pagination limits, invalid Okta grants and conflic
 Entra permission labels now record explicit incomplete categories, independent of
 resource names or diagnostic wording.
 
+The optional live DNS snapshot enhancement now has a scoped design and
+acceptance plan; an explicit regression guards the offline network boundary.
+Live DNS collection and snapshot replay remain unimplemented (#210).
+
 Current source adds bounded staged-file hooks, readiness and remediation guidance,
 offline terminal triage, a candidate public API contract, a pinned benchmark
 companion and verified release attachments. Signature loading uses faster native

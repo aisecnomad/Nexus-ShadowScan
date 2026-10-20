@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import socket
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,25 @@ from shadowscan.models import Kind, Surface
 from shadowscan.signatures import get_index
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "network"
+
+
+@pytest.mark.parametrize("path", ["zeek", "aws", "generic_dns.csv", "temporal_dns.json"])
+def test_offline_network_scan_never_resolves_or_sends(run_connector, monkeypatch, path):
+    # The suite's hermetic DNS fixture returns canned public answers. Replace
+    # it here so even a handled resolver call fails this offline contract.
+    attempts = []
+
+    def refused(*args, **kwargs):
+        attempts.append(True)
+        raise AssertionError("offline network analysis must not resolve names or send packets")
+
+    for name in ("getaddrinfo", "gethostbyname", "gethostbyname_ex", "gethostbyaddr"):
+        monkeypatch.setattr(socket, name, refused)
+    for name in ("connect", "connect_ex", "send", "sendall", "sendto"):
+        monkeypatch.setattr(socket.socket, name, refused)
+    findings, ctx = run_connector("network.logs", input=str(FIXTURES / path))
+    assert not attempts
+    assert findings and not ctx.stats.incomplete
 
 
 def scan(run_connector, path: Path, **config):

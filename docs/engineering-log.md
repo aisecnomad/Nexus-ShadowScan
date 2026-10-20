@@ -92,6 +92,19 @@ ordinary and misleading project names. This is a focused correction for #264;
 other connectors still use the diagnostic-text fallback and are not claimed to
 have completed the explicit-reason migration. No live provider was contacted.
 
+### DNS snapshot proposal and offline boundary regression (October 20)
+
+Recorded the remaining #210 enhancement as a concrete proposal with a separate
+explicit-opt-in collector, strict versioned snapshot and deterministic local
+replay. The acceptance plan specifies TTL and exact-vantage checks, ambiguous
+and conflicting evidence, bounded collection/replay, cancellation and no
+synthetic client-contact or agent claims. Resolver transport/dependency and
+artifact interface remain review decisions; no live collector, resolver option
+or egress was added. The network guide links the proposal. An explicit test
+guards resolver calls and packet sends during ordinary offline network scans;
+the existing hermetic DNS fixture alone would have hidden a resolver call.
+The proposal stays open; these tests do not claim live DNS acceptance.
+
 ### Forward-compatible coverage-gap reasons in report readers (October 20)
 
 - `validate_coverage_summary` no longer refuses a report whose published
