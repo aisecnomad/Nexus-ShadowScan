@@ -32,6 +32,11 @@ redaction/parser fixtures still make the unrestricted scanner checkout
 incomplete. The documented self-scan configuration declares those exclusions.
 The requested 500 ms cold-scan target remains unmet; measured results and the
 scope limitations are documented in the local pre-commit guide.
+Optional native signature-pack event parsing reduces a seven-process quick-scan
+median from 835 ms to 616 ms on the same local fixture. Python composition and
+construction retain all resource and duplicate-key checks, with the original
+parser as fallback. Six additional offline application/library examples
+complete under the unchanged defaults; they do not establish field reliability.
 
 Added offline terminal report browsing with literal, sanitized display, bounded
 input and unchanged incomplete status across filtering. The proposed 1.0 public

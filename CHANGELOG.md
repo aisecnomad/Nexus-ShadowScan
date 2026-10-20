@@ -10,7 +10,9 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 Current source adds bounded staged-file hooks, readiness and remediation guidance,
 offline terminal triage, a candidate public API contract, a pinned benchmark
-companion and verified release attachments, alongside evidence-based app attribution and executable-tool provenance,
+companion and verified release attachments. Signature loading uses faster native
+event parsing when available while retaining bounded Python construction.
+Other changes include evidence-based app attribution and executable-tool provenance,
 structural workload inventory, per-root coverage budgets and clearer incomplete
 scan diagnostics, bounded credential handling, refreshed dependency locks,
 reproducible benchmark tooling and repository hygiene. These changes are not

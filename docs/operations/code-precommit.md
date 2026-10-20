@@ -1,13 +1,36 @@
 # Local readiness and staged-file checks
 
 Start an incomplete-scan investigation with `summary.incomplete_reasons` and
-the affected connector's errors and coverage ledger. A default scan of the
-fixture-heavy development checkout on 2026-10-20 took 35.3 seconds and reported
-four `analysis-limit`, four `sanitization-limit` and one `oversize-file`
-reason. The oversized generated search index was a blinding gap; a separate
-discounted test sanitization gap was tolerated. The ordinary three-file
-application sample completed successfully with the same defaults. These are
-local observations, not a production reliability estimate.
+the affected connector's errors and coverage ledger. On 2026-10-20, scanner
+package code matching candidate
+[`423ef281361bc0b610274ebede0186e15942ddab`](https://github.com/aisecnomad/Nexus-ShadowScan/commit/423ef281361bc0b610274ebede0186e15942ddab)
+on macOS arm64 / Python 3.11.16 completed these default offline scans with
+exit 0, no incomplete reasons and no coverage gaps:
+
+| Input | Files | Source bytes | Findings |
+|---|---:|---:|---:|
+| Bundled `tests/fixtures/sample_repo` | 24 | 6,996 | 12 |
+| First eight `realistic_corpus.json` projects, combined | 49 | 43,245 | 11 |
+| Requests 2.34.2 Python sources | 19 | 217,284 | 0 |
+| Click 8.5.0 Python sources | 17 | 441,955 | 0 |
+| Rich 15.0.0 Python sources | 100 | 1,218,165 | 0 |
+| aiohttp 3.14.5 Python sources | 54 | 994,558 | 0 |
+
+The first two are authored fixtures; the library inputs are installed Python
+source files, not full upstream repositories. They were read as data, never
+executed. These six cases establish neither field reliability nor a guarantee
+that an arbitrary repository completes.
+
+A default scan of the clean scanner checkout with its benchmark companion
+uninitialized still exited 3: three `analysis-limit`, three `sanitization-limit`
+and one `unresolved-link`. Initializing companion commit
+`e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e` changed those counts to five
+`analysis-limit`, three `sanitization-limit` and three `oversize-file`.
+The extra limits came from retained benchmark JSON, not ordinary application
+source. A separate discounted sanitization gap cost 0.25 weighted entries and
+was tolerated in both scans; increasing the gap budget would not resolve the
+other failures. The explicitly scoped `examples/shadowscan.self-scan.yaml`
+completed with exit 0 and 23 findings in both companion states.
 
 Common causes include oversized JSON or generated files, undecodable source,
 malformed configuration, AST or credential-analysis quotas, and expired
@@ -74,7 +97,12 @@ On 2026-10-20, seven fresh-process runs of the development version on macOS
 arm64 with Python 3.11.16 and a three-file synthetic repository measured
 877 ms median for `--quick` (795–1101 ms) and 252 ms for
 `--quick --preflight` (245–309 ms), with warm filesystem caches.
-The requested sub-500 ms target was not met for actual scans. Preflight skips
+A follow-up seven-process comparison on the same fixture reduced the quick
+median from 835 ms to 616 ms (26%) by using LibYAML for signature-pack events
+when available. The bounded Python composer and constructors still enforce
+the same input, alias, node, nesting, expansion and unique-key checks; platforms
+without LibYAML retain the Python parser. The optimized runs ranged from
+588–824 ms. The requested sub-500 ms target remains unmet. Preflight skips
 signature loading and source analysis, so its time is not a scan result.
 
 ## Install the pre-commit hook
