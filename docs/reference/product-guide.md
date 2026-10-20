@@ -490,7 +490,7 @@ endpoint and runtime connectors are in [Surfaces and connectors](#surfaces-and-c
 ## Benchmarks
 
 Offline results from this repository's own benchmarks. The maintainer wrote
-ShadowScan, both corpora, their labels and the harnesses, with AI coding
+ShadowScan, the corpora, their labels and the harnesses, with AI coding
 assistants (Claude, Codex, Grok, Google Antigravity and others), so these numbers are
 regression evidence about the listed inputs. They are **not** independent review
 and **not** measured production precision or recall.
@@ -498,7 +498,13 @@ and **not** measured production precision or recall.
 | Track (run, version) | Inputs | ShadowScan result | Limits |
 |---|---|---|---|
 | [ShadowBench estate, nine surfaces](https://github.com/aisecnomad/Nexus-ShadowScan/blob/0792106b8d2cc09517f7f4ee2eeabf4f8eb8da2d/benchmarks/shadowbench/estate/results/2026-10-11/REPORT.md) (2026-10-11, 0.1.2) | 137 authored vendor-format entities for one fictional estate: 87 positive, 27 control, 23 near-miss | Entity precision / recall / F1 91.2% / 95.4% / 93.3%; 83 of 87 positives found; 8 of 50 controls and near-misses flagged | Authored artifacts; frozen after one label-completeness pass in which every runnable tool ran once (it added one secondary anchor and one tolerated pair and changed no label); later ShadowScan runs on it are in-sample (below) |
-| [Shadow AI discovery, code surface](https://github.com/aisecnomad/Nexus-ShadowScan/blob/0792106b8d2cc09517f7f4ee2eeabf4f8eb8da2d/benchmarks/shadow-ai-discovery/results/2026-10-09/REPORT.md) (2026-10-09, 0.1.2+7bdea5300551) | 87 public repositories pinned by SHA: 65 positive, 10 control, 12 near-miss; 839 expected facts | Fact precision / recall / F1 99.8% / 94.8% / 97.2% **after** tuning on this corpus (92.2% F1 before, in the [2026-10-08 run](https://github.com/aisecnomad/Nexus-ShadowScan/blob/0792106b8d2cc09517f7f4ee2eeabf4f8eb8da2d/benchmarks/shadow-ai-discovery/README.md#results-shadowscan-after-the-benchmark-driven-changes-2026-10-09)); 65 of 65 positive repositories flagged; 0 of 22 controls and near-misses flagged (4 of those 22 runs incomplete) | In-sample: the detection changes were driven by this corpus's errors, so these numbers measure fit to it, not field accuracy. 43 of 87 runs were incomplete (exit 3): fact counts are a lower bound, and an incomplete clean run is not a clean result |
+| [Shadow AI discovery, code surface](https://github.com/aisecnomad/Nexus-ShadowScan/blob/0792106b8d2cc09517f7f4ee2eeabf4f8eb8da2d/benchmarks/shadow-ai-discovery/results/2026-10-09/REPORT.md) (2026-10-09, 0.1.2+7bdea5300551) | 87 public repositories pinned by SHA: 65 positive, 10 control, 12 near-miss; 839 expected facts | Fact precision / recall / F1 99.8% / 94.8% / 97.2% **after** tuning on this corpus; 65 of 65 positive repositories flagged; 0 of 22 controls and near-misses flagged (4 of those 22 runs incomplete) | In-sample: the detection changes were driven by this corpus's errors, so these numbers measure fit to it, not field accuracy. 43 of 87 runs were incomplete (exit 3): fact counts are a lower bound, and an incomplete clean run is not a clean result |
+
+The archived [2026-10-08 discovery metrics](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/benchmarks/shadow-ai-discovery/results/2026-10-08/metrics.json)
+record in-scope fact F1 of 90.9%. Labels and adapters also changed between the
+archived runs, so this and the later 97.2% are not a controlled before/after
+comparison. Some companion prose quotes later re-scored baseline figures; the
+original metrics and historical files remain unchanged.
 
 Each report also runs other open-source tools on their declared scope, which is
 narrower than nine surfaces; compare their in-scope columns in the report, not
@@ -528,6 +534,34 @@ in-scope bars, and read the report's precision and decoy specificity before
 drawing any conclusion. ShadowScan marked 27 of its 326 scans incomplete there.
 The same authorship caveat applies: the maintainer wrote the corpus, the
 rubrics, the scorer and every tool's adapter.
+
+The [cases report](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/benchmarks/shadowbench/cases/results/2026-10-11/REPORT.md)
+also records that the producing harness revision was not captured, scoring was
+revised with the results in view, and result files have no hashes binding them
+to the original run. The current companion pin and migration hashes preserve
+the archived bytes; they do not reconstruct that missing run provenance.
+ShadowScan's specificity on decoy entities in this run was 63%.
+
+### Synthetic head-to-head
+
+The [archived head-to-head report](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/tools/benchmark/results/REPORT.md)
+covers 900 synthetic repository, endpoint and network cases, including 540
+positive cases, with tool versions pinned on 2026-10-06. ShadowScan's estate
+recall was 0.90 (95% interval 0.87–0.92), while its recall on AI developer home
+directories was 70%. The corpus was pre-registered and ShadowScan's results
+were committed before the other tools ran.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/benchmarks-head-to-head.webp" alt="Historical estate recall on 900 synthetic cases: ShadowScan 0.90, Cisco AI BOM 0.49, AgentSonar 0.33, agent-bom 0.29, Shadow AI Detector 0.28, AgentDiscover 0.23, Open Shadow AI 0.19, Snyk Agent Scan 0.18, AI-Detector 0.13, Cisco MCP Scanner 0.04, Claw-Hunter 0.04" width="95%">
+</p>
+
+Unsupported surfaces count as misses in this chart. Several tools ran below
+full capability, and narrower tools can be precise within their scope. Read
+the report's in-scope results and [execution limits](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/tools/benchmark/results/README.md#limits)
+before comparing tools. These archived scores do not establish a current
+product ranking. In the three [real-world repository runs](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/benchmarks/README.md)
+from 2026-10-08 (34, 41 and 326 repositories), other tools scored higher; those
+protocols count ShadowScan's incomplete scans as misses.
 
 ### Cross-benchmark summary
 

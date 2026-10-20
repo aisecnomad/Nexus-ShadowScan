@@ -24,7 +24,9 @@ Correlation group disclosures now stay within verified scope partitions and
 reflect only retained findings. YAML integrity defects preserve generic image
 inventory while keeping scans incomplete, and ordinary reference URLs alone no
 longer flag MCP tool poisoning. Dispatch proof caching remains bounded and
-respects import shadowing; scan summaries share incomplete-reason aggregation.
+respects import shadowing; scan summaries share incomplete-reason aggregation. Report readers
+accept a newer scanner's slug-shaped coverage-gap reason instead of refusing
+the report; forged values stay refused and the write path stays strict.
 
 ## 0.1.2 — 2026-10-08
 
