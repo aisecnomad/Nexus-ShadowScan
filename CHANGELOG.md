@@ -5,10 +5,10 @@ engineering log (`docs/engineering-log.md`, which this file was until October
 2026). `RELEASE_NOTES.md` says what changes on upgrade for people who install
 and operate ShadowScan.
 
-## Unreleased
+## 0.1.3 — 2026-10-20
 
-Changes on `main` since 0.1.2, in the order the engineering log records them
-(newest first). They are not published or tagged; pin a reviewed commit SHA.
+Changes since 0.1.2, in the order the engineering log records them (newest
+first).
 
 The detection rules were changed after the 2026-10-11 ShadowBench estate run
 with that run's errors in view (Wudpecker and Tactiq are recognised as meeting

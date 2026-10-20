@@ -1,8 +1,9 @@
 # Roadmap
 
-ShadowScan 0.1.2 is a published alpha pre-release (`NexusShadowScan` on PyPI,
-tag `v0.1.2`); `main` carries unreleased changes. This roadmap is intent, not
-a contract. Items move only when they keep the fail-closed trust model.
+ShadowScan 0.1.3 is the release candidate prepared on `main`; 0.1.2 is the
+published alpha pre-release (`NexusShadowScan` on PyPI, tag `v0.1.2`). This
+roadmap is intent, not a contract. Items move only when they keep the
+fail-closed trust model.
 
 ## Now
 
@@ -54,10 +55,10 @@ a contract. Items move only when they keep the fail-closed trust model.
 
 Scoped, sequenced and with acceptance criteria in
 [docs/proposals/agent-governance.md](docs/proposals/agent-governance.md).
-All six items below are implemented, unreleased, and wait on independent
-review and live validation before a release.
+All six items below are implemented and part of the 0.1.3 candidate; they
+wait on independent review of that candidate and on live validation.
 
-- Threat mapping: implemented, unreleased. OWASP LLM and Agentic, MITRE
+- Threat mapping: implemented in the 0.1.3 candidate. OWASP LLM and Agentic, MITRE
   ATLAS and MAESTRO references come from edition-pinned, validated catalogs;
   see [docs/concepts/mappings.md](docs/concepts/mappings.md). Independent
   review of the author mappings remains open.
@@ -68,7 +69,7 @@ review and live validation before a release.
   [docs/concepts/autonomy.md](docs/concepts/autonomy.md). Evaluation corpus
   cases per tier and surface and a comparison with other autonomy frameworks
   remain open.
-- Scheduled drift: implemented, unreleased. Live `cloud.aws`, `cloud.azure`,
+- Scheduled drift: implemented in the 0.1.3 candidate. Live `cloud.aws`, `cloud.azure`,
   `cloud.gcp` and app-only `identity.entra` scans attest their collection
   scope, `diff` labels drift classes (inventory, capability, autonomy,
   governance, coverage, including MCP tool-definition changes), baselines are
@@ -76,20 +77,20 @@ review and live validation before a release.
   [docs/operations/drift.md](docs/operations/drift.md). Validation against
   live accounts and tenants, and attestation for the other live connectors,
   remain open.
-- Registry integrations: implemented, unreleased. AWS AgentCore Registry,
+- Registry integrations: implemented in the 0.1.3 candidate. AWS AgentCore Registry,
   Microsoft Agent 365 and Gemini Enterprise as discovery and reconciliation
   sources; official MCP Registry provenance and private MCP registry
   allowlists; A2A Agent Card collection. Vendor registry approval never
   confers sanctioned status unless the operator explicitly trusts that
   registry. Validation against live registries remains open.
-- Enterprise inventory dashboard: implemented, unreleased. `shadowscan
+- Enterprise inventory dashboard: implemented in the 0.1.3 candidate. `shadowscan
   dashboard` writes a static, self-contained page from fleet reports that
   shows coverage before counts, with autonomy against shadow status,
   registry reconciliation, reference counts, drift and history, plus the
   versioned `shadowscan.inventory/v1` export for BI and SIEM tools; see
   [docs/operations/dashboard.md](docs/operations/dashboard.md). Use on a
   large live fleet remains to be validated.
-- Control mapping: implemented, unreleased. ISO/IEC 42001, NIST AI RMF, the
+- Control mapping: implemented in the 0.1.3 candidate. ISO/IEC 42001, NIST AI RMF, the
   EU AI Act and AIUC-1 references, `shadowscan controls` evidence reports and
   declared governance facts in schema version 2 Capability Cards; see
   [docs/operations/controls.md](docs/operations/controls.md). They are
