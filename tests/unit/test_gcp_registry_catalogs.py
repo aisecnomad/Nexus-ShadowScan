@@ -6,6 +6,7 @@ here was validated against a live project.
 
 from __future__ import annotations
 
+import gc
 import json
 from pathlib import Path
 from typing import Any
@@ -614,7 +615,19 @@ def test_card_summaries_record_scheme_names_and_types_only():
     ],
 )
 def test_json_agent_cards_are_bounded_and_strict(value, status):
-    summary, result = gcp_registry.parse_json_card(value)
+    # On CPython 3.11 the C JSON scanner shares the recursion counter with
+    # Python frames and the cyclic GC runs on allocation, so a collection deep
+    # in the nested case can run another test's finalizer with no stack left
+    # and pytest's unraisable hook then fails this test. parse_json_card still
+    # returns "invalid" there; pausing the GC keeps the outcome about it alone.
+    gc.collect()
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        summary, result = gcp_registry.parse_json_card(value)
+    finally:
+        if enabled:
+            gc.enable()
     assert result == status and (summary is not None) == (status == "parsed")
 
 

@@ -41,7 +41,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Checkmarx One scan
-        uses: checkmarx/ast-github-action@882c03f380f4bdddae2d068540cbd73efe0796ac # 2.3.45
+        uses: checkmarx/ast-github-action@7006afa846f6d23e3e9d351a001b9d8e59c3fb8c # 2.3.46
         with:
           base_uri: ${{ vars.CX_BASE_URI }}
           cx_client_id: ${{ secrets.CX_CLIENT_ID }}
@@ -55,6 +55,6 @@ jobs:
           github_token: ""
           pr_number: ""
       - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           sarif_file: cx_result.sarif

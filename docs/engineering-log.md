@@ -35,6 +35,9 @@ and deliberately deferred from the integrations that recorded them.
   observed local root or a colliding module copy invalidates the affected
   cache entries, so import shadowing still vetoes a previously proven verdict;
   budget errors are never cached and still raise.
+  Follow-up review bounds verdict caching to functions in the bounded AST
+  inventory: arbitrary missing import names cannot grow it, and a lookup before
+  a helper's source arrives cannot cache a false verdict against that helper.
 - A YAML integrity defect (for example one duplicated mapping key, which a
   deployer may still accept last-wins) no longer erases a compose/Kubernetes
   file's generic image inventory (#267). The structural `kubernetes_workload`
@@ -49,6 +52,73 @@ and deliberately deferred from the integrations that recorded them.
 - `ScanResult.summary()` and the engine's split-run aggregation share one
   incomplete-reason merge helper (`merged_incomplete_reasons`), the #264
   refactor item, so the two counts cannot drift. No behavior change.
+
+### Two CPython 3.11 serial-run test flakes no longer depend on GC timing (October 19)
+
+- The macOS 3.11 leg failed twice on #266's final head, each time on a
+  different pre-existing test, then passed on the same commit. The commits
+  after the last green head do not touch either path, and a per-test probe
+  found no leaked threads, processes, signal handlers, GC settings or
+  finalizer garbage from the new tests.
+- `test_json_agent_cards_are_bounded_and_strict[deeply-nested]`: on CPython
+  3.11 the C JSON scanner shares the recursion counter with Python frames,
+  and the cyclic GC runs synchronously on allocation. A collection within
+  the last few levels of the 50,000-bracket descent can run another test's
+  finalizer with no stack left. pytest's unraisable hook then overflows in
+  `traceback.format_exception` and reports "Failed to process unraisable
+  exception", although `parse_json_card` still returns `invalid`. The test
+  now collects first and pauses the GC around the parse. A probe that plants
+  one finalizer-bearing cycle and sweeps the gen0 threshold across the
+  descent fails 14 of 225 alignments with the old body and 0 with the new
+  one; 3.12 defers collections out of the descent and never failed.
+- The three `noncode_ranges` linear-time tests: `process_time` charges a full
+  collection over the session heap to whichever call it lands in. One run
+  measured 105x against the 64x bound, where normal runs measure 12-23x. The
+  tests now take the fastest of three samples with the GC paused. The bound
+  is unchanged and still rejects a quadratic scan, which a mutation check
+  measured at 121x.
+
+### Dependabot #270-#274 carried with regenerated hash locks; aiohttp advisories patched (October 19)
+
+- Dependabot raised the `pyproject.toml` floors and `requirements-ci-constraints.txt`
+  pins but cannot refresh the hash locks. #270, #271 and #274 failed CI ("CI lock
+  drifted from its reviewed direct constraints", "pre-commit ruff version differs
+  from the CI pin", and #271's hash-locked install). #273 passed CI while leaving
+  `requirements.lock` below its own new floors: boto3 1.43.101 against `>=1.43.114`,
+  google-auth 2.58.0 against `>=2.62.0`, azure-identity 1.25.3 against `>=1.26.0`
+  and oci 2.187.0 against `>=2.188.0`. No test compares the runtime lock with the
+  extras' floors, so the hash-locked production install would not have satisfied
+  the package's declared requirements.
+- `requirements.lock` is regenerated with pip-compile 7.5.3. `-P` pins exactly the
+  reviewed versions: PyJWT 2.15.1, regex 2026.9.29, boto3 1.43.114 (botocore
+  1.43.115), google-auth 2.62.0, azure-identity 1.26.0 and oci 2.188.0. oci 2.188.0
+  adds a hard dependency on python-pkcs11 0.9.4 (with asn1crypto 1.5.1). It
+  publishes wheels for CPython 3.11-3.14 on manylinux x86_64/aarch64 and macOS
+  universal2, and all 37 artifact hashes are locked. ShadowScan does not import it.
+- `requirements-ci.lock` is regenerated with uv 0.11.32 from the constraints:
+  ruff 0.17.1, pre-commit 4.7.0, hypothesis 6.170.0, ast-serialize 0.13.0, filelock
+  4.2.0, platformdirs 4.13.3, pluggy 1.7.0, python-discovery 1.6.3 and virtualenv
+  21.14.8. The ruff pre-commit hook moves to `38bfb07c0c64c304f47eb52090f8288150c77730`,
+  the commit that tag v0.17.1 resolves to. The mypy hook's PyJWT follows the runtime
+  lock, and the docs lock's platformdirs follows the CI pin, so the combined
+  `make install` stays resolvable.
+- aiohttp 3.14.4 (pulled in by oci) fixes GHSA-2g87-pp6c-29x5 (unbounded
+  memory/CPU on crafted requests), GHSA-494j-54xm-rwp3 (Secure cookie sent over
+  plaintext) and GHSA-5wr8-gcqf-gqf3 (keepalive timeout not applied before the first
+  bytes). They were published after `main`'s last audit and made the runtime lock
+  fail `pip-audit`.
+- #272: codeql-action 4.39.0, ast-github-action 2.3.46 and scorecard-action
+  2.5.0. Each SHA was checked against its release tag with `git ls-remote`.
+- #275's readability edits to the README are kept: a separate fail-closed
+  paragraph, "uses the same Python API" and a clause comma. Its removals of the
+  coverage-budget, self-scan and "an incomplete scan never reads as clean"
+  guarantees are not.
+- Verified on CPython 3.12. Every lock installs under `--require-hashes
+  --only-binary=:all:`, alone and combined. `pip check` passes with the package
+  installed against the runtime lock. `pip-audit` reports nothing for all five
+  locks. The full suite, ruff 0.17.1 lint and format, mypy, the signature and
+  mapping validators, the policy tests, the secrets gate and the strict docs build
+  all pass.
 
 ### Frozen cdxgen benchmark installations (October 18)
 

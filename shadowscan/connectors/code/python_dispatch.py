@@ -596,6 +596,11 @@ class PythonDispatches:
             if key not in self._sources and key not in self._limited and key not in self._file_paths:
                 return None
             parsed = self._load(key)
+            # Unknown symbols and sources not yet read are not settled proofs.
+            # Do not retain caller-controlled misses: only functions in the
+            # bounded AST inventory may occupy the verdict cache.
+            if parsed is None or symbol not in parsed.functions:
+                return False
             # Memoize per (module, symbol): every consumer asks the same
             # question, and one dispatch proof re-walks the module's functions.
             # Only settled verdicts are cached; a budget error is raised again.
