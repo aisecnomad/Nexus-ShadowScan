@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import gc
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -278,15 +280,33 @@ def test_php_echo_expression_is_executable(tmp_path: Path, run_connector):
     assert [e.location for e in _code_evidence(findings)] == ["template.php:2"]
 
 
+def _cpu_time(scan: Callable[[], object], repeats: int = 3) -> tuple[float, object]:
+    """The fastest of ``repeats`` CPU-time samples of ``scan``, with the cyclic GC paused.
+
+    process_time charges a full collection over the whole session heap to
+    whichever call it lands in; that pause is not the scan's cost and once
+    pushed a linear scan past the 64x bound on a serial CPython 3.11 run.
+    """
+    gc.collect()
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        best, result = float("inf"), None
+        for _ in range(repeats):
+            started = time.process_time()
+            result = scan()
+            best = min(best, time.process_time() - started)
+    finally:
+        if enabled:
+            gc.enable()
+    return best, result
+
+
 def test_ruby_block_comments_scan_in_linear_time():
     block = "=begin\nnote\n=end\nx = 1\n"
     small, large = block * 2_000, block * 32_000
-    started = time.process_time()
-    noncode_ranges(small, "ruby")
-    small_time = time.process_time() - started
-    started = time.process_time()
-    noncode_ranges(large, "ruby")
-    large_time = time.process_time() - started
+    small_time, _ = _cpu_time(lambda: noncode_ranges(small, "ruby"))
+    large_time, _ = _cpu_time(lambda: noncode_ranges(large, "ruby"))
     # Sixteen times the input must not cost more than 64 times the time (a
     # quadratic scan would cost 256 times); no absolute bound, since coverage
     # tracing on CI runners slows the loop by an interpreter-dependent factor.
@@ -402,12 +422,8 @@ def test_php_code_after_a_closing_tag_in_a_comment_is_scanned(tmp_path: Path, ru
 def test_php_comments_ended_by_closing_tags_scan_in_linear_time():
     block = "<?php // note ?> "
     small, large = block * 2_000, block * 32_000
-    started = time.process_time()
-    noncode_ranges(small, "php", ".php")
-    small_time = time.process_time() - started
-    started = time.process_time()
-    noncode_ranges(large, "php", ".php")
-    large_time = time.process_time() - started
+    small_time, _ = _cpu_time(lambda: noncode_ranges(small, "php", ".php"))
+    large_time, _ = _cpu_time(lambda: noncode_ranges(large, "php", ".php"))
     assert large_time < max(small_time, 0.005) * 64
 
 
@@ -417,12 +433,9 @@ def test_java_comments_ended_by_escapes_scan_in_linear_time():
     # file for each comment (quadratic).
     block = "// \\u000a "
     small, large = block * 2_000, block * 32_000
-    started = time.process_time()
-    noncode_ranges(small, "java", ".java")
-    small_time = time.process_time() - started
-    started = time.process_time()
-    ignored, _ = noncode_ranges(large, "java", ".java")
-    large_time = time.process_time() - started
+    small_time, _ = _cpu_time(lambda: noncode_ranges(small, "java", ".java"))
+    large_time, scanned = _cpu_time(lambda: noncode_ranges(large, "java", ".java"))
+    ignored, _ = scanned
     assert len(ignored) == 32_000
     # Sixteen times the input must not cost more than 64 times the time (quadratic costs 256 times).
     assert large_time < max(small_time, 0.005) * 64

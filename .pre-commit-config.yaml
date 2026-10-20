@@ -42,7 +42,7 @@ repos:
         args: [--branch=main]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: f12be1ebaa5351c1fc76472de98db2c3446c8253 # v0.16.10
+    rev: 38bfb07c0c64c304f47eb52090f8288150c77730 # v0.17.1
     hooks:
       # CI lints and formats Python only; the format hook would also rewrite
       # Python blocks in Markdown.
@@ -71,7 +71,7 @@ repos:
         # override already names the packages that may be imported untyped.
         additional_dependencies:
           - click==8.5.0
-          - PyJWT==2.15.0
+          - PyJWT==2.15.1
           - rich==15.0.0
           - urllib3==2.8.0
           - types-PyYAML==6.0.12.20260906
