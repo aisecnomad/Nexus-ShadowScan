@@ -12,6 +12,9 @@ explain operator migrations. Earlier per-change entries are preserved in the
   command text; keep string-span protection isolated to each code cell, and do
   not let quotes in shell or magic lines open Python strings.
 
+certifi 2026.10.19 removes the `emSign ECC Root CA - G3` root, whose revoked
+intermediates had compromised keys (GHSA-6q48-6c7w-9gw2), from every lock.
+
 Expired connectors share one five-second allowance for preparing partial findings,
 so repeated overruns cannot each delay the report for another five seconds.
 Native eBPF sensor names no longer imply an AI destination; wrapped Hubble
