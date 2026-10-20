@@ -101,6 +101,41 @@ for the pipeline, the package layout and the connector contract.
 | **Fail-closed design** | Errors, timeouts and unbounded gaps produce exit 3 (incomplete), never a smaller clean report. Bounded gaps are budgeted (2% of entries by default) and always reported |
 | **Credential safety** | Known credential formats redacted before persistence; secret stores read for names only |
 
+## Benchmarks
+
+**Nexus ShadowScan is currently the best-in-class open-source shadow AI scanner on
+ShadowBench.** In every cross-tool run it has the highest headline score of the
+open-source tools tested, and it is the only one that covers every surface. These
+runs were developed in this repository and have since moved, byte-for-byte, to
+[Nexus ShadowBench](https://github.com/aisecnomad/Nexus-ShadowBench), which `main`
+pins as the `benchmark-suite` submodule. The figures below are those committed
+runs; none was rerun or regraded in the move.
+
+| Run | Inputs | ShadowScan | Next-best open-source tool |
+|---|---|---|---|
+| [Head-to-head](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/tools/benchmark/results/REPORT.md) (tools pinned 2026-10-06) | 900 synthetic cases: repository, endpoint, network | Estate recall 0.90 (0.87–0.92) | Cisco AI BOM 0.49 (0.45–0.53) |
+| [ShadowBench cases](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/benchmarks/shadowbench/cases/results/2026-10-11/REPORT.md) (2026-10-11) | 346 cases, 738 entities, nine surfaces | Estate recall 0.839 | AI-Infra-Guard, AgentDiscover 0.035 |
+| [Shadow AI discovery](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/benchmarks/shadow-ai-discovery/results/2026-10-09/REPORT.md) (2026-10-09) | 87 public repositories, code surface | In-scope value F1 0.972 | NuGuard 0.750 |
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/benchmarks-head-to-head.webp" alt="Head-to-head estate recall on 900 synthetic cases: ShadowScan 0.90, Cisco AI BOM 0.49, AgentSonar 0.33, agent-bom 0.29, Shadow AI Detector 0.28, AgentDiscover 0.23, Open Shadow AI 0.19, Snyk Agent Scan 0.18, AI-Detector 0.13, Cisco MCP Scanner 0.04, Claw-Hunter 0.04" width="95%">
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/benchmarks-cross-tool.webp" alt="Left: ShadowBench cases estate recall, ShadowScan 0.839 against 0.035 or less for every other tool. Right: Shadow AI discovery value-level F1, ShadowScan 0.972, NuGuard 0.750, SafeDep vet 0.587, Trusera ai-bom 0.585, cdxgen 0.511" width="95%">
+</p>
+
+These results are evidence about the listed inputs. They are **not** independent
+review and **not** measured field accuracy. The maintainer wrote every corpus,
+label, scorer and tool adapter, and detection was tuned on these corpora, so the
+scores are in-sample: the 0.972 F1 was measured after tuning on that corpus (0.922
+before). Estate recall charges each tool for the surfaces it does not cover, so it
+mostly measures coverage, and several tools ran below full capability. ShadowScan
+still has gaps: it found 70% of AI developer home directories in the head-to-head,
+and its specificity on decoys in the cases run was 63%. See
+[benchmark evidence](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/reference/product-guide.md#benchmarks)
+for per-surface results and limits.
+
 ---
 
 ## Install
