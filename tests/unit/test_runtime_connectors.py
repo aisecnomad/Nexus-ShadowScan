@@ -858,6 +858,44 @@ def test_ebpf_reads_every_socket_argument_of_the_example_tetragon_policy() -> No
     assert connector.ctx.stats is None or not connector.ctx.stats.incomplete
 
 
+def test_example_falco_rules_emit_every_field_the_ebpf_reader_scores() -> None:
+    """Regression: the example rules omitted k8s.ns.name and k8s.pod.name. Falco puts only
+    the fields an output template references into ``output_fields``, so every pod's
+    process with the same name collapsed into one finding with no namespace or pod,
+    although the connector guide says these rules emit the fields it reads."""
+    rules = yaml.safe_load((ROOT / "examples/ebpf/falco-rules.yaml").read_text(encoding="utf-8"))
+    [connect] = [rule for rule in rules if "evt.type=connect" in rule["condition"]]
+    emitted = set(re.findall(r"%([a-z0-9_.]+)", connect["output"]))
+    # One field from each group the Falco reader tries, in its order of preference.
+    for group in (
+        {"proc.name"},
+        {"fd.sip.name", "fd.rip.name", "fd.sip", "fd.rip"},
+        {"fd.sport", "fd.rport"},
+        {"k8s.ns.name"},
+        {"k8s.pod.name"},
+    ):
+        assert emitted & group, sorted(group)
+
+    alert = {
+        "rule": connect["rule"],
+        "priority": "Notice",
+        "output_fields": {
+            "proc.name": "python3",
+            "fd.sip": "162.159.140.245",
+            "fd.sip.name": "api.openai.com",
+            "fd.sport": 443,
+            "container.name": "agent",
+            "k8s.ns.name": "ai",
+            "k8s.pod.name": "agent-0",
+        },
+    }
+    assert set(alert["output_fields"]) == emitted
+    findings = _ebpf_connector().analyze([alert])
+    assert [(finding.resource, finding.metadata["pod"]) for finding in findings] == [
+        ("ai/agent-0/python3", "agent-0")
+    ]
+
+
 def test_ebpf_reads_every_tracee_sockaddr_argument() -> None:
     connector = _ebpf_connector()
     event = {
