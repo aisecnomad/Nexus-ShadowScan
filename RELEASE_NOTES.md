@@ -100,8 +100,8 @@ and the
   exports with registry records from earlier builds replay as incomplete.
 - `shadowscan merge` refuses (exit 1) a report with another finding identity
   schema, a non-boolean `inventory_present`, or a reused finding id. It also
-  refuses a report written before `inventory_present` existed (the 0.1.x
-  releases) when that report records registration: rescan such hosts before
+  refuses a report written before `inventory_present` existed (earlier releases
+  through 0.1.2) when that report records registration: rescan such hosts before
   merging. Fleet reports now carry `collection_scope.fleet.schema`
   `shadowscan.fleet-merge/v2` with per-source times, inventory presence and
   connector status; consumers that pin `v1` must accept `v2`.

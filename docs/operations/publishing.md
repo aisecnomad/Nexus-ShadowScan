@@ -187,7 +187,7 @@ package.
    gh attestation verify "nexusshadowscan-$version-py3-none-any.whl" \
      --repo aisecnomad/Nexus-ShadowScan --bundle provenance.sigstore.json
    ```
-8. **Open the next candidate.** Bump the version (for example to `0.1.3`) and
+8. **Open the next candidate.** Bump the version (for example to `0.1.4`) and
    add a new unreleased section to the changelog and release notes.
 
 ## Renaming the repository
