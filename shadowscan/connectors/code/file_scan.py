@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 from bisect import bisect_right
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import replace
 from functools import partial
@@ -654,6 +654,22 @@ class FileScanner:
         "MCP servers must be an object or array",
     )
 
+    def _declaration_errors(
+        self, file: _SourceFile, issues: Collection[str], empty_note: str, *, full_weight: bool = False
+    ) -> bool:
+        """Record a declaring file's parser issues as input defects; False when the file is blank.
+
+        A manifest, agent manifest or MCP configuration that holds only whitespace (and a
+        byte-order mark) fails its parser, yet no byte of it went unread and no parser reads a
+        declaration from it: it is noted (``empty_note``), which strict accounting still counts,
+        rather than recorded as a gap. A file with a NUL byte never reaches this as text.
+        """
+        if issues and _blank(file.text):
+            self.walker.note_file(file.rel, empty_note)
+            return False
+        self.file_errors(file.rel, issues, defect=True, full_weight=full_weight)
+        return True
+
     def file_errors(
         self, rel: str, issues: Iterable[str], *, defect: bool = False, full_weight: bool = False
     ) -> None:
@@ -747,7 +763,7 @@ class FileScanner:
         file.card_kind = agent_manifest_kind(file.rel)
         if file.card_kind:
             validation = parse_agent_manifest(file.rel, file.text, file.card_kind)
-            self.file_errors(file.rel, validation.errors, defect=True)
+            self._declaration_errors(file, validation.errors, "empty agent manifest; it declares no agent")
             file.card_valid = validation.valid
             file.card_incomplete = validation.incomplete
         for m in file.file_matches:
@@ -884,7 +900,12 @@ class FileScanner:
             mcp_errors: list[str] = []
             file.mcp_servers = _parse_mcp_servers(file.rel, file.text, mcp_errors, document)
             # An MCP configuration is reported at full weight in test code, so its defects are gaps there.
-            self.file_errors(file.rel, dict.fromkeys(mcp_errors), defect=True, full_weight=True)
+            self._declaration_errors(
+                file,
+                dict.fromkeys(mcp_errors),
+                "empty MCP configuration; it declares no server",
+                full_weight=True,
+            )
             dedicated = file.name.lower() in _DEDICATED_MCP_CONFIG_NAMES
             if not file.mcp_servers and not mcp_errors and not dedicated:
                 # The content heuristic (an "mcp" and a "servers" key anywhere
@@ -990,7 +1011,10 @@ class FileScanner:
         manifest = parse_manifest(rel, file.text, self._parsed_document(file, (".json",), strict=True))
         if not manifest:
             return
-        self.file_errors(rel, dict.fromkeys(manifest.errors), defect=True)
+        if not self._declaration_errors(
+            file, dict.fromkeys(manifest.errors), "empty manifest; it declares nothing"
+        ):
+            return
         for dep in manifest.deps:
             file.proj.deps.append(dep)
             for m in self.index.match_dependency(dep.ecosystem, dep.name):
@@ -2262,3 +2286,8 @@ def _content_declares_mcp(rel: str, text: str, document: Any) -> bool:
 def _text_may_declare_mcp(text: str) -> bool:
     """``_may_declare_mcp`` of decoded text: its bytes lower-cased, without NUL characters."""
     return _may_declare_mcp(text.replace("\x00", "").encode("utf-8", "replace").lower())
+
+
+def _blank(text: str) -> bool:
+    """Whether ``text`` holds nothing but JSON, YAML and TOML whitespace (and a byte-order mark)."""
+    return not text.strip(" \t\r\n\ufeff")

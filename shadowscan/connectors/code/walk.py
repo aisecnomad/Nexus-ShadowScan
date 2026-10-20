@@ -138,12 +138,32 @@ def _manifest_parses(path: Path, name: str) -> bool:
     try:
         text = data.decode("utf-8-sig")
         if name in _JSON_MANIFESTS:
-            json.loads(text, parse_constant=_refuse_constant)
+            document = json.loads(text, parse_constant=_refuse_constant)
         else:
-            tomllib.loads(text)
+            document = tomllib.loads(text)
     except (UnicodeDecodeError, ValueError, RecursionError):  # TOMLDecodeError is a ValueError
         return False
-    return True
+    return not _templated_project_name(document)
+
+
+def _templated_project_name(document: object) -> bool:
+    """Whether a parsed manifest names its project with template syntax (``name = "{{folder_name}}"``).
+
+    No package index or build backend accepts such a name, so the manifest is a
+    generator's template rendered elsewhere, as one that does not parse is.
+    """
+    if not isinstance(document, dict):
+        return False
+    names = [document.get("name")]
+    for table, key in (("project", "name"), ("package", "name")):
+        section = document.get(table)
+        if isinstance(section, dict):
+            names.append(section.get(key))
+    tool = document.get("tool")
+    poetry = tool.get("poetry") if isinstance(tool, dict) else None
+    if isinstance(poetry, dict):
+        names.append(poetry.get("name"))
+    return any(isinstance(value, str) and _TEMPLATE_SYNTAX.search(value) for value in names)
 
 
 def _marks_deployable_project(directory: Path, rel_dir: str, names: Iterable[str]) -> bool:
