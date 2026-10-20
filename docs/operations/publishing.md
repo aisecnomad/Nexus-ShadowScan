@@ -77,7 +77,7 @@ package.
 1. **Prepare the candidate.** Set the same version in `pyproject.toml`,
    `shadowscan/__init__.py` and `CITATION.cff` (CI checks that they match).
    Date the release headings in `CHANGELOG.md`, `docs/engineering-log.md` and
-   `RELEASE_NOTES.md` and remove "unreleased" from them. Merge through the normal review process.
+   `docs/release-notes.md` and remove "unreleased" from them. Merge through the normal review process.
 2. **Review and accept the exact commit**, as the
    [release process](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/GOVERNANCE.md#release-process)
    requires. A green CI run is not that review.
@@ -172,7 +172,7 @@ package.
    predates the sdist: it was a wheel built with `pip wheel` from a
    `git archive`, and was attested as `aisecnomad/Project-Nexus` before the rename.
 7. **Optionally, create the GitHub release by hand** from the tag, using the
-   version's `RELEASE_NOTES.md` section. The workflow never creates one. Attach
+   version's `docs/release-notes.md` section. The workflow never creates one. Attach
    the signed evidence to it, so that the release carries its own signatures
    rather than only a pointer to the attestation store: the wheel, the sdist,
    `SHA256SUMS` from `release-candidate-<SHA>`, and `provenance.sigstore.json`

@@ -69,7 +69,13 @@ plugins:
 markdown_extensions:
   - admonition
   - pymdownx.details
-  - pymdownx.superfences
+  # Mermaid fences render as diagrams (Material loads Mermaid in the browser);
+  # SECURITY.md and the threat model draw the trust boundaries with one.
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
@@ -94,6 +100,7 @@ nav:
       - Quick start: getting-started/quickstart.md
       - Configuration: getting-started/configuration.md
       - Command reference: reference/cli.md
+      - Detection matrix: reference/detection-matrix.md
   - Connectors:
       - Overview: connectors.md
       - Code: connectors/code.md
@@ -146,7 +153,6 @@ nav:
       - Maintainer onboarding: maintainer-onboarding.md
       - Merge policy enforcement: operations/merge-policy.md
       - Publishing a release: operations/publishing.md
-      - Threat model: security/threat-model.md
       - AI Review Gate: security/ai-review-gate.md
       - ADRs:
           - adrs/index.md
@@ -187,10 +193,16 @@ nav:
       - Utilities:
           - HTTP client: api/http.md
           - Redaction: api/redaction.md
-  - Security: security.md
-  - Release notes: release-notes.md
-  - Changelog: changelog.md
-  - Engineering log: engineering-log.md
+  - Security:
+      - Security policy: security.md
+      - Threat model: security/threat-model.md
+      - Controls and limits: security/controls.md
+      - Redaction: security/redaction.md
+      - "Hardening log (self-review)": security/hardening-log.md
+  - Changes:
+      - Release notes: release-notes.md
+      - Changelog: changelog.md
+      - Engineering log: engineering-log.md
 
 extra:
   social:

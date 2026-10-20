@@ -97,12 +97,15 @@ def test_images_carry_no_version_count_or_repository_slug(render: Callable[[], s
     assert not re.search(r"\b\d{2,}\b", cleaned)
 
 
-def test_readme_and_architecture_page_reference_the_generated_images() -> None:
+def test_readme_and_docs_pages_reference_the_generated_images() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     raw = "https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/"
-    for path in (BANNER, DATA_FLOW, BENCHMARK):
+    for path in (BANNER, DATA_FLOW):
         assert f"{raw}{path.name}" in readme
     assert f"assets/{CONNECTORS.name}" in (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
+    # The benchmark chart moved with the benchmark results from the README to the evaluation page.
+    evaluation = (ROOT / "docs" / "evaluation.md").read_text(encoding="utf-8")
+    assert f"](assets/{BENCHMARK.name})" in evaluation
 
 
 def test_docs_assets_holds_only_the_generated_images() -> None:

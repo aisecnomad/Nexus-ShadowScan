@@ -17,6 +17,42 @@ and uploads the SARIF report. Gating is controlled by the repository variable
 `medium`, `high` or `critical` once your detection validation and read-only
 canary support a threshold. An incomplete scan exits 3 in either mode.
 
+## SARIF output
+
+The same scan as SARIF for GitHub code scanning (`--format sarif`): the first
+result of the bundled offline demo
+(`shadowscan scan -c examples/shadowscan.offline.yaml --format sarif`), abridged:
+
+```json
+{
+  "ruleId": "shadowscan/agent-config/coding-agent.claude-code",
+  "level": "warning",
+  "message": {
+    "text": "Claude Code configured in repository root — risk critical (100), confidence 1.00 — SHADOW (not in inventory). Risk factors: agent-config finding; not present in the sanctioned agent inventory; can execute code or shell commands; …"
+  },
+  "partialFingerprints": {"shadowscan/finding": "ss-8711bc4c2a646794"},
+  "properties": {
+    "surface": "code",
+    "kind": "agent-config",
+    "shadow": true,
+    "risk_level": "critical",
+    "risk_score": 100,
+    "confidence": 1.0,
+    "frameworks": ["coding-agent.claude-code"],
+    "capabilities": ["code-exec", "tool-use", "autonomous", "multi-agent"],
+    "tags": ["posture-permissions-bypassed", "posture-unrestricted-shell"],
+    "threats": ["maestro-2025:L3", "mitre-atlas-2026.09:AML.T0050"]
+  },
+  "locations": [
+    {"physicalLocation": {"artifactLocation": {"uri": ".claude/settings.json", "uriBaseId": "%SRCROOT%"}}}
+  ]
+}
+```
+
+SARIF results are warnings or notes carrying the heuristic risk level, never a
+CVSS score; see [severity](../severity.md). A repository test checks that this
+excerpt is still the demo's first result.
+
 ## Exit code handling
 
 | Code | CI interpretation |

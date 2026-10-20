@@ -362,7 +362,7 @@ across this change reports findings as resolved or new that are neither.
   punctuated or not, a password literal of fewer than six
   characters or that reads as an upper-case variable name, a literal on a
   later line that no operator joins) is listed under
-  [what can remain](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-can-remain).
+  [what can remain](security/redaction.md#what-can-remain).
   Excerpts and report text change accordingly; finding ids do not.
 - **Completeness.** Scans incomplete only because of a file guessed to be an
   MCP configuration that is not one, an import-bound call between 8,192 and

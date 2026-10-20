@@ -434,7 +434,7 @@ applied in this order:
    configuration or a dotenv file. Oversize content is not
    read for credentials at all: a key in an oversize fixture is missed while
    the budget tolerates the entry, the trade-off
-   [SECURITY.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-can-remain)
+   [the redaction page](security/redaction.md#what-can-remain)
    records; raise `max_file_size` to read such files. A binary or undecodable file whose gap would be discounted
    or declared (a test fixture, or a documentation, example or generated file
    under `profile: ci`) is read for credentials before its gap is recorded,
