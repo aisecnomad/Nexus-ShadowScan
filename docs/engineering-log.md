@@ -13,6 +13,76 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Ordinary repositories finish complete: measured causes of exit 3 fixed, a preflight and remediation added (October 20)
+
+- Measured first. A default `shadowscan code` of 14 public repositories
+  (requests, flask, fastapi, django, langchain, langgraph, the MCP servers,
+  openai-agents-python, crewAI, litellm, autogen, llama_index, AutoGPT and
+  continue) exited 3 on 8 of them, and the ShadowScan checkout itself exits 3.
+  By repository, the causes were the connector deadline (4), undecodable
+  "analyzable" content (5, 466 gaps in AutoGPT alone), one credential pattern's
+  matching budget (crewAI) and one oversize fixture. Most were scanner defects
+  rather than limits ordinary repositories should trip.
+- Recognised binary headers now include RIFF (WebP, WAVE, AVI by their form at
+  offset 8), ISO base media (`ftyp` at offset 4: MP4, MOV, M4A, HEIC, AVIF),
+  Ogg, ICO and CUR, ID3-tagged MP3, FLAC, Matroska/WebM, TIFF, PSD, WOFF, WOFF2,
+  OpenType and TrueType. `framework.autogpt`'s directory-wide glob
+  (`**/autogpt_platform/**`) selected every file below it, and its WebP, ICO,
+  Ogg, MP3 and AVIF assets were each a blinding "binary or undecodable content"
+  gap. As before, a recognised header only quiets a file a directory-wide glob
+  selected; one analyzed for its own name, and unrecognised binary content,
+  stay gaps.
+- `heuristic.inline-credential` was quadratic: `\b[A-Z_][A-Z0-9_.-]*API[_-]?KEY`
+  restarts at every word boundary of a run like base64url text and rescans it
+  to the end (4 KB 0.09 s, 8 KB 0.33 s, 16 KB 1.34 s). crewAI's VCR cassettes
+  carry inline audio and image payloads, and credential detection timed out on
+  a 25 KB file. The identifier prefix is bounded to 255 characters in all five
+  keyword patterns: 1 MB of hostile input now takes 0.03 s, 200,000 fuzzed
+  strings match exactly as before, and the evaluation corpora are unchanged. A
+  new sweep (`test_signature_secret_patterns_are_linear_on_identifier_runs`)
+  times every credential pattern on identifier runs and fails on the old form.
+- The filesystem deadline estimate could never reach its documented ceiling:
+  the probe stopped counting at 20,000 entries, so it proposed at most 200
+  seconds. `code.filesystem` now counts up to 90,000 entries (for at most two
+  seconds; a probe lists about 250,000 a second) and scales the deadline in
+  proportion above 6,000, so it proposes at most 1800 seconds at the
+  120-second default, the engine's ceiling. 6,000 entries per default budget is
+  half the rate a contended four-CPU host sustained on AutoGPT, litellm and
+  crewAI, which ran out of time mid-walk at the old rate. A larger tree still
+  needs an explicit `--connector-timeout-seconds`; an overrun is still
+  incomplete.
+- IPython automagic lines (`pip install -U openai`, `conda install`, `uv add`
+  without the `%`) are rewritten like `%pip` before a notebook cell is parsed.
+  They are the first cell of most tutorial notebooks and made those cells
+  "unparsed" in microsoft/autogen. Only a package-manager magic followed by one
+  of its subcommands is rewritten; that pair is never a Python statement, and
+  no subcommand is a keyword, so `pip in installed` stays Python.
+- `.hypothesis` (Hypothesis's example database) joins the quietly
+  default-excluded tool caches beside `.pytest_cache`, `.mypy_cache` and
+  `.ruff_cache`.
+- The built-in signature packs are parsed with libyaml when PyYAML has it:
+  the same SafeLoader resolver and constructors and the same duplicate-key
+  rule, about six times faster, which was most of a small scan's start-up.
+  The packs ship inside the installed package, which the trust model trusts,
+  and `python -m shadowscan.signatures.validate` still loads them with the
+  bounded pure-Python loader; custom packs always use it.
+- `shadowscan code --preflight` lists the static coverage gaps a full scan
+  would record (files over the size limit, links, non-regular entries, walk
+  limits) through the connector's own walk and accounting, reading no other
+  content: the ShadowScan checkout in 2.4 seconds instead of 96. It exits 0
+  when it found none and 3 when a full scan would be incomplete. It reports no
+  finding, always carries a `subset-scan` marker, and refuses `--output`,
+  `--format` and `--incremental`, so it cannot be kept as a scan result. Tests
+  check that its reasons equal the full scan's on trees whose only gaps are
+  static.
+- `shadowscan code --max-file-size BYTES` sets the filesystem connector's
+  `max_file_size` without a configuration file.
+- The exit-3 explanation on stderr is followed by one remediation line per
+  reason category and a link to the new
+  [incomplete scans guide](getting-started/incomplete-scans.md). Like the
+  summary line, the remediation names options and configuration keys only,
+  never a path or value.
+
 ### Two CPython 3.11 serial-run test flakes no longer depend on GC timing (October 19)
 
 - The macOS 3.11 leg failed twice on #266's final head, each time on a

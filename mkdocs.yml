@@ -93,6 +93,7 @@ nav:
       - Installation: getting-started/install.md
       - Quick start: getting-started/quickstart.md
       - Configuration: getting-started/configuration.md
+      - Incomplete scans (exit 3): getting-started/incomplete-scans.md
       - Command reference: reference/cli.md
   - Connectors:
       - Overview: connectors.md
@@ -143,6 +144,7 @@ nav:
       - Testing: testing.md
       - Governance: governance.md
       - "Proposals: agent governance": proposals/agent-governance.md
+      - "Proposals: interactive triage": proposals/interactive-triage-tui.md
       - Maintainer onboarding: maintainer-onboarding.md
       - Merge policy enforcement: operations/merge-policy.md
       - Publishing a release: operations/publishing.md

@@ -870,8 +870,8 @@ are deprecated compatibility aliases; the YAML alias logs a deprecation warning
 once per process. Configure only one YAML key; supplying both is rejected.
 Legacy YAML `connector_timeout: null` uses the 120-second default; it does not
 disable the deadline. Left unset, the default is raised for a large input
-when the connector can measure it: `code.filesystem` counts up to 20,000
-entries and scales the deadline above 12,000, to at most 200 seconds. An
+when the connector can measure it: `code.filesystem` counts up to 90,000
+entries and scales the deadline above 6,000, to at most 1800 seconds. An
 explicit value, 120 included, is honoured unchanged, so a configuration that
 sets `connector_timeout_seconds: 120` turns that scaling off; a larger tree
 needs an explicit, larger deadline.
@@ -879,8 +879,8 @@ needs an explicit, larger deadline.
 Leaving the option out and setting it are not the same. Left out (or given as
 legacy `connector_timeout: null`), the 120 seconds is where a connector starts,
 and a connector may raise its own deadline to fit its input: `code.filesystem`
-counts up to 20,000 entries of the tree it is about to walk and, above 12,000,
-scales its deadline in proportion, to at most 200 seconds, and reports
+counts up to 90,000 entries of the tree it is about to walk and, above 6,000,
+scales its deadline in proportion, to at most 1800 seconds, and reports
 `input is large; deadline raised to ...` in its progress output. The engine caps
 any connector's proposal at 30 minutes. A value you set, from a configuration
 file, `--connector-timeout-seconds` or `ScanConfig`, is used as it is and never
