@@ -27,6 +27,12 @@ host/runtime inventories), network logs, and running processes.
 
 > The repository was formerly `aisecnomad/Project-Nexus`; GitHub redirects the old links.
 
+This README describes the current source branch, including changes not yet
+published on PyPI. For the published alpha, see the
+[0.1.2 documentation](https://github.com/aisecnomad/Nexus-ShadowScan/blob/v0.1.2/README.md).
+Newer commands require a
+[reviewed source installation](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/getting-started/install.md#from-a-reviewed-revision-hash-locked).
+
 ---
 
 <details open>
@@ -128,7 +134,8 @@ pip install "NexusShadowScan[cloud]"         # adds AWS, GCP, Azure, and OCI SDK
 shadowscan --help
 ```
 
-> **Requirements:** Python 3.11, 3.12, 3.13 or 3.14.
+> **PyPI 0.1.2 requirements:** Python 3.11–3.13. Current source supports
+> Python 3.11, 3.12, 3.13 or 3.14; Python 3.14 support is not in that release.
 >
 > The distribution is `NexusShadowScan`; the unrelated `shadowscan` package on
 > PyPI is not this project. Releases are uploaded through PyPI trusted publishing
@@ -338,13 +345,14 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
 │ 132 findings  •  128 shadow (inventory: 4 registered agents)               │
-│ critical 16  high 62  medium 54  •  cloud 30 identity 19 endpoint 18 …     │
+│ critical 16  high 51  medium 64  low 1                                     │
+│ cloud 30 identity 19 endpoint 18 …                                         │
 ╰────────────────────────────────────────────────────────────────────────────╯
- CRITICAL 100  SHADOW  code      agent-config Claude Code configured in repository root
- CRITICAL 100  SHADOW  code      mcp-server   MCP configuration: .mcp.json
- CRITICAL 100  SHADOW  saas      bot-app      GitHub App installed: claude
- CRITICAL  94  SHADOW  lowcode   agent        ServiceNow AI agent: Incident Triage Agent
- CRITICAL  91  SHADOW  endpoint  agent-config OpenClaw configured on dev-laptop-07 (~dana)
+ CRITICAL 100  SHADOW  code     agent-config Claude Code configured in repository root
+ CRITICAL 100  SHADOW  code     mcp-server   MCP configuration: .mcp.json
+ CRITICAL  94  SHADOW  lowcode  agent        ServiceNow AI agent: Incident Triage Agent
+ CRITICAL  91  SHADOW  endpoint agent-config OpenClaw configured on dev-laptop-07 (~dana)
+ CRITICAL  90  SHADOW  code     agent        Agent in services/research-agent: LangGraph, LangChain, Model Context Protocol (MCP)
 ```
 
 <details>

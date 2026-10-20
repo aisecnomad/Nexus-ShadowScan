@@ -1,0 +1,43 @@
+[
+  {
+    "id": "expense-portal",
+    "name": "Claude Martin Expense Portal",
+    "publisher": "Northwind Finance",
+    "description": "Travel expenses and payroll reimbursements",
+    "scopes": ["openid", "profile", "email"],
+    "users": 300
+  },
+  {
+    "id": "hr-portal",
+    "name": "Sora HR Portal",
+    "publisher": "Northwind Human Resources",
+    "description": "Holiday requests and employee records",
+    "scopes": ["openid", "profile", "email"],
+    "users": 300
+  },
+  {
+    "id": "payroll-sso",
+    "name": "Payroll SSO",
+    "scopes": ["openid", "profile", "email"],
+    "users": 300
+  },
+  {
+    "id": "several-name-hints",
+    "name": "Claude ChatGPT Gemini AI Assistant",
+    "publisher": "Anthropic OpenAI Google",
+    "description": "Sora Claude ChatGPT NotebookLM",
+    "scopes": ["openid", "profile", "email"],
+    "users": 300
+  },
+  {
+    "id": "claude-domain",
+    "name": "Claude",
+    "url": "https://claude.ai/",
+    "scopes": ["openid", "profile", "email"]
+  },
+  {
+    "id": "fb8d773d-7ef8-4ec0-a117-179f88add510",
+    "name": "Microsoft Copilot",
+    "scopes": ["openid", "profile", "email"]
+  }
+]

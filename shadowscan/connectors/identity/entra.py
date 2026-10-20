@@ -56,8 +56,10 @@ from shadowscan.connectors.common import (
     scope_matches,
 )
 from shadowscan.connectors.identity.common import (
+    app_product_or_hint,
     assess_app,
     identity_kind_for,
+    merge_conflicting_app_attribution,
     only_ai_name_hint,
     summarize_scopes,
 )
@@ -1064,6 +1066,7 @@ class EntraConnector(BaseConnector):
                 f.metadata["conflicting_principal_evidence_truncated"] = True
         f.add_tag("unresolved-identity")
         kind = f.kind
+        f.metadata["_app_assessment"] = True
         finalize(f, self.index)
         f.kind = kind
         f.id = f.compute_id()
@@ -1099,17 +1102,7 @@ class EntraConnector(BaseConnector):
                     provider="entra",
                     account=self.tenant,
                 )
-            # Preserve meaningful AI signals from every conflicting snapshot
-            # without selecting one snapshot's appId, owner, or enabled state.
-            for framework in observed.frameworks:
-                f.add_framework(framework)
-            for provider in observed.model_providers:
-                f.add_model_provider(provider)
-            for capability in observed.capabilities:
-                f.add_capability(capability)
-            for tag in observed.tags:
-                if tag != "disabled":
-                    f.add_tag(tag)
+            merge_conflicting_app_attribution(f, observed)
             for evidence in observed.evidence:
                 description = "Conflicting snapshot: " + evidence.description
                 evidence_key = (evidence.signal, description)
@@ -1125,7 +1118,9 @@ class EntraConnector(BaseConnector):
                     break
                 seen_evidence.add(evidence_key)
                 evidence.description = description
-                evidence.attributes["confidence_group"] = f"entra-conflicting-snapshot:{evidence.signal}"
+                evidence.attributes.setdefault(
+                    "confidence_group", f"entra-conflicting-snapshot:{evidence.signal}"
+                )
                 f.add_evidence(evidence)
         return f, truncated_evidence
 
@@ -1341,7 +1336,7 @@ class EntraConnector(BaseConnector):
             return None
         if (
             not retained
-            and not f.frameworks
+            and not app_product_or_hint(f)
             and not delegated
             and not app_perms
             and sp_type != "ManagedIdentity"
@@ -1493,7 +1488,7 @@ class EntraConnector(BaseConnector):
         certs = app.get("keyCredentials") or []
         if (
             not keep
-            and not f.frameworks
+            and not app_product_or_hint(f)
             and not set(requested_classes)
             & {
                 "policy.llm-access-scopes",

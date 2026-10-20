@@ -135,6 +135,7 @@ nav:
       - Tenant canaries: canaries.md
       - Fuzzing: operations/fuzzing.md
       - OpenSSF Best Practices evidence: operations/openssf-best-practices.md
+      - Security alert triage (2026-10-18): operations/security-alert-triage.md
       - External reviewer packet: operations/reviewer-packet.md
   - Community: community.md
   - Development:

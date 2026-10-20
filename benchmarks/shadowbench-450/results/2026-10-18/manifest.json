@@ -1,0 +1,33 @@
+{
+  "archive": "shadowbench-450",
+  "verification_status": "unverified",
+  "reported_date": "2026-10-18",
+  "reported_adapters": 10,
+  "execution_evidence": "not supplied; submitter states vendor binaries were not run",
+  "validation_scope": "arithmetic and document consistency only; no benchmark execution or product performance validation",
+  "source_submission": {
+    "pull_request": "https://github.com/aisecnomad/Nexus-ShadowScan/pull/269",
+    "commit": "90bbd878076f0ba48f34132fd2941dc7d8e9a1ca",
+    "directory": "benchmarks/shadowbench-450/results/2026-10-18",
+    "original_files_sha256": {
+      "metrics.json": "1e8c0021a2f698e1c34b2a476a3b4c2d07410f5a3c357ce180ced2b42e01eddc",
+      "manifest.json": "bdf1af615fa0723414ee3eda3ecbe9820be892629b4fc84d7079eef08f987ff7",
+      "REPORT.md": "a52d1dac7a11b1570e7ed4e41744f47087e2ee28a511846c1cb254e96dc1269c"
+    }
+  },
+  "metrics_sha256": "6f75c7d8c4677416cb66cc3597051f550b98ff14b38dce25d53bee58c99b4be5",
+  "preserved_counts_sha256": "b96edb8bc35431245682be396ecd177ad484e9c21093757982f3f20f1044bfba",
+  "missing_evidence": [
+    "case fixtures, stable case IDs and source anchors",
+    "labels, label evidence and declared scope mapping",
+    "adapter and scorer source pinned by digest or commit",
+    "per-case predictions and execution receipts",
+    "reproducible environment and rerun command"
+  ],
+  "withdrawn_claims": [
+    "product rankings and tiers",
+    "letter grades and product recommendations",
+    "derived accuracy estimates and bootstrap intervals"
+  ],
+  "comparable_with": []
+}

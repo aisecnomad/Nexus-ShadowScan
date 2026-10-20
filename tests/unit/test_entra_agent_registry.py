@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
+from urllib.parse import urlsplit
 
 import jwt as pyjwt
 import pytest
@@ -1187,7 +1188,7 @@ def test_delegated_token_comes_only_from_the_named_environment_variable(monkeypa
     _assert_incomplete(ctx, findings)
     assert responses.calls and all(call.request.method == "GET" for call in responses.calls)
     assert {call.request.headers["Authorization"] for call in responses.calls} == {f"Bearer {token}"}
-    assert not any("login.microsoftonline.com" in call.request.url for call in responses.calls)
+    assert {urlsplit(call.request.url).hostname for call in responses.calls} == {"graph.microsoft.com"}
     # The opaque next link was followed until absent.
     packages = {f.resource for f in findings if f.resource.startswith("entra:copilot-package:")}
     assert packages == {"entra:copilot-package:P_1", "entra:copilot-package:P_2"}

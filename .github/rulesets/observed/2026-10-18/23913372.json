@@ -1,0 +1,107 @@
+{
+  "id": 23913372,
+  "name": "Require CI and CodeQL",
+  "target": "branch",
+  "source_type": "Repository",
+  "source": "aisecnomad/Nexus-ShadowScan",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": [
+        "~DEFAULT_BRANCH"
+      ]
+    }
+  },
+  "rules": [
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 1,
+        "dismiss_stale_reviews_on_push": true,
+        "required_reviewers": [],
+        "require_code_owner_review": false,
+        "require_last_push_approval": true,
+        "required_review_thread_resolution": true,
+        "require_extra_approval_for_unattributed_changes": true,
+        "allowed_merge_methods": [
+          "merge",
+          "squash",
+          "rebase"
+        ]
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": true,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          {
+            "context": "test (3.11)",
+            "integration_id": 15368
+          },
+          {
+            "context": "test (3.12)",
+            "integration_id": 15368
+          },
+          {
+            "context": "analyze",
+            "integration_id": 15368
+          },
+          {
+            "context": "CI gate",
+            "integration_id": 15368
+          }
+        ]
+      }
+    },
+    {
+      "type": "code_scanning",
+      "parameters": {
+        "code_scanning_tools": [
+          {
+            "tool": "CodeQL",
+            "security_alerts_threshold": "medium_or_higher",
+            "alerts_threshold": "errors"
+          }
+        ]
+      }
+    },
+    {
+      "type": "code_quality",
+      "parameters": {
+        "severity": "warnings"
+      }
+    },
+    {
+      "type": "copilot_code_review",
+      "parameters": {
+        "review_on_push": true,
+        "review_draft_pull_requests": true
+      }
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "required_signatures"
+    },
+    {
+      "type": "deletion"
+    }
+  ],
+  "node_id": "RRS_lACqUmVwb3NpdG9yec5GB8jAzgFs45w",
+  "created_at": "2026-09-24T03:10:19.237+01:00",
+  "updated_at": "2026-10-11T07:45:33.038+01:00",
+  "bypass_actors": [],
+  "current_user_can_bypass": "never",
+  "_links": {
+    "self": {
+      "href": "https://api.github.com/repos/aisecnomad/Nexus-ShadowScan/rulesets/23913372"
+    },
+    "html": {
+      "href": "https://github.com/aisecnomad/Nexus-ShadowScan/rules/23913372"
+    }
+  }
+}

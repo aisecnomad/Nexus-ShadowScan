@@ -43,6 +43,7 @@ from shadowscan.connectors.common import (
     finalize,
     name_matches,
 )
+from shadowscan.connectors.identity.common import _url_hosts
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.jwks import fetch_jwks, verification_algorithms, verify_against_jwks
@@ -283,11 +284,13 @@ class JwtConnector(BaseConnector, _NoDump):
             + " "
             + " ".join(str(claims.get(k, "")) for k in ("client_name", "app_displayname", "sub", "azp_name"))
         )
-        apply_matches(f, name_matches(self.index, hint_text), weight_scale=0.7)
-        apply_matches(f, domain_matches(self.index, *aud_list, iss), weight_scale=0.7)
+        apply_matches(
+            f, domain_matches(self.index, *_url_hosts([*aud_list, iss], split_lists=False)), weight_scale=0.7
+        )
 
         scopes = _claimed_permissions(claims)
         classify_permissions(self.index, f, scopes)
+        apply_matches(f, name_matches(self.index, hint_text), weight_scale=0.7, unverified_names=True)
 
         iat = parse_timestamp(claims.get("iat"))
         exp = parse_timestamp(claims.get("exp"))
@@ -417,10 +420,16 @@ class JwtConnector(BaseConnector, _NoDump):
             elif key in _AGENT_NAMING_CLAIMS and not name_matches(self.index, str(claims[key])):
                 continue
             agent_hints[key] = claims[key]
+        # A product-looking client display name is still mutable metadata.
+        # Keep the hint, but never turn a human or delegated token into an
+        # agent identity solely because that name matches a vendor signature.
+        substantive_hints = agent_hints.keys() - _AGENT_NAMING_CLAIMS
         if "act" in claims or "may_act" in claims:
             # A user-subject token whose claims identify an agent is an agent
             # acting on behalf of that user; delegation never weakens the class.
-            identity_type = "delegated-agent" if identity_type != "human" or agent_hints else "delegated"
+            identity_type = (
+                "delegated-agent" if identity_type != "human" or substantive_hints else "delegated"
+            )
             actor = claims.get("act") or {}
             chain = []
             while isinstance(actor, dict):
@@ -437,7 +446,7 @@ class JwtConnector(BaseConnector, _NoDump):
         if agent_hints:
             reasons.append(f"agent-related claims: {', '.join(agent_hints)}")
             f.add_tag("agent-claims")
-            if identity_type == "human":
+            if identity_type == "human" and substantive_hints:
                 identity_type = "agent"
         return identity_type, reasons, agent_hints, azp
 

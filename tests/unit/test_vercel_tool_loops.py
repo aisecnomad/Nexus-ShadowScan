@@ -1,4 +1,4 @@
-"""Vercel AI SDK multi-step tool loops are agents; single-step calls stay SDK usage.
+"""Vercel AI SDK dispatch needs executable tools or an enabled multi-step loop.
 
 AI SDK 5 and later run tools in a loop only past the first step (``stopWhen``;
 AI SDK 7 renamed ``stepCountIs`` to ``isStepCount``), AI SDK 4 with ``maxSteps``.
@@ -8,8 +8,13 @@ The tools of such a loop are usually imported definitions, not inline
 
 from __future__ import annotations
 
+import json
+import shutil
+from pathlib import Path
+
 import pytest
 
+from shadowscan.connectors.code import file_scan, javascript_imports, source_semantics
 from shadowscan.models import Kind
 
 TOOLS = """import { tool } from "ai";
@@ -97,13 +102,8 @@ def test_generate_text_and_namespace_imports_are_resolved(tmp_path, run_connecto
         ("streamText", "temperature: 0.2,"),
         # Several steps without tools add nothing for the model to call.
         ("isStepCount, streamText", "stopWhen: isStepCount(5),"),
-        # Imported tools without a stop condition: the call ends after one step.
-        ("streamText", "tools: { getWeather },"),
-        ("isStepCount, streamText", "tools: { getWeather },\n    stopWhen: isStepCount(1),"),
-        ("streamText", "tools: { getWeather },\n    maxSteps: 1,"),
         ("isStepCount, streamText", "tools: {},\n    stopWhen: isStepCount(5),"),
         ("isStepCount, streamText", "tools: undefined,\n    stopWhen: isStepCount(5),"),
-        ("isStepCount, streamText", "tools: { getWeather },\n    stopWhen: undefined,"),
         (
             "isStepCount, streamText",
             "tools: { getWeather },\n    stopWhen: isStepCount(5),\n    toolChoice: 'none',",
@@ -117,15 +117,28 @@ def test_generate_text_and_namespace_imports_are_resolved(tmp_path, run_connecto
             "isStepCount, streamText",
             "tools: { getWeather },\n    stopWhen: isStepCount(5),\n    ...overrides,",
         ),
-        # Option text inside a prompt string is not an option.
-        ("streamText", "tools: { getWeather },\n    prompt: 'stopWhen: isStepCount(5), maxSteps: 9',"),
     ],
 )
-def test_single_step_or_toolless_calls_stay_sdk_usage(tmp_path, run_connector, imports, options):
+def test_disabled_or_toolless_calls_stay_sdk_usage(tmp_path, run_connector, imports, options):
     finding = _project(tmp_path, run_connector, _route(imports, options))
     assert finding.kind == Kind.FRAMEWORK_USAGE
     assert "framework.vercel-ai-sdk" in finding.frameworks
     assert "tool-use" not in finding.capabilities
+
+
+@pytest.mark.parametrize(
+    ("imports", "options"),
+    [
+        ("streamText", "tools: { getWeather },"),
+        ("isStepCount, streamText", "tools: { getWeather }, stopWhen: isStepCount(1),"),
+        ("streamText", "tools: { weather: getWeather }, maxSteps: 1,"),
+        ("streamText", "tools: { getWeather }, stopWhen: undefined,"),
+        ("streamText", "tools: { getWeather }, prompt: 'stopWhen: isStepCount(5), maxSteps: 9',"),
+    ],
+)
+def test_single_step_imported_execution_is_dispatch(tmp_path, run_connector, imports, options):
+    finding = _project(tmp_path, run_connector, _route(imports, options))
+    assert finding.kind == Kind.AGENT and "tool-use" in finding.capabilities
 
 
 def test_a_local_function_named_like_the_sdk_is_not_bound(tmp_path, run_connector):
@@ -164,3 +177,416 @@ def test_signature_names_the_ai_sdk_7_stop_conditions(index):
             m for m in index.match_code(text, "javascript") if m.signature_id == "framework.vercel-ai-sdk"
         ]
         assert matches and all(m.agent_indicator for m in matches), text
+
+
+def _imported_project(tmp_path, run_connector, files, **config):
+    for relative, source in files.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source)
+    return run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False, **config)
+
+
+def _imported_route(module="./tools", tool="getWeather", options=""):
+    return (
+        'import { generateText } from "ai";\n'
+        f'import {{ getWeather as {tool} }} from "{module}";\n'
+        f"export const result = generateText({{model, tools: {{ weather: {tool} }}, {options}}});\n"
+    )
+
+
+def test_configured_import_fixture_has_executable_provenance(tmp_path, run_connector):
+    fixture = Path(__file__).parents[1] / "fixtures/code/vercel_imports"
+    shutil.copytree(fixture, tmp_path, dirs_exist_ok=True)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert any(f.kind == Kind.AGENT and "tool-use" in f.capabilities for f in findings)
+
+
+@pytest.mark.production_budgets
+def test_ordinary_export_bundle_does_not_rescan_each_literal_for_shadowing(
+    tmp_path, run_connector, monkeypatch
+):
+    checked = []
+    original = source_semantics._drop_uncertain_bindings
+
+    def record(bindings, *args):
+        checked.extend(bindings)
+        return original(bindings, *args)
+
+    monkeypatch.setattr(source_semantics, "_drop_uncertain_bindings", record)
+    source = "const base = import.meta.env.BASE_URL;\n" + "".join(
+        f'export const k{number} = "label_{number}";\n' for number in range(500)
+    )
+    findings, ctx = _imported_project(tmp_path, run_connector, {"src/app.js": source})
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert not findings
+    assert not checked, "nonexecutable literals need no per-name whole-module shadow analysis"
+
+
+@pytest.mark.parametrize(
+    "module,path", [("./tools", "tools.ts"), ("./tools.js", "tools.ts"), ("./tools", "tools/index.ts")]
+)
+@pytest.mark.parametrize("name", ["getWeather", "forecast"])
+def test_relative_imports_follow_only_an_observed_executable_definition(
+    tmp_path, run_connector, module, path, name
+):
+    findings, ctx = _imported_project(
+        tmp_path, run_connector, {"route.ts": _imported_route(module, name), path: TOOLS}
+    )
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert any(f.kind == Kind.AGENT and "tool-use" in f.capabilities for f in findings)
+
+
+@pytest.mark.parametrize(
+    "definition",
+    [
+        'import { tool as fn } from "ai";\nexport const getWeather = fn({execute: async () => 1});\n',
+        'import * as sdk from "ai";\nexport const getWeather = sdk.tool({execute: async () => 1});\n',
+        "export const getWeather = {execute: async () => 1};\n",
+    ],
+)
+def test_imported_definitions_share_inline_callback_semantics(tmp_path, run_connector, definition):
+    findings, ctx = _imported_project(
+        tmp_path, run_connector, {"route.ts": _imported_route(), "tools.ts": definition}
+    )
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert any(f.kind == Kind.AGENT for f in findings)
+
+
+@pytest.mark.parametrize(
+    "definition",
+    [
+        'import { tool } from "ai";\nexport const getWeather = tool({description: "schema only"});\n',
+        'import { tool } from "ai";\nexport const getWeather = tool({execute: undefined});\n',
+        'import { tool } from "other-sdk";\nexport const getWeather = tool({execute: async () => 1});\n',
+        'import { tool } from "ai";\ntool = unrelated;\nexport const getWeather = tool({execute: async () => 1});\n',
+        TOOLS + "getWeather.execute = undefined;\n",
+        TOOLS + "function replace(getWeather) { return getWeather; }\n",
+        'import { tool } from "ai";\nif (false) { export const getWeather = tool({execute: async () => 1}); }\n',
+        'import { tool } from "ai"\nexport const getWeather = tool({execute: async () => 1})\n',
+        'import { tool } from "ai";\nexport let getWeather = tool({execute: async () => 1});\n',
+    ],
+)
+def test_unknown_mutable_shadowed_dead_or_semicolonless_exports_do_not_prove_dispatch(
+    tmp_path, run_connector, definition
+):
+    # Semicolonless module statements remain deliberately unresolved by this
+    # narrow export parser; the source binder still records ordinary SDK usage.
+    findings, ctx = _imported_project(
+        tmp_path, run_connector, {"route.ts": _imported_route(), "tools.ts": definition}
+    )
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert all(f.kind != Kind.AGENT for f in findings)
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        _imported_route("external-tools"),
+        _imported_route("@/tools"),
+        _imported_route("./missing"),
+        _imported_route("./tools/"),
+        _imported_route("./tools.json"),
+        _imported_route() + "getWeather = unrelated;\n",
+        _imported_route() + "function replace(getWeather) { return getWeather; }\n",
+        _imported_route(options="toolChoice: 'none'"),
+        _imported_route(options="activeTools: []"),
+        _imported_route(options="activeTools: ['different']"),
+        _imported_route(options="...unknownOptions"),
+        _imported_route().replace("export const result =", "if (false) { const result =") + "}\n",
+    ],
+)
+def test_consumers_need_resolved_unshadowed_enabled_reachable_tools(tmp_path, run_connector, route):
+    findings, ctx = _imported_project(
+        tmp_path, run_connector, {"route.ts": route, "tools.ts": TOOLS, "tools.json.ts": TOOLS}
+    )
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert all(f.kind != Kind.AGENT for f in findings)
+
+
+def test_importing_test_only_definition_cannot_promote_production_usage(tmp_path, run_connector):
+    findings, ctx = _imported_project(
+        tmp_path, run_connector, {"route.ts": _imported_route("./tests/tools"), "tests/tools.ts": TOOLS}
+    )
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert all(f.kind != Kind.AGENT for f in findings)
+    findings, ctx = run_connector(
+        "code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False, include_tests=True
+    )
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert any(f.kind == Kind.AGENT for f in findings)
+
+
+@pytest.mark.parametrize(
+    "config,extra",
+    [
+        ('{"compilerOptions":{"baseUrl":".","paths":{"@/*":["../*"]}}}', {}),
+        ('{"compilerOptions":{"paths":{"@/*":["./*","./other/*"]}}}', {}),
+        ('{"extends":"./base.json","compilerOptions":{"paths":{"@/*":["./*"]}}}', {}),
+        ('{"compilerOptions":{"paths":{"@/*":["./*"]}}}', {"src/tsconfig.json": "{}"}),
+        ('{"compilerOptions":{"paths":{"@/*":["./*"]}}}', {"jsconfig.json": "{}"}),
+        ('{"compilerOptions":{"paths":{"@/*":["./*"],"ai":["./replacement-sdk"]}}}', {}),
+    ],
+)
+def test_ambiguous_inherited_or_escaping_path_config_does_not_guess(tmp_path, run_connector, config, extra):
+    files = {"route.ts": _imported_route("@/tools"), "tools.ts": TOOLS, "tsconfig.json": config, **extra}
+    findings, ctx = _imported_project(tmp_path, run_connector, files)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert all(f.kind != Kind.AGENT for f in findings)
+
+
+def test_malformed_path_config_marks_scan_incomplete(tmp_path, run_connector):
+    findings, ctx = _imported_project(
+        tmp_path,
+        run_connector,
+        {"route.ts": _imported_route("@/tools"), "tools.ts": TOOLS, "tsconfig.json": '{"compilerOptions":'},
+    )
+    assert ctx.stats.incomplete
+    assert all(f.kind != Kind.AGENT for f in findings)
+
+
+def test_conflicting_module_candidates_cannot_supply_executable_provenance(tmp_path, run_connector):
+    findings, ctx = _imported_project(
+        tmp_path,
+        run_connector,
+        {"route.ts": _imported_route(), "tools.ts": TOOLS, "tools.js": "export const getWeather = {};\n"},
+    )
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert all(f.kind != Kind.AGENT for f in findings)
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"ai": ["./fake.ts", "./other.ts"]},
+        {"*": ["./*", "./other/*"]},
+        {"a*": ["./fake.ts", "./other.ts"]},
+        {"a**i": ["./fake.ts"]},
+        {"ai": []},
+        {"ai": None},
+        {"ai": "./fake.ts"},
+        {"ai": ["../outside.ts"]},
+    ],
+)
+def test_rejected_or_ambiguous_sdk_mappings_cannot_restore_sdk_provenance(tmp_path, run_connector, override):
+    # These local functions return inert objects: their names do not make them
+    # the AI SDK, and discarding an unsupported mapping must not hide that fact.
+    config = {"compilerOptions": {"baseUrl": ".", "paths": {"@/*": ["./*"], **override}}}
+    files = {
+        "route.ts": _imported_route("@/tools"),
+        "tools.ts": TOOLS,
+        "fake.ts": "export function tool(value) { return {}; }\nexport function generateText(options) { return {}; }\n",
+        "other.ts": "export function tool(value) { return {}; }\n",
+        "tsconfig.json": json.dumps(config),
+    }
+    findings, ctx = _imported_project(tmp_path, run_connector, files)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert all(f.kind != Kind.AGENT for f in findings)
+
+
+@pytest.mark.parametrize(
+    "path,base",
+    [
+        ("src/ai.ts", "./src"),
+        ("src/ai/index.ts", "./src"),
+        ("src/ai/package.json", "./src"),
+        ("tests/ai.ts", "./tests"),
+        ("src/ai.d.ts", "./src"),
+    ],
+)
+def test_base_url_local_sdk_modules_cannot_supply_package_identity(tmp_path, run_connector, path, base):
+    local = (
+        '{"name":"local-sdk-imitation"}'
+        if path.endswith("package.json")
+        else "export const generateText = ordinary;\n"
+    )
+    findings, ctx = _imported_project(
+        tmp_path,
+        run_connector,
+        {
+            "route.ts": _imported_route(),
+            "tools.ts": TOOLS,
+            "tsconfig.json": json.dumps({"compilerOptions": {"baseUrl": base}}),
+            path: local,
+        },
+    )
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert all(f.kind != Kind.AGENT for f in findings)
+
+
+@pytest.mark.parametrize(
+    "configuration",
+    [
+        '{"extends":"./unread-base.json"}',
+        '{"compilerOptions":{"paths":{"ai":["./fake.ts","./other.ts"]}}}',
+        '{"compilerOptions":{"baseUrl":"../../outside"}}',
+        '{"compilerOptions":{"paths":null}}',
+    ],
+)
+@pytest.mark.parametrize("scope", ["consumer", "definition"])
+def test_unresolved_relevant_configurations_withhold_imported_tool_provenance(
+    tmp_path, run_connector, configuration, scope
+):
+    if scope == "consumer":
+        files = {"src/route.ts": _imported_route("../tools"), "tools.ts": TOOLS}
+    else:
+        files = {"route.ts": _imported_route("./src/tools"), "src/tools.ts": TOOLS}
+    findings, ctx = _imported_project(tmp_path, run_connector, {**files, "src/tsconfig.json": configuration})
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert all(f.kind != Kind.AGENT for f in findings)
+
+
+@pytest.mark.parametrize("executable_target", [False, True], ids=["wrong-root-tool", "correct-deep-tool"])
+def test_alias_substitution_precedes_parent_normalization(tmp_path, run_connector, executable_target):
+    unproven = "export const getWeather = undefined;\n"
+    files = {
+        "route.ts": _imported_route("@/deep/file"),
+        "tools.ts": unproven if executable_target else TOOLS,
+        "deep/tools.ts": TOOLS if executable_target else unproven,
+        "tsconfig.json": '{"compilerOptions":{"paths":{"@/*":["./*/../tools"]}}}',
+    }
+    findings, ctx = _imported_project(tmp_path, run_connector, files)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert any(f.kind == Kind.AGENT for f in findings) is executable_target
+
+
+@pytest.mark.parametrize("module", ["@/../../outside/file", "@/../../../file"])
+def test_substituted_alias_cannot_escape_the_project(tmp_path, run_connector, module):
+    (tmp_path / "tools.ts").write_text(TOOLS)
+    project = tmp_path / "project"
+    project.mkdir()
+    files = {
+        "route.ts": _imported_route(module),
+        "tools.ts": TOOLS,
+        "tsconfig.json": '{"compilerOptions":{"paths":{"@/*":["./*/../tools"]}}}',
+    }
+    findings, ctx = _imported_project(project, run_connector, files)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert all(f.kind != Kind.AGENT for f in findings)
+
+
+def test_overlapping_alias_pattern_cannot_map_a_shorter_module(tmp_path, run_connector):
+    # TypeScript never maps a module shorter than the pattern around its star:
+    # "ab*ba" requires at least "abba", so "aba" must stay unresolved even
+    # though the prefix and suffix each match overlapping text.
+    files = {
+        "route.ts": _imported_route("aba"),
+        "ab/ba.ts": TOOLS,
+        "tsconfig.json": '{"compilerOptions":{"paths":{"ab*ba":["./ab/ba"]}}}',
+    }
+    findings, ctx = _imported_project(tmp_path, run_connector, files)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert all(f.kind != Kind.AGENT for f in findings)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"src/tsconfig.json": '{"compilerOptions":{"paths":{"unrelated/*":["./*","../other/*"]}}}'},
+        {"tsconfig.json": '{"compilerOptions":{"paths":{"unrelated/*":["./*","./other/*"]}}}'},
+        {"tsconfig.json": "{}", "jsconfig.json": "{}"},
+        {"unused/tsconfig.json": '{"compilerOptions":{"paths":{"ai":["./fake.ts","./other.ts"]}}}'},
+        {
+            "tsconfig.json": '{"compilerOptions":{"baseUrl":"./src"}}',
+            "unrelated/ai.ts": "export const tool = ordinary;\n",
+        },
+    ],
+)
+def test_unrelated_alias_ambiguity_does_not_erase_observed_relative_dispatch(tmp_path, run_connector, extra):
+    findings, ctx = _imported_project(
+        tmp_path,
+        run_connector,
+        {
+            "src/route.ts": _imported_route("../tools"),
+            "tools.ts": TOOLS,
+            **extra,
+        },
+    )
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert any(f.kind == Kind.AGENT for f in findings)
+
+
+@pytest.mark.parametrize(
+    "configuration",
+    [
+        '{"extends":"./private-base.json"}',
+        '{"include":["../**/*.ts"],"compilerOptions":{"paths":{"ai":["./fake.ts"]}}}',
+        '{"files":["../route.ts"],"compilerOptions":{"paths":{"ai":["./fake.ts"]}}}',
+    ],
+)
+def test_nested_config_with_unknown_or_escaping_selection_can_affect_outer_sources(
+    tmp_path, run_connector, configuration
+):
+    findings, ctx = _imported_project(
+        tmp_path,
+        run_connector,
+        {
+            "route.ts": _imported_route(),
+            "tools.ts": TOOLS,
+            "nested/tsconfig.json": configuration,
+        },
+    )
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert all(f.kind != Kind.AGENT for f in findings)
+
+
+def test_named_reexport_chain_resolves_and_cycle_stays_unknown(tmp_path, run_connector):
+    files = {
+        "route.ts": _imported_route("./barrel"),
+        "barrel.ts": 'export { getWeather } from "./tools";\n',
+        "tools.ts": TOOLS,
+    }
+    findings, ctx = _imported_project(tmp_path, run_connector, files)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert any(f.kind == Kind.AGENT for f in findings)
+    (tmp_path / "tools.ts").write_text('export { getWeather } from "./barrel";\n')
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert all(f.kind != Kind.AGENT for f in findings)
+
+
+@pytest.mark.parametrize("limit", ["MAX_CHAIN", "MAX_MODULES", "MAX_MODULE_BYTES", "MAX_EXPORTS"])
+def test_import_resolution_limits_mark_incomplete(tmp_path, run_connector, monkeypatch, limit):
+    monkeypatch.setattr(javascript_imports, limit, 1)
+    files = {
+        "route.ts": _imported_route("./barrel"),
+        "barrel.ts": 'export { getWeather } from "./tools";\n',
+        "tools.ts": TOOLS + "export const extra = {};\n",
+    }
+    _, ctx = _imported_project(tmp_path, run_connector, files)
+    assert ctx.stats.incomplete
+    assert any("budget exceeded" in error for error in ctx.stats.errors)
+
+
+def test_pending_import_limit_retains_usage_and_marks_incomplete(tmp_path, run_connector, monkeypatch):
+    monkeypatch.setattr(file_scan, "MAX_PENDING_FILES", 0)
+    findings, ctx = _imported_project(
+        tmp_path, run_connector, {"route.ts": _imported_route(), "tools.ts": TOOLS}
+    )
+    assert ctx.stats.incomplete
+    assert all(f.kind != Kind.AGENT for f in findings)
+
+
+def test_imports_cannot_cross_manifest_projects_or_scan_roots(tmp_path, run_connector):
+    _imported_project(
+        tmp_path,
+        run_connector,
+        {
+            "app/package.json": '{"name":"consumer"}',
+            "app/route.ts": _imported_route("../shared/tools"),
+            "shared/package.json": '{"name":"separate-project"}',
+            "shared/tools.ts": TOOLS,
+        },
+    )
+    findings, ctx = run_connector(
+        "code.filesystem",
+        paths=[str(tmp_path / "app"), str(tmp_path / "shared")],
+        use_git=False,
+        scan_secrets=False,
+    )
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert all(f.kind != Kind.AGENT for f in findings)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert all(f.kind != Kind.AGENT for f in findings)

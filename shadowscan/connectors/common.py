@@ -161,6 +161,10 @@ def describe_match(m: Match) -> str:
     return f"{label} matched {what}: {m.value}"
 
 
+def _name_requires_corroboration(match: Match, unverified_names: bool) -> bool:
+    return match.signal.type == "name" and (match.signal.ambiguous or unverified_names)
+
+
 def apply_matches(
     finding: Finding,
     matches: Iterable[Match],
@@ -172,6 +176,7 @@ def apply_matches(
     signature_capabilities: bool = True,
     indicator_filter: Callable[[Match], bool] | None = None,
     establish: bool = True,
+    unverified_names: bool = False,
 ) -> int:
     """Attach matches to a finding as evidence, tags, frameworks and capabilities.
 
@@ -195,6 +200,10 @@ def apply_matches(
     ambiguous name for the same product is corroborated: its evidence keeps
     its full weight, but it adds no second agent indicator.
 
+    ``unverified_names`` applies that rule to every name match in a context
+    whose names, publishers and descriptions are mutable application metadata,
+    including signatures that are unambiguous in other collection contexts.
+
     ``snippet`` may be a callable: it is invoked once, and only when the
     per-signature evidence quota retains a match, so an excerpt that reaches
     no report is never produced.
@@ -205,7 +214,7 @@ def apply_matches(
     indicators = 0
     for m in matches:
         sig = m.signature
-        ambiguous_name = m.signal.type == "name" and m.signal.ambiguous
+        ambiguous_name = _name_requires_corroboration(m, unverified_names)
         # A non-name signal already established this product on the finding.
         corroborated_name = ambiguous_name and (
             sig.id in finding.frameworks or sig.id in finding.model_providers
@@ -312,8 +321,8 @@ def finalize(finding: Finding, index: SignatureIndex | None = None) -> Finding:
         # An app's existence, consent, installation, scopes and machine grant do
         # not identify AI. Co-observations of one app are one correlated
         # observation, bounded whatever the display name; an ambiguous product
-        # name joins that group rather than corroborating it. A generic AI-name
-        # hint stays a separate weak signal, so a hint never lowers the score.
+        # name joins that group rather than corroborating it. Application name
+        # hints, generic ones included, never corroborate one another.
         # The bound lives in the evidence weights, so merge-time recomputation
         # reproduces it.
         for ev in finding.evidence:

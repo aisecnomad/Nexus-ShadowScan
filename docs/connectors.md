@@ -1,5 +1,11 @@
 # Connectors
 
+Code connector analysis includes bounded local tool-import and dispatcher
+resolution from already-read snapshots. Python dispatcher imports must be
+unconditional module-level bindings before use; JavaScript aliases substitute
+wildcards before path normalization and confinement. See [cross-file tool dispatch](connectors/code.md#cross-file-tool-dispatch)
+for the supported shapes, alias requirements and conservative limits.
+
 ## Modes and shared collection rules
 
 Most connectors have a **live** mode (API credentials) and an **offline** mode
@@ -26,9 +32,15 @@ internal PKI fails verification (and the scan is incomplete) unless the connecto
 offers an explicit CA option. Only `identity.jwt` does today (`ca_bundle`, JWKS
 endpoint); other connectors trust the default CA store.
 
-Ambiguous app-name signals retain possible-product hints until the same product
-has non-name corroboration, and an app with no established AI evidence is
-bounded at possible confidence; see [identity attribution](connectors/identity.md#ambiguous-product-names).
+Every app name, publisher label and description retains only a possible-product
+hint until the same product has non-name corroboration. An app with no established
+AI evidence is bounded at possible confidence; see
+[identity attribution](connectors/identity.md#ambiguous-product-names).
+Code analysis can follow supported local executable JavaScript tool exports and
+provider-bound Python request/dispatch/result loops; an unresolved import or a
+generic loop alone does not prove an agent. Container images retain their product
+evidence, while Kubernetes-specific image attribution requires a structurally
+declared Kubernetes workload; see [code analysis](connectors/code.md).
 Cross-surface correlation separates exact identifier links from review
 candidates (name similarity, or an identifier without a verifiable shared
 tenant or account); see the [pipeline](architecture.md#scan-pipeline).

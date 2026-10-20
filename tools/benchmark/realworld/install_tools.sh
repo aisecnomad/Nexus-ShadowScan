@@ -4,8 +4,9 @@
 #
 #   bash tools/benchmark/realworld/install_tools.sh /path/to/tool-root
 #
-# This downloads and installs third-party code and its dependencies (including
-# install scripts), so review the pins first and run it in a disposable machine
+# This downloads and installs third-party code and its dependencies (Python/Go
+# builds can execute install code; cdxgen uses npm ci with lifecycle scripts disabled),
+# so review the pins and cdxgen lock first and run it in a disposable machine
 # or container. It installs nothing into this repository's environment. The first
 # three tools are pinned to the same commits as the synthetic benchmark
 # (tools/benchmark/install_tools.sh) so that both benchmarks measure one build.
@@ -60,7 +61,6 @@ venv radar "$radar"
 vet=$(checkout safedep/vet 948d9bafaf8062f1b83aa5046a6c8b4c64d8856d)
 (cd "$vet" && GOTOOLCHAIN=auto go build -o "$root/bin/vet" .)
 
-mkdir -p "$root/cdxgen"
-npm install --prefix "$root/cdxgen" --no-audit --no-fund --silent @cyclonedx/cdxgen@12.8.5
+python3 "$repo/tools/benchmark/realworld/install_cdxgen.py" "$root/cdxgen"
 
 echo "tools installed under $root"

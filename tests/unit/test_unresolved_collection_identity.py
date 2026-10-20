@@ -323,12 +323,40 @@ def test_entra_conflicting_snapshots_keep_ai_evidence_without_grants(run_connect
     assert_unresolved(observed)
     assert observed.metadata.get("app_id") is None
     assert observed.metadata["conflicting_principal_snapshots"] == 2
-    assert observed.frameworks or observed.model_providers
+    assert not observed.frameworks and not observed.model_providers
+    assert "identity-app.anthropic-claude" in observed.metadata["potential_frameworks"]
+    assert observed.confidence <= 0.35
     assert any("Claude" in evidence.description for evidence in observed.evidence)
     assert not observed.permissions
     assert any(
         f.resource == "entra:sp:neighbor" and not f.metadata.get("identity_unresolved") for f in findings
     )
+
+
+def test_conflicting_product_names_never_corroborate_one_another(run_connector, tmp_path):
+    names = ["Claude", "Sora", "Gemini", "DeepSeek", "Perplexity"]
+    source = tmp_path / "conflicting-product-names.json"
+    source.write_text(
+        json.dumps(
+            [
+                {
+                    "_kind": "servicePrincipal",
+                    "id": "same",
+                    "appId": f"app-{number}",
+                    "displayName": name,
+                }
+                for number, name in enumerate(names)
+            ]
+        )
+    )
+    (finding,), ctx = run_connector("identity.entra", input=str(source))
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert_unresolved(finding)
+    assert finding.frameworks == [] and finding.model_providers == [] and finding.capabilities == []
+    assert len(finding.metadata["potential_frameworks"]) >= len(names)
+    assert finding.confidence <= 0.35
+    finding.recompute_confidence()
+    assert finding.confidence <= 0.35
 
 
 def test_entra_conflicting_snapshot_limit_preserves_evidence_and_neighbors(run_connector, tmp_path):

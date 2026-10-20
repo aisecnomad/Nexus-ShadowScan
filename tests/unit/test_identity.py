@@ -52,7 +52,9 @@ def test_google_workspace_aggregates_per_client(run_connector, fixtures):
     )
     by_title = {f.title: f for f in findings}
     ff = by_title["Google Workspace OAuth app: Fireflies.ai Notetaker"]
-    assert ff.metadata["user_count"] == 2 and "identity-app.meeting-notetakers" in ff.frameworks
+    assert ff.metadata["user_count"] == 2
+    assert ff.frameworks == [] and "identity-app.meeting-notetakers" in ff.metadata["potential_frameworks"]
+    assert ff.confidence <= 0.35
     assert "https://www.googleapis.com/auth/gmail.readonly" in ff.permissions
     assert "Google Workspace OAuth app: Expense Tool" not in by_title
 
@@ -244,7 +246,7 @@ def test_jwt_naming_claim_presence_does_not_reclassify_human_token(run_connector
         assert "agent-claims" not in finding.tags and finding.metadata["agent_claims"] == {}
 
 
-def test_jwt_naming_claim_matching_an_ai_product_and_structural_keys_still_count(run_connector, tmp_path):
+def test_jwt_product_names_remain_hints_while_structural_agent_keys_count(run_connector, tmp_path):
     notetaker = _token(
         iss=_OKTA,
         aud="api://x",
@@ -256,8 +258,10 @@ def test_jwt_naming_claim_matching_an_ai_product_and_structural_keys_still_count
         iss=_OKTA, aud="api://x", sub="alice", email="alice@example.test", agent_id="negotiator-7"
     )
     findings = _jwt_findings(run_connector, tmp_path, notetaker, structural)
-    assert [f.metadata["identity_type"] for f in findings] == ["agent", "agent"]
+    assert [f.metadata["identity_type"] for f in findings] == ["human", "agent"]
     assert findings[0].metadata["agent_claims"] == {"client_name": "Otter.ai Meeting Notes"}
+    assert findings[0].frameworks == [] and findings[0].confidence < 0.6
+    assert "identity-app.meeting-notetakers" in findings[0].metadata["potential_frameworks"]
 
 
 def test_jwt_agent_actor_on_user_token_is_delegated_agent(run_connector, tmp_path):

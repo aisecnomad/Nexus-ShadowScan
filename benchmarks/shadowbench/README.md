@@ -44,6 +44,15 @@ integrated side by side. Their tool lists, versions and scoring rules differ,
 so a tool's numbers on one track are not comparable with its numbers on the
 other.
 
+## Separate unverified archive
+
+[ShadowBench-450](../shadowbench-450/README.md) preserves author-supplied adapter
+counts without the fixtures, labels, adapter sources or per-case predictions
+needed to reproduce them. It is not a track of this benchmark or verified
+product-performance evidence. Its rankings, grades and recommendations have
+been withdrawn. Neither track's existing result files changed, and the archived
+counts cannot be compared with either track.
+
 ## Running a track
 
 From the repository root, after `make install`:

@@ -17,6 +17,7 @@ from tools.evaluation.benchmark import benchmark
 from tools.evaluation.evaluate import (
     DEFAULT_CORPUS,
     CorpusError,
+    IncompleteScanError,
     calibration,
     evaluate,
     load_corpus,
@@ -193,6 +194,8 @@ def test_counts_have_explicit_undefined_denominators():
     result = summarize(rows)
     assert result["one"] == {
         "cases": 4,
+        "scored_cases": 4,
+        "incomplete_cases": 0,
         "positive_cases": 2,
         "negative_cases": 2,
         "tp": 1,
@@ -380,6 +383,12 @@ def test_evaluation_end_to_end_with_isolated_offline_files(tmp_path: Path):
     assert report["passed"] is True
     assert report["metrics"]["all"]["tn"] == 1
     assert report["cases"][0]["assertion_failures"] == []
+    assert report["quality"]["target_classification"]["passed"] == 1
+    assert report["quality"]["labeled_assertions"]["passed"] == 1
+    assert report["quality"]["joint_correctness"]["passed"] == 1
+    assert report["scan_completeness"]["complete_cases"] == 1
+    assert report["scan_completeness"]["complete_scans"] == 2
+    assert report["all_cases_correct"] is True
     assert report["performance"]["scans"] == 2
     assert report["performance"]["files_per_pass"] == 1
     assert report["performance"]["median_scan_ms"] >= 0
@@ -394,6 +403,92 @@ def test_structural_assertion_causes_regression_even_when_label_matches(tmp_path
     assert result["metrics"]["all"]["tn"] == 1
     assert result["passed"] is False
     assert "active MCP server count" in result["cases"][0]["assertion_failures"][0]
+
+
+@pytest.mark.parametrize("status", ["missing", "incomplete", "skipped", "errors", "warnings"])
+def test_incomplete_scan_is_unscored_and_cannot_be_waived(tmp_path: Path, monkeypatch, status):
+    from shadowscan.models import ScanStats
+
+    module = importlib.import_module("tools.evaluation.evaluate")
+
+    def incomplete_run(connector):
+        if status != "missing":
+            stats = ScanStats(connector=connector.name, started_at="unit-test")
+            setattr(stats, status, ["denied unit fixture"] if status in {"errors", "warnings"} else True)
+            connector.ctx.stats = stats
+        return []
+
+    monkeypatch.setattr(module.FilesystemConnector, "run", incomplete_run)
+    corpus = _write(
+        tmp_path / "data.json",
+        _corpus({"plain.py": "pass\n"}, assertions={"exact_findings": []}, known_gap=True),
+    )
+    report = evaluate(corpus)
+    row = report["cases"][0]
+    assert not row["scan_complete"] and not row["correct"] and not report["passed"]
+    assert row["predicted"] is None and row["score"] is None
+    assert row["classification_correct"] is None and row["assertions_correct"] is None
+    assert row["assertion_failures"] and row["scan_errors"]
+    assert report["metrics"]["all"]["tn"] == 0
+    assert report["metrics"]["all"]["scored_cases"] == 0
+    assert report["metrics"]["all"]["incomplete_cases"] == 1
+    assert report["metrics"]["all"]["specificity"] is None
+    assert report["finding_assertions"]["exact_finding_sets"]["checks"] == 0
+    assert report["quality"]["joint_correctness"]["pass_rate"] is None
+    assert report["scan_completeness"]["completion_rate"] == 0.0
+    assert report["calibration"]["brier_proxy"] is None
+    assert report["calibration"]["ece_proxy"] is None
+    assert all(bucket["count"] == 0 for bucket in report["calibration"]["bins"])
+    output = tmp_path / "incomplete.json"
+    assert main(["--corpus", str(corpus), "--output", str(output)]) == 1
+    assert json.loads(output.read_text())["scan_completeness"]["incomplete_scans"] == 1
+
+
+def test_one_incomplete_repeat_excludes_only_its_case(tmp_path: Path, monkeypatch):
+    module = importlib.import_module("tools.evaluation.evaluate")
+    data = _corpus({"plain.py": "pass\n"})
+    data["cases"].append({**data["cases"][0], "id": "complete-control"})
+    corpus = _write(tmp_path / "data.json", data)
+    calls = 0
+
+    def sometimes_incomplete(*args):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise IncompleteScanError("scan incomplete: timeout", 0.002)
+        return 0.001, []
+
+    monkeypatch.setattr(module, "_scan_case", sometimes_incomplete)
+    report = evaluate(corpus, repeats=3)
+    assert not report["passed"] and calls == 6
+    assert report["metrics"]["all"]["cases"] == 2
+    assert report["metrics"]["all"]["scored_cases"] == 1
+    assert report["metrics"]["all"]["tn"] == 1
+    assert report["scan_completeness"]["complete_cases"] == 1
+    assert report["scan_completeness"]["complete_scans"] == 5
+    assert report["scan_completeness"]["incomplete_scans"] == 1
+    assert report["performance"]["scans"] == 6
+    assert sum(bucket["count"] for bucket in report["calibration"]["bins"]) == 1
+
+
+def test_cli_shows_assertion_failure_beside_perfect_binary_metrics(tmp_path: Path, capsys):
+    corpus = _write(
+        tmp_path / "data.json",
+        _corpus({"plain.py": "pass\n"}, assertions={"server_count": 1}, known_gap=True),
+    )
+    output = tmp_path / "report.json"
+    assert main(["--corpus", str(corpus), "--output", str(output)]) == 0
+    report = json.loads(output.read_text())
+    assert report["metrics"]["all"]["tn"] == 1
+    assert report["quality"]["target_classification"]["pass_rate"] == 1.0
+    assert report["quality"]["labeled_assertions"]["failed"] == 1
+    assert report["quality"]["joint_correctness"]["pass_rate"] == 0.0
+    assert report["passed"] and not report["all_cases_correct"]
+    captured = capsys.readouterr()
+    assert "labeled_assertions" in captured.out and "'failed': 1" in captured.out
+    assert "Scan completeness:" in captured.out
+    assert "all cases correct: False" in captured.out
+    assert "Known-gap waivers:" in captured.err
 
 
 def test_forbidden_attribution_causes_regression_even_when_target_matches(tmp_path: Path, monkeypatch):
@@ -441,6 +536,12 @@ def test_known_gap_is_counted_in_metrics_but_does_not_fail_the_run(tmp_path: Pat
         "regressions": [],
     }
     assert report["passed"] is True
+    assert report["all_cases_correct"] is False
+    assert report["quality"]["target_classification"]["failed"] == 1
+    assert report["quality"]["joint_correctness"]["pass_rate"] is None
+    assert report["quality"]["joint_correctness"]["unscored_cases"] == 1
+    assert report["quality"]["labeled_assertions"]["pass_rate"] is None
+    assert report["quality"]["labeled_assertions"]["unscored_cases"] == 1
     assert main(["--corpus", str(corpus)]) == 0
 
 
@@ -600,6 +701,28 @@ def test_external_adjudicated_acceptance_gate_and_private_summary(tmp_path: Path
     assert acceptance_main(args) == 0
     assert stat.S_IMODE(output.stat().st_mode) == 0o600
     assert acceptance_main(args) == 2  # refuse to overwrite an audit artifact
+
+
+def test_acceptance_never_passes_incomplete_cases_with_relaxed_metric_policy(tmp_path: Path, monkeypatch):
+    corpus, policy, annotations = _acceptance_inputs(tmp_path)
+    data = json.loads(policy.read_text())
+    for group in data["groups"].values():
+        group["min_negative_cases"] = 1
+    _write(policy, data)
+    module = importlib.import_module("tools.evaluation.evaluate")
+    scan = module._scan_case
+
+    def incomplete_first_case(case, root, index):
+        if case.id == "plain-code":
+            raise IncompleteScanError("scan incomplete: denied unit fixture", 0.001)
+        return scan(case, root, index)
+
+    monkeypatch.setattr(module, "_scan_case", incomplete_first_case)
+    report = accept(corpus, policy, annotations)
+    assert all(group["passed"] for group in report["groups"].values())
+    assert report["scan_completeness"]["incomplete_cases"] == 1
+    assert report["groups"]["all"]["counts"]["tn"] == 1
+    assert not report["passed"]
 
 
 def test_acceptance_rejects_mismatched_digest_synthetic_labels_and_missing_group(tmp_path: Path):

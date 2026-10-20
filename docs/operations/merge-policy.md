@@ -29,10 +29,30 @@ the repository administrator role (`RepositoryRole` 5) and integrations
 `bypass_actors_not_empty` (and, for `Protect main`, `status_checks_required`,
 because that ruleset carries no status-check rule). The `verify` command
 reports `readback differs from reviewed payload: bypass_actors` for both
-against the committed payloads. The merge gate is therefore not yet enforced
-against a repository administrator. Removal of the bypass actors and a
-readback showing `bypass_actors: []` remain outstanding; the committed
-`observed/` snapshots record this readback.
+against the committed payloads. At that readback, the merge gate was not
+enforced against a repository administrator; removal of the bypass actors and a
+readback showing `bypass_actors: []` were still outstanding. The top-level
+`observed/` snapshots retain that historical response unchanged.
+
+## October 18 readback
+
+On 2026-10-18, fresh administrator readbacks showed both `main` rulesets
+active with `bypass_actors: []`. Their managed settings match the existing
+`.update.json` payloads exactly under `python -m tools.governance.rulesets verify`.
+The strict `test (3.11)`, `test (3.12)`, `analyze` and `CI gate` checks remain
+bound to GitHub Actions (15368); both rulesets require one approving review,
+stale-review dismissal, last-push approval and resolved review threads.
+The API reports their last changes on 2026-10-11 at 06:45:21 and 06:45:33 UTC,
+respectively. These timestamps are not evidence of continuous enforcement
+between that change and this readback.
+
+The immutable release-tag ruleset (24723135) also read back active with no
+bypass actors, blocking updates and deletion of `refs/tags/v*`. The complete
+[October 18 responses](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/.github/rulesets/observed/2026-10-18)
+are retained separately from the October 10 snapshots. No settings were changed
+for this readback. It establishes neither an independent approval of a PR nor
+release or deployment acceptance; check current settings and the final PR
+revision's reviews before relying on them.
 
 The policy retains the existing CodeQL, signature and status requirements and
 adds the aggregate `CI gate`. Required checks are bound to the GitHub Actions

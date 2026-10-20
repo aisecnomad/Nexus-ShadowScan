@@ -14,6 +14,7 @@ findings to running-process findings for the same tool on the same device.
 from __future__ import annotations
 
 import gc
+import hashlib
 import json
 import re
 import string
@@ -176,6 +177,11 @@ _MAX_CORRELATION_PEERS = 24
 _CANDIDATE_LIMITATION = (
     "Name similarity, or an identifier match whose shared tenant or account could not be verified, "
     "is a review hint, not proof of identity, ownership, runtime execution or authorization."
+)
+_GROUP_LIMITATION = (
+    "Group membership records an equal identifier within the stated scope, not ownership, "
+    "runtime execution or authorization. Pairwise links are not expanded; findings from "
+    "the same connector and surface are observations, not cross-surface relationships."
 )
 
 
@@ -455,11 +461,20 @@ def _add_link(
     second: str,
     left: _CorrelationKey,
     right: _CorrelationKey,
+    *,
+    assurance: str = "candidate",
 ) -> None:
     first_links, second_links = links.get(first, {}), links.get(second, {})
     if (second not in first_links and len(first_links) >= _MAX_CORRELATION_PEERS) or (
         first not in second_links and len(second_links) >= _MAX_CORRELATION_PEERS
     ):
+        for entry in (left, right):
+            _record_truncation(
+                entry.finding,
+                {"reason": "peer-limit", "assurance": assurance, "peer_limit": _MAX_CORRELATION_PEERS},
+            )
+        if assurance == "exact-identifier":
+            _record_capped_pair(kind, first, second, left, right)
         return
     scope = dict(sorted({**left.scope, **right.scope}.items()))
     left_fields, right_fields = sorted(left.fields), sorted(right.fields)
@@ -471,6 +486,92 @@ def _add_link(
         details = links.setdefault(source, {}).setdefault(target, [])
         if match not in details:
             details.append(match)
+
+
+def _record_truncation(finding: Finding, details: dict[str, Any]) -> None:
+    omissions = finding.metadata.setdefault("related_truncation", [])
+    if details not in omissions:
+        omissions.append(details)
+
+
+def _record_group_member(
+    entry: _CorrelationKey, group_id: str, kind: str, scope: dict[str, str], member_count: int
+) -> None:
+    membership = {
+        "group_id": group_id,
+        "key_type": kind,
+        "assurance": "exact-identifier",
+        "scope": scope,
+        "member_count": member_count,
+        "source_fields": sorted(entry.fields),
+        "pairwise_expansion": "omitted",
+        "limitation": _GROUP_LIMITATION,
+    }
+    groups = entry.finding.metadata.setdefault("related_groups", [])
+    if membership not in groups:
+        groups.append(membership)
+
+
+def _record_capped_pair(
+    kind: str, first: str, second: str, left: _CorrelationKey, right: _CorrelationKey
+) -> None:
+    """Keep a capped exact edge, including compatible partial scopes, as a two-member group.
+
+    Endpoint identities are part of this token: a shared union scope must not
+    merge partial-scope pairs into a group with unverified transitive links.
+    This fallback only handles groups of at most 25, hence at most 24 compact
+    pair memberships per finding per identifier, regardless of total scan size.
+    """
+    scope = dict(sorted({**left.scope, **right.scope}.items()))
+    endpoints = sorted([(first, sorted(left.fields)), (second, sorted(right.fields))])
+    group_id = hashlib.sha256(json.dumps([kind, endpoints, scope]).encode()).hexdigest()
+    for entry in (left, right):
+        _record_group_member(entry, group_id, kind, scope, 2)
+
+
+def _large_identifier_groups(groups: _Groups) -> None:
+    """Retain large exact groups in linear space without expanding a pairwise clique.
+
+    Identical full scopes are a conservative equivalence relation. Compatible
+    *partial* scopes are not transitive, so combining them could bridge two
+    conflicting tenants/workspaces. Such omitted comparisons are disclosed,
+    never promoted into exact group membership. Unscoped ids remain candidates.
+    """
+    for (kind, value), members in sorted(groups.items()):
+        if len(members) <= _MAX_CORRELATION_GROUP:
+            continue
+        _record_large_identifier_group(kind, value, members)
+
+
+def _record_large_identifier_group(kind: str, value: str, members: dict[str, _CorrelationKey]) -> None:
+    if len({(entry.finding.connector, entry.finding.surface) for entry in members.values()}) < 2:
+        return
+    identifier_group_id = hashlib.sha256(json.dumps([kind, value]).encode()).hexdigest()
+    partitions: dict[tuple[bool, tuple[tuple[str, str], ...]], list[_CorrelationKey]] = {}
+    for entry in members.values():
+        _record_truncation(
+            entry.finding,
+            {
+                "reason": "identifier-group-limit",
+                "identifier_group_id": identifier_group_id,
+                "key_type": kind,
+                "group_size": len(members),
+                "pairwise_group_limit": _MAX_CORRELATION_GROUP,
+                "limitation": (
+                    "Pairwise expansion omitted. Exact memberships, where available, use identical "
+                    "verified scopes; compatible partial scopes are not merged."
+                ),
+            },
+        )
+        partitions.setdefault((entry.globally_scoped, tuple(sorted(entry.scope.items()))), []).append(entry)
+    for partition, entries in sorted(partitions.items()):
+        if len(entries) < 2 or not _exact_scope(kind, entries[0], entries[0]):
+            continue
+        if len({(entry.finding.connector, entry.finding.surface) for entry in entries}) < 2:
+            continue
+        group_id = hashlib.sha256(json.dumps([kind, value, partition]).encode()).hexdigest()
+        for entry in entries:
+            _record_group_member(entry, group_id, kind, dict(partition[1]), len(entries))
 
 
 def _pairs(groups: _Groups) -> Any:
@@ -497,10 +598,18 @@ def correlate(findings: list[Finding]) -> None:
     account, are candidates: they never enter ``related`` or feed
     runtime/registry decisions. A conflicting declared tenant, account,
     subscription, project or workspace prevents both kinds of link; a vendor or
-    gateway label is not scope.
+    gateway label is not scope. Large exact groups and capped exact pairs retain
+    compact ``related_groups`` memberships. ``related_truncation`` discloses
+    omitted pairwise expansion; group tokens do not carry raw identifiers.
     """
     for finding in findings:
-        for key in ("related", "related_details", "related_candidates"):
+        for key in (
+            "related",
+            "related_details",
+            "related_candidates",
+            "related_groups",
+            "related_truncation",
+        ):
             finding.metadata.pop(key, None)
     # The grouping below allocates many short-lived, acyclic containers. Cyclic
     # collection would rescan every finding repeatedly and make the pass
@@ -516,10 +625,20 @@ def correlate(findings: list[Finding]) -> None:
 
 def _correlate(findings: list[Finding]) -> None:
     identifier_groups, name_groups = _correlation_keys(findings)
+    _large_identifier_groups(identifier_groups)
     exact: dict[str, dict[str, list[dict[str, Any]]]] = {}
     fuzzy: dict[str, dict[str, list[dict[str, Any]]]] = {}
     for kind, first, second, left, right in _pairs(identifier_groups):
-        _add_link(exact if _exact_scope(kind, left, right) else fuzzy, kind, first, second, left, right)
+        is_exact = _exact_scope(kind, left, right)
+        _add_link(
+            exact if is_exact else fuzzy,
+            kind,
+            first,
+            second,
+            left,
+            right,
+            assurance="exact-identifier" if is_exact else "candidate",
+        )
     for kind, first, second, left, right in _pairs(name_groups):
         _add_link(fuzzy, kind, first, second, left, right)
     for finding in findings:
