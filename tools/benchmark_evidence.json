@@ -1,0 +1,1291 @@
+{
+  "cases_run": "2026-10-11",
+  "cases_tools": {
+    "agentdiscover": {
+      "coverage": "2/9",
+      "estate": {
+        "expected": 738,
+        "recall": 0.03523035230352303,
+        "tp": 26
+      },
+      "in_scope": {
+        "agent_expected": 83,
+        "agent_false_alarm_rate": 0.0,
+        "agent_false_alarm_universe": 50,
+        "agent_false_alarms": 0,
+        "agent_recall": 0.0963855421686747,
+        "agent_tp": 8,
+        "case": {
+          "balanced_accuracy": 0.6182692307692308,
+          "fn": 29,
+          "fp": 1,
+          "mcc": 0.29966148992990166,
+          "negatives": 26,
+          "negatives_withheld": 0,
+          "out_of_taxonomy_alarms": 1,
+          "positives": 40,
+          "recall": 0.275,
+          "specificity": 0.9615384615384616,
+          "tn": 25,
+          "tp": 11
+        },
+        "cases": 66,
+        "decoys": 0,
+        "decoys_withheld": 0,
+        "errors": 0,
+        "expected": 133,
+        "f1": 0.325,
+        "f1_ci": [
+          0.20253164556962025,
+          0.41818181818181815
+        ],
+        "fn": 107,
+        "fp": 1,
+        "incomplete": 0,
+        "missing": 0,
+        "out_of_taxonomy": 246,
+        "precision": 0.9629629629629629,
+        "precision_ci": [
+          0.8171653389987218,
+          0.9934318540919532
+        ],
+        "recall": 0.19548872180451127,
+        "recall_ci": [
+          0.13704384964641148,
+          0.2710302774332774
+        ],
+        "scored": 66,
+        "seconds_max": 29.751,
+        "seconds_median": 1.3325,
+        "seconds_p90": 3.829,
+        "specificity": null,
+        "specificity_ci": [
+          null,
+          null
+        ],
+        "tn": 0,
+        "tp": 26
+      }
+    },
+    "agentmesh-discovery": {
+      "coverage": "3/9",
+      "estate": {
+        "expected": 738,
+        "recall": 0.02032520325203252,
+        "tp": 15
+      },
+      "in_scope": {
+        "agent_expected": 108,
+        "agent_false_alarm_rate": 0.0,
+        "agent_false_alarm_universe": 154,
+        "agent_false_alarms": 0,
+        "agent_recall": 0.1388888888888889,
+        "agent_tp": 15,
+        "case": {
+          "balanced_accuracy": 0.5955882352941176,
+          "fn": 39,
+          "fp": 2,
+          "mcc": 0.24632061830790813,
+          "negatives": 34,
+          "negatives_withheld": 0,
+          "out_of_taxonomy_alarms": 0,
+          "positives": 52,
+          "recall": 0.25,
+          "specificity": 0.9411764705882353,
+          "tn": 32,
+          "tp": 13
+        },
+        "cases": 86,
+        "decoys": 81,
+        "decoys_withheld": 0,
+        "errors": 0,
+        "expected": 181,
+        "f1": 0.15151515151515152,
+        "f1_ci": [
+          0.08372093023255814,
+          0.2345679012345679
+        ],
+        "fn": 166,
+        "fp": 2,
+        "incomplete": 0,
+        "missing": 0,
+        "out_of_taxonomy": 1,
+        "precision": 0.8823529411764706,
+        "precision_ci": [
+          0.6566364919396065,
+          0.9671202265340099
+        ],
+        "recall": 0.08287292817679558,
+        "recall_ci": [
+          0.05086359374695256,
+          0.13222010990975125
+        ],
+        "scored": 86,
+        "seconds_max": 1.144,
+        "seconds_median": 0.261,
+        "seconds_p90": 0.305,
+        "specificity": 1.0,
+        "specificity_ci": [
+          0.9547219138856311,
+          1.0
+        ],
+        "tn": 81,
+        "tp": 15
+      }
+    },
+    "ai-infra-guard": {
+      "coverage": "1/9",
+      "estate": {
+        "expected": 738,
+        "recall": 0.03523035230352303,
+        "tp": 26
+      },
+      "in_scope": {
+        "agent_expected": 17,
+        "agent_false_alarm_rate": 0.16923076923076924,
+        "agent_false_alarm_universe": 65,
+        "agent_false_alarms": 11,
+        "agent_recall": 0.6470588235294118,
+        "agent_tp": 11,
+        "case": {
+          "balanced_accuracy": 1.0,
+          "fn": 0,
+          "fp": 0,
+          "mcc": 1.0,
+          "negatives": 8,
+          "negatives_withheld": 0,
+          "out_of_taxonomy_alarms": 0,
+          "positives": 12,
+          "recall": 1.0,
+          "specificity": 1.0,
+          "tn": 8,
+          "tp": 12
+        },
+        "cases": 20,
+        "decoys": 50,
+        "decoys_withheld": 0,
+        "errors": 0,
+        "expected": 32,
+        "f1": 0.896551724137931,
+        "f1_ci": [
+          0.8363636363636363,
+          0.9577464788732394
+        ],
+        "fn": 6,
+        "fp": 0,
+        "incomplete": 0,
+        "missing": 0,
+        "out_of_taxonomy": 0,
+        "precision": 1.0,
+        "precision_ci": [
+          0.871271076371412,
+          1.0
+        ],
+        "recall": 0.8125,
+        "recall_ci": [
+          0.6469084465243861,
+          0.9111045536226888
+        ],
+        "scored": 20,
+        "seconds_max": 5.021,
+        "seconds_median": 1.219,
+        "seconds_p90": 4.868,
+        "specificity": 1.0,
+        "specificity_ci": [
+          0.9286523998213857,
+          0.9999999999999999
+        ],
+        "tn": 50,
+        "tp": 26
+      }
+    },
+    "cisco-mcp-scanner": {
+      "coverage": "1/9",
+      "estate": {
+        "expected": 738,
+        "recall": 0.0013550135501355014,
+        "tp": 1
+      },
+      "in_scope": {
+        "agent_expected": 18,
+        "agent_false_alarm_rate": 0.0,
+        "agent_false_alarm_universe": 6,
+        "agent_false_alarms": 0,
+        "agent_recall": 0.05555555555555555,
+        "agent_tp": 1,
+        "case": {
+          "balanced_accuracy": 0.5208333333333334,
+          "fn": 23,
+          "fp": 0,
+          "mcc": 0.13074409009212268,
+          "negatives": 16,
+          "negatives_withheld": 0,
+          "out_of_taxonomy_alarms": 0,
+          "positives": 24,
+          "recall": 0.041666666666666664,
+          "specificity": 1.0,
+          "tn": 16,
+          "tp": 1
+        },
+        "cases": 40,
+        "decoys": 0,
+        "decoys_withheld": 0,
+        "errors": 0,
+        "expected": 24,
+        "f1": 0.08,
+        "f1_ci": [
+          0.0,
+          0.25
+        ],
+        "fn": 23,
+        "fp": 0,
+        "incomplete": 0,
+        "missing": 0,
+        "out_of_taxonomy": 0,
+        "precision": 1.0,
+        "precision_ci": [
+          0.2065493117918027,
+          1.0
+        ],
+        "recall": 0.041666666666666664,
+        "recall_ci": [
+          0.007393456083597233,
+          0.20241806658845338
+        ],
+        "scored": 40,
+        "seconds_max": 17.252,
+        "seconds_median": 4.136,
+        "seconds_p90": 4.997,
+        "specificity": null,
+        "specificity_ci": [
+          null,
+          null
+        ],
+        "tn": 0,
+        "tp": 1
+      }
+    },
+    "fleet-ai-tools": {
+      "coverage": "2/9",
+      "estate": {
+        "expected": 738,
+        "recall": 0.018970189701897018,
+        "tp": 14
+      },
+      "in_scope": {
+        "agent_expected": 43,
+        "agent_false_alarm_rate": 0.0,
+        "agent_false_alarm_universe": 110,
+        "agent_false_alarms": 0,
+        "agent_recall": 0.2558139534883721,
+        "agent_tp": 11,
+        "case": {
+          "balanced_accuracy": 0.625,
+          "fn": 24,
+          "fp": 2,
+          "mcc": 0.2895702534395041,
+          "negatives": 24,
+          "negatives_withheld": 0,
+          "out_of_taxonomy_alarms": 0,
+          "positives": 36,
+          "recall": 0.3333333333333333,
+          "specificity": 0.9166666666666666,
+          "tn": 22,
+          "tp": 12
+        },
+        "cases": 60,
+        "decoys": 81,
+        "decoys_withheld": 0,
+        "errors": 0,
+        "expected": 72,
+        "f1": 0.3181818181818182,
+        "f1_ci": [
+          0.17777777777777778,
+          0.46153846153846156
+        ],
+        "fn": 58,
+        "fp": 2,
+        "incomplete": 0,
+        "missing": 0,
+        "out_of_taxonomy": 0,
+        "precision": 0.875,
+        "precision_ci": [
+          0.6397717251782153,
+          0.9650225125737311
+        ],
+        "recall": 0.19444444444444445,
+        "recall_ci": [
+          0.1195147933294617,
+          0.30032759038750995
+        ],
+        "scored": 60,
+        "seconds_max": 0.362,
+        "seconds_median": 0.015,
+        "seconds_p90": 0.019,
+        "specificity": 1.0,
+        "specificity_ci": [
+          0.9547219138856311,
+          1.0
+        ],
+        "tn": 81,
+        "tp": 14
+      }
+    },
+    "numbat": {
+      "coverage": "1/9",
+      "estate": {
+        "expected": 738,
+        "recall": 0.0013550135501355014,
+        "tp": 1
+      },
+      "in_scope": {
+        "agent_expected": 18,
+        "agent_false_alarm_rate": 0.0,
+        "agent_false_alarm_universe": 6,
+        "agent_false_alarms": 0,
+        "agent_recall": 0.05555555555555555,
+        "agent_tp": 1,
+        "case": {
+          "balanced_accuracy": 0.5208333333333334,
+          "fn": 23,
+          "fp": 0,
+          "mcc": 0.13074409009212268,
+          "negatives": 16,
+          "negatives_withheld": 0,
+          "out_of_taxonomy_alarms": 0,
+          "positives": 24,
+          "recall": 0.041666666666666664,
+          "specificity": 1.0,
+          "tn": 16,
+          "tp": 1
+        },
+        "cases": 40,
+        "decoys": 0,
+        "decoys_withheld": 0,
+        "errors": 0,
+        "expected": 24,
+        "f1": 0.08,
+        "f1_ci": [
+          0.0,
+          0.24242424242424243
+        ],
+        "fn": 23,
+        "fp": 0,
+        "incomplete": 0,
+        "missing": 0,
+        "out_of_taxonomy": 0,
+        "precision": 1.0,
+        "precision_ci": [
+          0.2065493117918027,
+          1.0
+        ],
+        "recall": 0.041666666666666664,
+        "recall_ci": [
+          0.007393456083597233,
+          0.20241806658845338
+        ],
+        "scored": 40,
+        "seconds_max": 1.195,
+        "seconds_median": 0.008,
+        "seconds_p90": 0.012,
+        "specificity": null,
+        "specificity_ci": [
+          null,
+          null
+        ],
+        "tn": 0,
+        "tp": 1
+      }
+    },
+    "shadowscan": {
+      "coverage": "9/9",
+      "estate": {
+        "expected": 738,
+        "recall": 0.8387533875338753,
+        "tp": 619
+      },
+      "in_scope": {
+        "agent_expected": 356,
+        "agent_false_alarm_rate": 0.18081587651598677,
+        "agent_false_alarm_universe": 907,
+        "agent_false_alarms": 164,
+        "agent_recall": 0.7556179775280899,
+        "agent_tp": 269,
+        "case": {
+          "balanced_accuracy": 0.7594753392916253,
+          "fn": 9,
+          "fp": 50,
+          "mcc": 0.5936421778235517,
+          "negatives": 114,
+          "negatives_withheld": 0,
+          "out_of_taxonomy_alarms": 0,
+          "positives": 212,
+          "recall": 0.9575471698113207,
+          "specificity": 0.5614035087719298,
+          "tn": 64,
+          "tp": 203
+        },
+        "cases": 326,
+        "decoys": 668,
+        "decoys_withheld": 17,
+        "errors": 0,
+        "expected": 706,
+        "f1": 0.8247834776815456,
+        "f1_ci": [
+          0.7952314165497896,
+          0.8509485094850948
+        ],
+        "fn": 87,
+        "fp": 176,
+        "incomplete": 27,
+        "missing": 0,
+        "out_of_taxonomy": 0,
+        "precision": 0.7786163522012579,
+        "precision_ci": [
+          0.7484546807649815,
+          0.8060984099326156
+        ],
+        "recall": 0.876770538243626,
+        "recall_ci": [
+          0.8504651174364981,
+          0.8989980103419601
+        ],
+        "scored": 326,
+        "seconds_max": 62.302,
+        "seconds_median": 1.799,
+        "seconds_p90": 2.973,
+        "specificity": 0.6302395209580839,
+        "specificity_ci": [
+          0.5929843088683288,
+          0.6660053645134433
+        ],
+        "tn": 421,
+        "tp": 619
+      }
+    },
+    "snyk-agent-scan": {
+      "coverage": "1/9",
+      "estate": {
+        "expected": 738,
+        "recall": 0.009485094850948509,
+        "tp": 7
+      },
+      "in_scope": {
+        "agent_expected": 18,
+        "agent_false_alarm_rate": 0.0,
+        "agent_false_alarm_universe": 6,
+        "agent_false_alarms": 0,
+        "agent_recall": 0.3888888888888889,
+        "agent_tp": 7,
+        "case": {
+          "balanced_accuracy": 0.6458333333333334,
+          "fn": 17,
+          "fp": 0,
+          "mcc": 0.37605071654517747,
+          "negatives": 16,
+          "negatives_withheld": 0,
+          "out_of_taxonomy_alarms": 0,
+          "positives": 24,
+          "recall": 0.2916666666666667,
+          "specificity": 1.0,
+          "tn": 16,
+          "tp": 7
+        },
+        "cases": 40,
+        "decoys": 0,
+        "decoys_withheld": 0,
+        "errors": 0,
+        "expected": 24,
+        "f1": 0.45161290322580644,
+        "f1_ci": [
+          0.21052631578947367,
+          0.6470588235294118
+        ],
+        "fn": 17,
+        "fp": 0,
+        "incomplete": 0,
+        "missing": 0,
+        "out_of_taxonomy": 0,
+        "precision": 1.0,
+        "precision_ci": [
+          0.6456695613241317,
+          1.0
+        ],
+        "recall": 0.2916666666666667,
+        "recall_ci": [
+          0.14914648116318613,
+          0.4916769382332005
+        ],
+        "scored": 40,
+        "seconds_max": 2.878,
+        "seconds_median": 0.9904999999999999,
+        "seconds_p90": 1.121,
+        "specificity": null,
+        "specificity_ci": [
+          null,
+          null
+        ],
+        "tn": 0,
+        "tp": 7
+      }
+    },
+    "vet": {
+      "coverage": "2/9",
+      "estate": {
+        "expected": 738,
+        "recall": 0.023035230352303523,
+        "tp": 17
+      },
+      "in_scope": {
+        "agent_expected": 83,
+        "agent_false_alarm_rate": 0.0,
+        "agent_false_alarm_universe": 50,
+        "agent_false_alarms": 0,
+        "agent_recall": 0.20481927710843373,
+        "agent_tp": 17,
+        "case": {
+          "balanced_accuracy": 0.36730769230769234,
+          "fn": 26,
+          "fp": 16,
+          "mcc": -0.260423717853257,
+          "negatives": 26,
+          "negatives_withheld": 0,
+          "out_of_taxonomy_alarms": 0,
+          "positives": 40,
+          "recall": 0.35,
+          "specificity": 0.38461538461538464,
+          "tn": 10,
+          "tp": 14
+        },
+        "cases": 66,
+        "decoys": 0,
+        "decoys_withheld": 0,
+        "errors": 0,
+        "expected": 133,
+        "f1": 0.17989417989417988,
+        "f1_ci": [
+          0.10344827586206896,
+          0.26851851851851855
+        ],
+        "fn": 116,
+        "fp": 39,
+        "incomplete": 0,
+        "missing": 0,
+        "out_of_taxonomy": 0,
+        "precision": 0.30357142857142855,
+        "precision_ci": [
+          0.1990032501648838,
+          0.43335865391836864
+        ],
+        "recall": 0.12781954887218044,
+        "recall_ci": [
+          0.08135784117562087,
+          0.19517720303288774
+        ],
+        "scored": 66,
+        "seconds_max": 8.447,
+        "seconds_median": 0.1545,
+        "seconds_p90": 0.188,
+        "specificity": null,
+        "specificity_ci": [
+          null,
+          null
+        ],
+        "tn": 0,
+        "tp": 17
+      }
+    }
+  },
+  "code": {
+    "corpus": {
+      "control": 10,
+      "expected_by_category": {
+        "a2a": 10,
+        "agent-config": 102,
+        "framework": 156,
+        "iac": 8,
+        "lowcode": 3,
+        "mcp": 60,
+        "mcp-client-config": 12,
+        "provider": 488
+      },
+      "expected_facts": 839,
+      "nearmiss": 12,
+      "positive": 65,
+      "repos": 87
+    },
+    "incomplete_negatives": 4,
+    "tool": {
+      "incomplete_runs": {
+        "count": 43,
+        "repos": [
+          "0xPlaygrounds__rig",
+          "Aider-AI__aider",
+          "Azure-Samples__azure-search-openai-demo",
+          "BurntSushi__ripgrep",
+          "GoogleCloudPlatform__agent-starter-pack",
+          "JamesNK__Newtonsoft.Json",
+          "OpenInterpreter__open-interpreter",
+          "Portkey-AI__gateway",
+          "RooCodeInc__Roo-Code",
+          "SWE-agent__SWE-agent",
+          "Shubhamsaboo__awesome-llm-apps",
+          "ag2ai__ag2",
+          "agno-agi__agno",
+          "anthropics__claude-code",
+          "assafelovic__gpt-researcher",
+          "awslabs__amazon-bedrock-agent-samples",
+          "awslabs__mcp",
+          "block__goose",
+          "cline__cline",
+          "continuedev__continue",
+          "crewAIInc__crewAI-examples",
+          "deepset-ai__haystack-cookbook",
+          "firebase__genkit",
+          "github__awesome-copilot",
+          "gitlab-org__gitlab-runner",
+          "gitlab-org__modelops__applied-ml__code-suggestions__ai-assist",
+          "google-gemini__gemini-cli",
+          "google__adk-samples",
+          "jenkinsci__docker-agent",
+          "jlowin__fastmcp",
+          "langchain-ai__open_deep_research",
+          "langchain4j__langchain4j-examples",
+          "mastra-ai__mastra",
+          "microsoft__autogen",
+          "microsoft__semantic-kernel",
+          "openai__codex",
+          "openai__openai-agents-python",
+          "psf__requests",
+          "pydantic__pydantic",
+          "pydantic__pydantic-ai",
+          "stanfordnlp__dspy",
+          "strands-agents__samples",
+          "tmc__langchaingo"
+        ]
+      },
+      "repo_level": {
+        "controls": 10,
+        "controls_flagged": 0,
+        "f1": 1.0,
+        "fn": 0,
+        "fp": 0,
+        "nearmiss": 12,
+        "nearmiss_flagged": 0,
+        "positives": 65,
+        "positives_detected": 65,
+        "precision": 1.0,
+        "recall": 1.0,
+        "tp": 65
+      },
+      "value_level": {
+        "all": {
+          "f1": 0.9723,
+          "fn": 44,
+          "fp": 2,
+          "precision": 0.9975,
+          "recall": 0.9482,
+          "tp": 806
+        },
+        "by_category": {
+          "a2a": {
+            "f1": 1.0,
+            "fn": 0,
+            "fp": 0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "tp": 10
+          },
+          "agent-config": {
+            "f1": 0.9911,
+            "fn": 2,
+            "fp": 0,
+            "precision": 1.0,
+            "recall": 0.9823,
+            "tp": 111
+          },
+          "framework": {
+            "f1": 0.9935,
+            "fn": 2,
+            "fp": 0,
+            "precision": 1.0,
+            "recall": 0.9872,
+            "tp": 154
+          },
+          "iac": {
+            "f1": 0.9333,
+            "fn": 1,
+            "fp": 0,
+            "precision": 1.0,
+            "recall": 0.875,
+            "tp": 7
+          },
+          "lowcode": {
+            "f1": 1.0,
+            "fn": 0,
+            "fp": 0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "tp": 3
+          },
+          "mcp": {
+            "f1": 0.9916,
+            "fn": 1,
+            "fp": 0,
+            "precision": 1.0,
+            "recall": 0.9833,
+            "tp": 59
+          },
+          "mcp-client-config": {
+            "f1": 0.9565,
+            "fn": 1,
+            "fp": 0,
+            "precision": 1.0,
+            "recall": 0.9167,
+            "tp": 11
+          },
+          "provider": {
+            "f1": 0.9586,
+            "fn": 37,
+            "fp": 2,
+            "precision": 0.9956,
+            "recall": 0.9242,
+            "tp": 451
+          }
+        },
+        "in_scope": {
+          "f1": 0.9723,
+          "fn": 44,
+          "fp": 2,
+          "precision": 0.9975,
+          "recall": 0.9482,
+          "tp": 806
+        }
+      },
+      "version": "0.1.2+7bdea5300551"
+    }
+  },
+  "companion_modules": {
+    "benchmarks.sab_realworld": {
+      "path": "benchmarks/sab_realworld/__main__.py",
+      "sha256": "f1e062e4072b185373508a6b273178d02ab8f32521a65c3293ef991eceb0d495"
+    },
+    "benchmarks.sab_realworld.corpus": {
+      "path": "benchmarks/sab_realworld/corpus.py",
+      "sha256": "dd2d5cd53c13768f2d7ee56f9507ea8bf2abaec8766ef03db84cb3ee0312929f"
+    },
+    "benchmarks.sab_realworld.harness": {
+      "path": "benchmarks/sab_realworld/harness.py",
+      "sha256": "8181e1ad302dff10fd737eb41ebadb9539335f955a31e95c8c6c1bdfa59ddaed"
+    },
+    "tools.benchmark.adapters": {
+      "path": "tools/benchmark/adapters.py",
+      "sha256": "b8dbd16c204b8f389d6d1981fb99f400d398d9a7a72116ab5ee5ef77a26fe618"
+    },
+    "tools.benchmark.common": {
+      "path": "tools/benchmark/common.py",
+      "sha256": "11c73c2f923cff2a200826c56fe6b7525324bf690d0bc5c6479f23ad8938d7ac"
+    },
+    "tools.benchmark.compare": {
+      "path": "tools/benchmark/compare.py",
+      "sha256": "f0b4740f1e84ff3168a804790fde3b2d188a93c429361092e73b6990475a8d00"
+    },
+    "tools.benchmark.endpoint_cases": {
+      "path": "tools/benchmark/endpoint_cases.py",
+      "sha256": "1edc55159bc00a3d3fb11a875bf389c9a0adaa3b36bfc8d5f42b4cc90c2a50ef"
+    },
+    "tools.benchmark.generate": {
+      "path": "tools/benchmark/generate.py",
+      "sha256": "94f6e6fb9329f9951032c8eb5258da82a6f6760ea4d445c2ad0d944816bfeb53"
+    },
+    "tools.benchmark.helpers.open_shadow_ai_match": {
+      "path": "tools/benchmark/helpers/open_shadow_ai_match.py",
+      "sha256": "96706231e7c04b714180019a050b7d27880f3222049e5e0d214b8c3a05647a2e"
+    },
+    "tools.benchmark.network_cases": {
+      "path": "tools/benchmark/network_cases.py",
+      "sha256": "eee52acb932cdc1735b1b7e7df98f55d6700253b79c9233915fc2a0987b7f4a6"
+    },
+    "tools.benchmark.realworld.adapters": {
+      "path": "tools/benchmark/realworld/adapters.py",
+      "sha256": "beb3ee815a81c28ba80e99077e5343726fceacdde45074cf17b8be8bad44da17"
+    },
+    "tools.benchmark.realworld.adjudicate": {
+      "path": "tools/benchmark/realworld/adjudicate.py",
+      "sha256": "aeeb0ffeee169437fddd48641c827941e118743d9f7268fd853845cdf675aac8"
+    },
+    "tools.benchmark.realworld.baseline_grep": {
+      "path": "tools/benchmark/realworld/baseline_grep.py",
+      "sha256": "3bc137ec55ac792b45b6010e0d8f348bb49d05c4d4c41388cd2b8b01aae250bc"
+    },
+    "tools.benchmark.realworld.contamination": {
+      "path": "tools/benchmark/realworld/contamination.py",
+      "sha256": "7c734927453e3d4810cef9cbe91b96cb92c5c3654d894de56f2c0c02517f7870"
+    },
+    "tools.benchmark.realworld.corpus_summary": {
+      "path": "tools/benchmark/realworld/corpus_summary.py",
+      "sha256": "c0af35803826f7b1585f889ac0ea4e4212e28b0007e20921408a69b8b3b812a5"
+    },
+    "tools.benchmark.realworld.diagnose_shadowscan": {
+      "path": "tools/benchmark/realworld/diagnose_shadowscan.py",
+      "sha256": "fe2726d58bc6c9ec8ee7a22cfc3bc396c7071896d52e5512d3764dac870fd808"
+    },
+    "tools.benchmark.realworld.fetch": {
+      "path": "tools/benchmark/realworld/fetch.py",
+      "sha256": "8a03bd2cf1fc61556f568dbe85ef3ba0f68353cca71d94dfb59a9e2c8772626a"
+    },
+    "tools.benchmark.realworld.fetch_corpus": {
+      "path": "tools/benchmark/realworld/fetch_corpus.py",
+      "sha256": "3c50e88930d2dd4517de3c428a24b9d285378c7377c172de142f137c2882516b"
+    },
+    "tools.benchmark.realworld.frames": {
+      "path": "tools/benchmark/realworld/frames.py",
+      "sha256": "75c400b0411e79de9270e7ebfc32ca4ebaa884254fe92e0a1e0da9dab4601ecc"
+    },
+    "tools.benchmark.realworld.freeze": {
+      "path": "tools/benchmark/realworld/freeze.py",
+      "sha256": "def1b8f8fcc77d3a002422f32097e20600335a4891bbe7ea9de3fb7bc5a27b30"
+    },
+    "tools.benchmark.realworld.install_cdxgen": {
+      "path": "tools/benchmark/realworld/install_cdxgen.py",
+      "sha256": "3776ae15f79dcb1c36f74e141f2f44def235959594e32726138d5ffd39bb5021"
+    },
+    "tools.benchmark.realworld.oracle": {
+      "path": "tools/benchmark/realworld/oracle.py",
+      "sha256": "9c18aee0992eb25fe8e6de951e41bcd1e181ef2016a52a54656e8fe3421a720e"
+    },
+    "tools.benchmark.realworld.record_environment": {
+      "path": "tools/benchmark/realworld/record_environment.py",
+      "sha256": "a201884418d6d89e8a8ae421b4c75ab4832ac1422c92506fea69c283964a4207"
+    },
+    "tools.benchmark.realworld.report": {
+      "path": "tools/benchmark/realworld/report.py",
+      "sha256": "1bae1ed1db6c2a02e99c6f9818334b09ab9f85b31bb8844bfb668ce6c8960e39"
+    },
+    "tools.benchmark.realworld.rerun_errors": {
+      "path": "tools/benchmark/realworld/rerun_errors.py",
+      "sha256": "1c1a50990d079a0797f21d7c2f18937f60ed9e45a8d2409f4d096df43d177e47"
+    },
+    "tools.benchmark.realworld.run": {
+      "path": "tools/benchmark/realworld/run.py",
+      "sha256": "cc0d97460bc55e05f0ed88b1fa145533aa7440c5fec86cbb0791c1015b19ec85"
+    },
+    "tools.benchmark.realworld.sample": {
+      "path": "tools/benchmark/realworld/sample.py",
+      "sha256": "c093bcde33bdeb4f8d414e0c83507ab2e5e033fa589acd08ebe12ce24af92553"
+    },
+    "tools.benchmark.realworld.sandbox": {
+      "path": "tools/benchmark/realworld/sandbox.py",
+      "sha256": "d384e24cc75085549261eac7f1d44c464dc9c2388cfee5d74488a08adf0b8975"
+    },
+    "tools.benchmark.realworld.score": {
+      "path": "tools/benchmark/realworld/score.py",
+      "sha256": "7b6bf64afaa70db5c6ffb6fd22e15e25ff82322d613b7662b7ed605c84ef68c2"
+    },
+    "tools.benchmark.realworld.vocab_overlap": {
+      "path": "tools/benchmark/realworld/vocab_overlap.py",
+      "sha256": "9046194daf191be3f5f5c32895aa9cb583bac42384142fcd759e47aa27474545"
+    },
+    "tools.benchmark.realworld_adapters": {
+      "path": "tools/benchmark/realworld_adapters.py",
+      "sha256": "a48bf6a5b68fee283c1a833eb56b67a2c21fd3b8476af0013535ec444f774ccd"
+    },
+    "tools.benchmark.realworld_report": {
+      "path": "tools/benchmark/realworld_report.py",
+      "sha256": "0fd2ef355d4631ab25c023656696ab424a80fdd8af7b2bda0cd05574f13cab22"
+    },
+    "tools.benchmark.realworld_run": {
+      "path": "tools/benchmark/realworld_run.py",
+      "sha256": "e9b76f2c1382170cf19311746e1b53db670e4c448e6c0cec504550ef490d90e6"
+    },
+    "tools.benchmark.repo_cases": {
+      "path": "tools/benchmark/repo_cases.py",
+      "sha256": "744a48207d010cbfb56c8e53561a2412ba01a49e9dc0eaeb79f0276d312beb5a"
+    },
+    "tools.benchmark.report": {
+      "path": "tools/benchmark/report.py",
+      "sha256": "fac50d9e6c41c6ac7cd96b0333b6150c6e9d73a247fa00cc60fa1b856824aa00"
+    },
+    "tools.benchmark.run": {
+      "path": "tools/benchmark/run.py",
+      "sha256": "4c53ebf4bbc2022a1e478351e1d690b05166e4c41912d58bd95a3de72fdcdd15"
+    },
+    "tools.benchmark.score": {
+      "path": "tools/benchmark/score.py",
+      "sha256": "f841363b65267f5a101c92868780b661ad194743f4cfbf8128e169171895df4d"
+    },
+    "tools.benchmark_realworld.adapters": {
+      "path": "tools/benchmark_realworld/adapters.py",
+      "sha256": "fc25d8f03d5e2fb8e9947b65031993cf6c7459e6698c3387a7c633c6f09a2a03"
+    },
+    "tools.benchmark_realworld.build_manifest": {
+      "path": "tools/benchmark_realworld/build_manifest.py",
+      "sha256": "65b646c828e72cf7af9bee2876f8ab6d9152da69c0ccaa9542aa6c38732eba9c"
+    },
+    "tools.benchmark_realworld.build_manifest_v2": {
+      "path": "tools/benchmark_realworld/build_manifest_v2.py",
+      "sha256": "16ee6dc3f47b9accf78c5e35728082fdef02a9626f070db55896befc7d31352e"
+    },
+    "tools.benchmark_realworld.cases": {
+      "path": "tools/benchmark_realworld/cases.py",
+      "sha256": "a73f4a42b727a0025bf76dc1765b95d002829bade273fecc2fc1b408131cc7ef"
+    },
+    "tools.benchmark_realworld.erratum_v1": {
+      "path": "tools/benchmark_realworld/erratum_v1.py",
+      "sha256": "003ea6214c20d37bbd366b2c9d93bc7159425dbf0fb6bbb20c770baff1891838"
+    },
+    "tools.benchmark_realworld.run": {
+      "path": "tools/benchmark_realworld/run.py",
+      "sha256": "3e3aacb7e64ee0ffffaddc45d1d48b6d5063cb07ff07bdd6596dc1c95c888a05"
+    },
+    "tools.benchmark_realworld.score": {
+      "path": "tools/benchmark_realworld/score.py",
+      "sha256": "b37b9abebcb0b0407e783dba41aeb3aed4e75473a4fc87d43a67ecb361576f0a"
+    },
+    "tools.benchmark_realworld.score_v2": {
+      "path": "tools/benchmark_realworld/score_v2.py",
+      "sha256": "a12024fa87f9bf47092798cbd0d3d9eca097c0dcced1c9aecb6eb1b637cefb47"
+    },
+    "tools.discovery_benchmark": {
+      "path": "tools/discovery_benchmark/__main__.py",
+      "sha256": "259759bd15d639386548a8e764d421650885d12ad4267191b3f4e7cecdabff45"
+    },
+    "tools.discovery_benchmark.adapters.agentdiscover": {
+      "path": "tools/discovery_benchmark/adapters/agentdiscover.py",
+      "sha256": "aafacf180b54b5f9d01f139d09b465ad1c4d851618b83a77e7ffe414ec7b03cb"
+    },
+    "tools.discovery_benchmark.adapters.agentic_radar": {
+      "path": "tools/discovery_benchmark/adapters/agentic_radar.py",
+      "sha256": "4913d11af3c44f74413b621248ec2ec71e8b311758cd18c42e36cb1e9cb56db4"
+    },
+    "tools.discovery_benchmark.adapters.cdxgen": {
+      "path": "tools/discovery_benchmark/adapters/cdxgen.py",
+      "sha256": "97c7963b75ed7e8d22e118e6978e7bf25c59b00cd310849aaf6cea81e9eeb01e"
+    },
+    "tools.discovery_benchmark.adapters.cisco_aibom": {
+      "path": "tools/discovery_benchmark/adapters/cisco_aibom.py",
+      "sha256": "eed936e2a4795e62b6acc58c76f6d9b315d6a218d708fe96f118d8ac8c9d6840"
+    },
+    "tools.discovery_benchmark.adapters.geiger": {
+      "path": "tools/discovery_benchmark/adapters/geiger.py",
+      "sha256": "455f0919dcce5e39ab0e95fdf0b22c5f768b4497679d84ccdcc8a7c978f9362f"
+    },
+    "tools.discovery_benchmark.adapters.nuguard": {
+      "path": "tools/discovery_benchmark/adapters/nuguard.py",
+      "sha256": "b3051c671351a8a4f80ce8aa6a92ccecc69e18ecf418fdfe6d7e4b7b09aedf04"
+    },
+    "tools.discovery_benchmark.adapters.registry": {
+      "path": "tools/discovery_benchmark/adapters/registry.py",
+      "sha256": "8f5b1a05e90fec6f2423b6e9b736a26931b31744bbc62abcb9c93933d9fa9414"
+    },
+    "tools.discovery_benchmark.adapters.shadowscan": {
+      "path": "tools/discovery_benchmark/adapters/shadowscan.py",
+      "sha256": "afa7217f1fcdfd5f11a026cbaefc272b0ecba917f734b632cf2bc16146f0eac3"
+    },
+    "tools.discovery_benchmark.adapters.trusera_ai_bom": {
+      "path": "tools/discovery_benchmark/adapters/trusera_ai_bom.py",
+      "sha256": "1da58bba3a20c9fbab3efdb99ed2779691b98824e783f3a733d7f375aa81ea89"
+    },
+    "tools.discovery_benchmark.adapters.vet": {
+      "path": "tools/discovery_benchmark/adapters/vet.py",
+      "sha256": "d608666a5aea7e120cdec39da97789bb88aa1998747fd3e7b98b04b543b49006"
+    },
+    "tools.discovery_benchmark.adapters.xbom": {
+      "path": "tools/discovery_benchmark/adapters/xbom.py",
+      "sha256": "f597ee928e7f3d55512b3af87972b9022531ae403859800f57726bbb2e959f77"
+    },
+    "tools.discovery_benchmark.compare": {
+      "path": "tools/discovery_benchmark/compare.py",
+      "sha256": "b064ba69da90c3a1a2a6702bd520c3a005b187d38242ccf01821eb34bbfdfb6b"
+    },
+    "tools.discovery_benchmark.corpus": {
+      "path": "tools/discovery_benchmark/corpus.py",
+      "sha256": "05cb77da7bdefbe1ec52049ecb894225942dc1c8e05bf791e806fc4b8d1ea658"
+    },
+    "tools.discovery_benchmark.evidence": {
+      "path": "tools/discovery_benchmark/evidence.py",
+      "sha256": "88dc3c287cb6785f60b02cfc8669f03cea973fc38248ff960a99e585874fda87"
+    },
+    "tools.discovery_benchmark.fetch": {
+      "path": "tools/discovery_benchmark/fetch.py",
+      "sha256": "ac05b1a92be93026c2d45c382b5ed3e965ae6544a5aa1d468582a29503b0019d"
+    },
+    "tools.discovery_benchmark.report": {
+      "path": "tools/discovery_benchmark/report.py",
+      "sha256": "2364e24aa3b00854f5a34daf88db7f2e248bcc6663c6f7c2554935e5e86007fd"
+    },
+    "tools.discovery_benchmark.runner": {
+      "path": "tools/discovery_benchmark/runner.py",
+      "sha256": "92efb34e03dff883808c41babaf8a3e5e2111ec6f0c3a50a97b881750662b3eb"
+    },
+    "tools.discovery_benchmark.score": {
+      "path": "tools/discovery_benchmark/score.py",
+      "sha256": "376dbfc86f4a755be8d782104a87405f2dbc96c8209b48ab75e13535aab97ca0"
+    },
+    "tools.discovery_benchmark.taxonomy": {
+      "path": "tools/discovery_benchmark/taxonomy.py",
+      "sha256": "758a7c82e56db33b45fa3062458daa69ad272537262d24d0ca21b93443ec3572"
+    },
+    "tools.shadowbench": {
+      "path": "tools/shadowbench/__main__.py",
+      "sha256": "22c595114f3338f5a1d3711cf0a8e1719cac7cf9302ed40e9e4b0b9321ed0b37"
+    },
+    "tools.shadowbench.cases": {
+      "path": "tools/shadowbench/cases/__main__.py",
+      "sha256": "3e11b1485f0e2efa30583eaa6640baae414b24b58d92cbdc516c0309d12b05cc"
+    },
+    "tools.shadowbench.cases.adapters._probe": {
+      "path": "tools/shadowbench/cases/adapters/_probe.py",
+      "sha256": "6006ddaee9cc8c0a4a9906d93e9243c5aba76a9cba88b6ce1963d30186db9e2d"
+    },
+    "tools.shadowbench.cases.adapters.agentdiscover": {
+      "path": "tools/shadowbench/cases/adapters/agentdiscover.py",
+      "sha256": "8224e549737184c6e731d6ca2c700f9e192edc19884daab4b333f3c0a9a0ce31"
+    },
+    "tools.shadowbench.cases.adapters.agentmesh_discovery": {
+      "path": "tools/shadowbench/cases/adapters/agentmesh_discovery.py",
+      "sha256": "0ec7a6dad1e68476ac3fef45bc8c35fb4cf04294227f93fcff1b8878b195a579"
+    },
+    "tools.shadowbench.cases.adapters.ai_infra_guard": {
+      "path": "tools/shadowbench/cases/adapters/ai_infra_guard.py",
+      "sha256": "df51859e9d581018d03cf2d5ce97725f6f4d2c73d3083221b292c360696beff1"
+    },
+    "tools.shadowbench.cases.adapters.cisco_mcp_scanner": {
+      "path": "tools/shadowbench/cases/adapters/cisco_mcp_scanner.py",
+      "sha256": "36a89d7538e236349edb42d501a572a8c90429b43152cbda07355dfba7eda7fb"
+    },
+    "tools.shadowbench.cases.adapters.fleet_ai_tools": {
+      "path": "tools/shadowbench/cases/adapters/fleet_ai_tools.py",
+      "sha256": "62a57d95c5fa3d284ad7941d77050ae09ba2057c74f155e2898f5a3e75e6dd6c"
+    },
+    "tools.shadowbench.cases.adapters.numbat": {
+      "path": "tools/shadowbench/cases/adapters/numbat.py",
+      "sha256": "683fc8785a956759ff9708a2bee02a9244ff6dc9f6433fbd1b489f400e9a3ac5"
+    },
+    "tools.shadowbench.cases.adapters.registry": {
+      "path": "tools/shadowbench/cases/adapters/registry.py",
+      "sha256": "c70e473efadcca4aa64b9401a42d276675c3473a15315bbbdd3cb42d9eee8a21"
+    },
+    "tools.shadowbench.cases.adapters.shadowscan": {
+      "path": "tools/shadowbench/cases/adapters/shadowscan.py",
+      "sha256": "ea89f65370b37e788aff85dbf48881fa41463c5b96c21a88aa95bf275777a0d2"
+    },
+    "tools.shadowbench.cases.adapters.snyk_agent_scan": {
+      "path": "tools/shadowbench/cases/adapters/snyk_agent_scan.py",
+      "sha256": "12e172ca4bc2cb04d398b59d6d5ae6e60f7b19eea4747ace3affbe01340207f2"
+    },
+    "tools.shadowbench.cases.adapters.vet": {
+      "path": "tools/shadowbench/cases/adapters/vet.py",
+      "sha256": "b609e0f4109298c13779f28a5575f24b1c5dbd29571b852e412979b5be0e992a"
+    },
+    "tools.shadowbench.cases.contract": {
+      "path": "tools/shadowbench/cases/contract.py",
+      "sha256": "11fd178346edec281401da048337e9fb5d9791def047213ffc041069219ef5fb"
+    },
+    "tools.shadowbench.cases.corpus": {
+      "path": "tools/shadowbench/cases/corpus.py",
+      "sha256": "c49c4adbdd28110c81d92a4b5d2ac646308cdad8bbf033a8f030a00e0eb287dc"
+    },
+    "tools.shadowbench.cases.families.cloud": {
+      "path": "tools/shadowbench/cases/families/cloud.py",
+      "sha256": "d77732069caa09ddd0b04896867c55cc43979b31fec29778a3c73c7c6d6d5c9e"
+    },
+    "tools.shadowbench.cases.families.endpoint": {
+      "path": "tools/shadowbench/cases/families/endpoint.py",
+      "sha256": "5224e9f8ec11d038b107516a1dafd30ae5a16727c830c663d3c3a31092961a4c"
+    },
+    "tools.shadowbench.cases.families.gateway": {
+      "path": "tools/shadowbench/cases/families/gateway.py",
+      "sha256": "ef96d4abae63427f6d13c1c36a33dce53bba44c9f623e4b765e08d799d7be3ce"
+    },
+    "tools.shadowbench.cases.families.identity": {
+      "path": "tools/shadowbench/cases/families/identity.py",
+      "sha256": "55cf5d0eaf52bed58e7713b1e9dfd229b76d088fa6601ba53819ae28792f62fa"
+    },
+    "tools.shadowbench.cases.families.lowcode": {
+      "path": "tools/shadowbench/cases/families/lowcode.py",
+      "sha256": "cf1a1ad98fda690a4280ab5a1c2468b3ae411be88cc194cd18326814cd32554c"
+    },
+    "tools.shadowbench.cases.families.network": {
+      "path": "tools/shadowbench/cases/families/network.py",
+      "sha256": "dd3caa8a9204b6743d239b47be34d921a35d740dab0ab8328cb37a373ac10932"
+    },
+    "tools.shadowbench.cases.families.runtime": {
+      "path": "tools/shadowbench/cases/families/runtime.py",
+      "sha256": "a13c2c181f88bc619cc7a5058ee11e5cef6b432e56c3acb6200cbe8f6ab2aa9c"
+    },
+    "tools.shadowbench.cases.families.saas": {
+      "path": "tools/shadowbench/cases/families/saas.py",
+      "sha256": "4f86d78013f9b90b72c4e6c15eb170b34d7deb233f6e2479dc0cf5cb63690fa9"
+    },
+    "tools.shadowbench.cases.fetch_code": {
+      "path": "tools/shadowbench/cases/fetch_code.py",
+      "sha256": "e3838c0c2b09b01b7dd09740910b17c642a1755d5e10fb34743323ef2e99ae9f"
+    },
+    "tools.shadowbench.cases.generate": {
+      "path": "tools/shadowbench/cases/generate.py",
+      "sha256": "6fbefa273f1efe09cf7ac50e646d027b9fa01c191c358d40056ea5de21eb1289"
+    },
+    "tools.shadowbench.cases.mockserv": {
+      "path": "tools/shadowbench/cases/mockserv.py",
+      "sha256": "e19d0baca2205b919fbd18049fd2a85795cc075d0fc356581162e25c47debfe8"
+    },
+    "tools.shadowbench.cases.report": {
+      "path": "tools/shadowbench/cases/report.py",
+      "sha256": "d7f35ba04912f1146b42d8902d6ec6e7df38e7ca87b9e0399d34c08c5be20334"
+    },
+    "tools.shadowbench.cases.runner": {
+      "path": "tools/shadowbench/cases/runner.py",
+      "sha256": "3cec98b49f3f699c4a94eef157596269148914132e999ed2c187cd1f77cef8da"
+    },
+    "tools.shadowbench.cases.score": {
+      "path": "tools/shadowbench/cases/score.py",
+      "sha256": "d47055bb4235f46c3f51fe389c0ebaba8ea778b18aee77d610148b070bcf7835"
+    },
+    "tools.shadowbench.cases.stage": {
+      "path": "tools/shadowbench/cases/stage.py",
+      "sha256": "ec3a2d1c62841e2871b2c711416ed42f105480947fd682c7464c78c2755785f8"
+    },
+    "tools.shadowbench.cases.verify": {
+      "path": "tools/shadowbench/cases/verify.py",
+      "sha256": "ca43b4efda703590a218822b86ff64ac97dc6894c514339d2e586379fbd1733b"
+    },
+    "tools.shadowbench.estate": {
+      "path": "tools/shadowbench/estate/__main__.py",
+      "sha256": "b71d0b6d8a11adfdfaacf983df8b52f10c6794edf5e6800b37314fc957f826f3"
+    },
+    "tools.shadowbench.estate.adapters.agentsight_estate": {
+      "path": "tools/shadowbench/estate/adapters/agentsight_estate.py",
+      "sha256": "6d7ccafc91df983dce59ba887ff7185478a3ccd5ee07ae1383ebb05e8ee8d452"
+    },
+    "tools.shadowbench.estate.adapters.ai_infra_guard": {
+      "path": "tools/shadowbench/estate/adapters/ai_infra_guard.py",
+      "sha256": "4d6be76bd4e7704872699ab2ce427c4f8a3f46122dda5ed5648bd058bd373482"
+    },
+    "tools.shadowbench.estate.adapters.cisco_mcp_scanner": {
+      "path": "tools/shadowbench/estate/adapters/cisco_mcp_scanner.py",
+      "sha256": "7c5c55c8e34718cba433c0d30137e422b05c59062d98f04ef036dede08492c5b"
+    },
+    "tools.shadowbench.estate.adapters.code_wrappers": {
+      "path": "tools/shadowbench/estate/adapters/code_wrappers.py",
+      "sha256": "24370c469828b78379fa046cb2de121a15973f2dd007ffb81164872ea1516c88"
+    },
+    "tools.shadowbench.estate.adapters.common": {
+      "path": "tools/shadowbench/estate/adapters/common.py",
+      "sha256": "4a868f2b2f31617c0bd72e5f495b9baf86235f931ef29df7675132b06043afa9"
+    },
+    "tools.shadowbench.estate.adapters.mcp_scan": {
+      "path": "tools/shadowbench/estate/adapters/mcp_scan.py",
+      "sha256": "20a6221a989bfa7e6577aa26847c2f850f6fef67b256546a00c561d0fa6f5330"
+    },
+    "tools.shadowbench.estate.adapters.not_runnable": {
+      "path": "tools/shadowbench/estate/adapters/not_runnable.py",
+      "sha256": "9afd3238652e72ebc8ce2ef73860d9ecc78d686743ba636302dabe9abafec983"
+    },
+    "tools.shadowbench.estate.adapters.numbat": {
+      "path": "tools/shadowbench/estate/adapters/numbat.py",
+      "sha256": "c55884b81fb4ac21e6c50cc74343d2fc1aa9d352deef5d244a4717d1b3e5a2b1"
+    },
+    "tools.shadowbench.estate.adapters.registry": {
+      "path": "tools/shadowbench/estate/adapters/registry.py",
+      "sha256": "2c651dbb6cba9cfb7283c222bbb7aa5855311d8e14681a55a6219de18e24b9ce"
+    },
+    "tools.shadowbench.estate.adapters.shadowscan_estate": {
+      "path": "tools/shadowbench/estate/adapters/shadowscan_estate.py",
+      "sha256": "877410695c7f6baf7691aceecf99563863ee85c419131cda34a62caef9715cda"
+    },
+    "tools.shadowbench.estate.corpus": {
+      "path": "tools/shadowbench/estate/corpus.py",
+      "sha256": "f48cc95a9fbcf9bf129b86a94f93aa0273a8f391f46922b965663bf6a3aa0de4"
+    },
+    "tools.shadowbench.estate.report": {
+      "path": "tools/shadowbench/estate/report.py",
+      "sha256": "6da4bba3cb19452ed1c65b321185c24a9bedf27356c968d577728879e0a9afc8"
+    },
+    "tools.shadowbench.estate.runner": {
+      "path": "tools/shadowbench/estate/runner.py",
+      "sha256": "06cbc1bd9894e5f69a031a085d3dde2a50aaebeda37ac3a841c532b5ef39d5d1"
+    },
+    "tools.shadowbench.estate.score": {
+      "path": "tools/shadowbench/estate/score.py",
+      "sha256": "11d4569121f6596cc332705b8d1f4067fb1f6a66835d33b36e5b93b3de68b756"
+    },
+    "tools.shadowbench.estate.simhost": {
+      "path": "tools/shadowbench/estate/simhost.py",
+      "sha256": "f216a464cee76b5e3f9555bc922bb56cf49ef4ab111a7e2276930d10cf27a962"
+    },
+    "tools.shadowbench.estate.taxonomy": {
+      "path": "tools/shadowbench/estate/taxonomy.py",
+      "sha256": "860e756f73acce362ae8e7a1fe45ca915f02aca360ff9cd934f246accc5f57b4"
+    },
+    "tools.verify_migration": {
+      "path": "tools/verify_migration.py",
+      "sha256": "3cfc521898e9499d1d34f152a64f1071b89d1e6799c28ee229e2fc01e64f20d5"
+    }
+  },
+  "estate": {
+    "corpus": {
+      "control": 27,
+      "entities": 137,
+      "expected_by_surface": {
+        "cloud": 10,
+        "code": 23,
+        "endpoint": 19,
+        "gateway": 7,
+        "identity": 12,
+        "lowcode": 10,
+        "network": 6,
+        "runtime": 6,
+        "saas": 11
+      },
+      "expected_facts": 104,
+      "nearmiss": 23,
+      "positive": 87,
+      "registered": 4
+    },
+    "tool": {
+      "entity_level": {
+        "controls": 27,
+        "controls_flagged": 2,
+        "f1": 0.9326,
+        "fn": 4,
+        "fp": 8,
+        "nearmiss": 23,
+        "nearmiss_flagged": 6,
+        "negatives_not_reached": 0,
+        "negatives_unscored": 0,
+        "positives": 87,
+        "positives_detected": 83,
+        "positives_not_reached": 0,
+        "positives_unscored": 0,
+        "precision": 0.9121,
+        "recall": 0.954,
+        "tn": 42,
+        "tp": 83
+      },
+      "version": "0.1.2"
+    }
+  },
+  "migration_manifest_sha256": "a653569d7ad56d1b4b1e45faccd62844046744a6dec61365fd046c53479575ed",
+  "schema": 1,
+  "source_commit": "0792106b8d2cc09517f7f4ee2eeabf4f8eb8da2d",
+  "source_repository": "https://github.com/aisecnomad/Nexus-ShadowScan",
+  "sources": {
+    "cases": {
+      "path": "benchmarks/shadowbench/cases/results/2026-10-11/metrics.json",
+      "sha256": "c94c6e3ee787758b5a62a02bc0ab0b5de2dedc3e4bdc9287e56068f1a0a044a4"
+    },
+    "code": {
+      "path": "benchmarks/shadow-ai-discovery/results/2026-10-09/metrics.json",
+      "sha256": "b6554fa74af2afe0b6c0509efaf5a0fbda80a431a151bcf9938155c25372ab49"
+    },
+    "code_corpus": {
+      "path": "benchmarks/shadow-ai-discovery/corpus.json",
+      "sha256": "1b8c43c352acbfd231f331b58e2092f9b6770e65306bf6a663dc265b5561f067"
+    },
+    "estate": {
+      "path": "benchmarks/shadowbench/estate/results/2026-10-11/metrics.json",
+      "sha256": "7683524fdb91c2eceae37a2fad36d5dab4f38fb9fac446db20d5c7f1ab74a572"
+    }
+  }
+}

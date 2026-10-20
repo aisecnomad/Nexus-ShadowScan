@@ -50,6 +50,7 @@ WRITE_SCOPES = {
     ("scorecard.yml", "analysis"): {"security-events", "id-token"},
     ("release.yml", "attest"): {"attestations", "id-token"},
     ("release.yml", "publish"): {"id-token"},
+    ("release.yml", "release-assets"): {"contents"},
     ("docs.yml", "deploy"): {"pages", "id-token"},
     ("stale.yml", "stale"): {"issues", "pull-requests"},
     ("labels.yml", "sync"): {"issues"},
@@ -362,17 +363,21 @@ def _run_violations(workflow_name: str, workflow: dict[str, Any]) -> list[str]:
     return problems
 
 
-# Publication is a manual maintainer action (AGENTS.md). No workflow publishes a
+# Publication is a manual maintainer action (AGENTS.md). No workflow creates a
 # release, image or tag, and only one step uploads a package: the pinned
 # trusted-publishing action in release.yml's `publish` job, which runs only when
 # the maintainer dispatches it and approves its protected environment.
 # _release_publish_violations pins those gates; the same step anywhere else, or
-# any other upload command, is still a violation.
+# any other upload command, is still a violation. One separately approved,
+# opt-in helper attaches verified assets to an existing maintainer-created
+# release; _release_assets_violations pins that narrower write boundary.
 SANCTIONED_UPLOAD = ("release.yml", "publish")
 _TRUSTED_PUBLISH_ACTION = re.compile(r"pypa/gh-action-pypi-publish@[0-9a-f]{40}")
+_ASSET_UPLOAD = "python -m tools.release.assets --upload"
 _PUBLICATION = {
     "GitHub release": re.compile(
         r"\bgh\s+release\s+(?:create|upload|edit)\b|softprops/action-gh-release|ncipollo/release-action"
+        r"|\bpython -m tools\.release\.assets --upload\b"
     ),
     "package upload": re.compile(
         r"\btwine\s+upload\b|\b(?:uv|poetry|flit|hatch|pdm)\s+publish\b|pypi-publish"
@@ -401,7 +406,12 @@ def _without_sanctioned_upload(workflow_name: str, workflow: dict[str, Any], tex
     if len(uploads) != 1 or not _TRUSTED_PUBLISH_ACTION.fullmatch(uploads[0]):
         return text
     # One copy only: a second copy of the same step in another job stays a violation.
-    return text.replace(f"uses: {uploads[0]}", "", 1)
+    text = text.replace(f"uses: {uploads[0]}", "", 1)
+    assets = workflow["jobs"].get("release-assets", {})
+    scripts = [step.get("run", "") for step in assets.get("steps", [])]
+    if sum(script.count(_ASSET_UPLOAD) for script in scripts) == 1:
+        text = text.replace(_ASSET_UPLOAD, "", 1)
+    return text
 
 
 def _if_clauses(job: dict[str, Any]) -> set[str]:
@@ -473,6 +483,42 @@ def _release_publish_violations(workflow: dict[str, Any]) -> list[str]:
     return problems
 
 
+def _release_assets_violations(workflow: dict[str, Any]) -> list[str]:
+    """Only explicit dispatch can attach verified bytes to an existing release."""
+    problems = []
+    dispatch = _triggers(workflow).get("workflow_dispatch") or {}
+    option = (dispatch.get("inputs") or {}).get("attach_github_release") or {}
+    if option.get("type") != "boolean" or option.get("default") is not False:
+        problems.append("release assets: attachment must default to false")
+    job = workflow["jobs"].get("release-assets", {})
+    if _if_clauses(job) != {
+        "inputs.attach_github_release",
+        "inputs.publish == 'pypi'",
+        "github.ref == 'refs/heads/main'",
+    }:
+        problems.append("release assets: require explicit production dispatch on main")
+    if set(job.get("needs", [])) != {"publication-input", "publish"}:
+        problems.append("release assets: require successful protected publication")
+    if job.get("environment") != {"name": "pypi"}:
+        problems.append("release assets: require protected pypi approval")
+    if job.get("permissions") != {"contents": "write"}:
+        problems.append("release assets: grant contents write only")
+    steps = job.get("steps", [])
+    downloads = [step for step in steps if step.get("uses", "").startswith("actions/download-artifact@")]
+    if len(downloads) != 1 or downloads[0].get("with", {}).get("artifact-ids") != (
+        "${{ needs.publication-input.outputs.artifact_id }}"
+    ):
+        problems.append("release assets: download only this run's verified candidate")
+    scripts = [step.get("run", "") for step in steps if "run" in step]
+    expected = (
+        "python -m tools.release.assets --upload --directory publication-input "
+        '--repository "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID"'
+    )
+    if len(scripts) != 1 or " ".join(scripts[0].replace("\\\n", "").split()) != expected:
+        problems.append("release assets: only the reviewed verification/attachment helper may run")
+    return problems
+
+
 def _workflow_violations(path: Path) -> list[str]:
     """Every policy violation in one workflow file; empty when the file complies."""
     workflow = _load(path)
@@ -486,6 +532,7 @@ def _workflow_violations(path: Path) -> list[str]:
         *_run_violations(path.name, workflow),
         *_publication_violations(text),
         *(_release_publish_violations(workflow) if path.name == SANCTIONED_UPLOAD[0] else []),
+        *(_release_assets_violations(workflow) if path.name == SANCTIONED_UPLOAD[0] else []),
     ]
 
 
@@ -841,8 +888,8 @@ _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format 
         pytest.param(
             ".github/workflows/ci.yml",
             _replace(
-                "      - run: ruff check shadowscan tests tools benchmarks\n",
-                "      - run: ruff check shadowscan tests tools benchmarks\n        continue-on-error: true\n",
+                "      - run: ruff check shadowscan tests tools\n",
+                "      - run: ruff check shadowscan tests tools\n        continue-on-error: true\n",
             ),
             "sets continue-on-error",
             id="step-continue-on-error",
@@ -987,9 +1034,15 @@ _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format 
         ),
         pytest.param(
             ".github/workflows/release.yml",
-            _replace_last(
-                "artifact-ids: ${{ needs.publication-input.outputs.artifact_id }}",
-                "artifact-ids: ${{ needs.build.outputs.artifact_id }}",
+            _replace(
+                "artifact-ids: ${{ needs.publication-input.outputs.artifact_id }}\n"
+                "          path: publication-input\n"
+                "          digest-mismatch: error\n"
+                "      - name: Stage only",
+                "artifact-ids: ${{ needs.build.outputs.artifact_id }}\n"
+                "          path: publication-input\n"
+                "          digest-mismatch: error\n"
+                "      - name: Stage only",
             ),
             "only the attested publication-input artifact",
             id="publish-unassembled-artifact",
@@ -1125,7 +1178,7 @@ def test_ci_gate_waits_for_every_job_and_cannot_skip_failed_dependencies() -> No
     assert set(gate["needs"]) == set(jobs) - {"gate"}
     assert not any(job.get("continue-on-error") for job in jobs.values())
     assert not any(step.get("continue-on-error") for step in gate["steps"])
-    for name in ("docs", "test-macos", "test", "container-security"):
+    for name in ("docs", "test-macos", "test", "container-security", "benchmark-tests"):
         assert "if" not in jobs[name], f"{name} must always run"
     assert jobs["dco"]["if"] == "github.event_name == 'pull_request'"
     assert jobs["dco"]["uses"] == "./.github/workflows/dco.yml"
@@ -1177,6 +1230,7 @@ def test_ci_gate_executes_fail_closed(
             "TEST_RESULT": tests,
             "DCO_RESULT": dco,
             "CONTAINER_RESULT": "success",
+            "BENCHMARK_RESULT": "success",
         },
     )
     assert (result.returncode == 0) is passes, result.stdout + result.stderr
@@ -1329,10 +1383,34 @@ def test_ci_gate_blocks_unavailable_container_assurance(container: str) -> None:
             "TEST_RESULT": "success",
             "DCO_RESULT": "success",
             "CONTAINER_RESULT": container,
+            "BENCHMARK_RESULT": "success",
         },
     )
     assert result.returncode != 0
     assert "CONTAINER_RESULT" in result.stderr
+
+
+@pytest.mark.parametrize("benchmark", ["failure", "cancelled", "skipped", ""])
+def test_ci_gate_blocks_unavailable_benchmark_assurance(benchmark: str) -> None:
+    script = _load(GITHUB / "workflows" / "ci.yml")["jobs"]["gate"]["steps"][0]["run"]
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env={
+            **os.environ,
+            "EVENT_NAME": "pull_request",
+            "DOCS_RESULT": "success",
+            "MACOS_RESULT": "success",
+            "TEST_RESULT": "success",
+            "DCO_RESULT": "success",
+            "CONTAINER_RESULT": "success",
+            "BENCHMARK_RESULT": benchmark,
+        },
+    )
+    assert result.returncode != 0
+    assert "BENCHMARK_RESULT" in result.stderr
 
 
 def test_container_scan_uses_verified_tool_fresh_database_and_exact_image() -> None:
@@ -1972,10 +2050,12 @@ def test_workflows_do_not_publish_releases_packages_or_tags(path: Path) -> None:
 
 
 def test_the_sanctioned_upload_is_the_only_exemption() -> None:
-    """Without its one exemption, release.yml has exactly one package upload and nothing else."""
+    """Both manual uploads are explicit, scoped exemptions; release/tag creation stays forbidden."""
     text = (GITHUB / "workflows" / "release.yml").read_text(encoding="utf-8")
     violations = _publication_violations(text)
-    assert len(violations) == 1 and violations[0].startswith("package upload: `pypi-publish`"), violations
+    assert len(violations) == 2, violations
+    assert any(item.startswith("package upload: `pypi-publish`") for item in violations)
+    assert any(_ASSET_UPLOAD in item for item in violations)
 
 
 def test_release_workflow_uploads_only_through_the_gated_publish_job() -> None:
@@ -1989,6 +2069,46 @@ def test_release_workflow_uploads_only_through_the_gated_publish_job() -> None:
             assert name in {"attest", "publish"}
             assert not any(step.get("uses", "").startswith("actions/checkout@") for step in job["steps"])
     assert workflow["jobs"]["publication-input"]["permissions"] == {}
+
+
+@pytest.mark.parametrize(
+    "mutation", ["default", "if", "needs", "environment", "permissions", "artifact", "code"]
+)
+def test_release_asset_attachment_gates_reject_mutation(mutation):
+    workflow = _load(GITHUB / "workflows" / "release.yml")
+    assert not _release_assets_violations(workflow)
+    job = workflow["jobs"]["release-assets"]
+    if mutation == "default":
+        _triggers(workflow)["workflow_dispatch"]["inputs"]["attach_github_release"]["default"] = True
+    elif mutation == "if":
+        job["if"] = "github.ref == 'refs/heads/main'"
+    elif mutation == "needs":
+        job["needs"] = ["publication-input"]
+    elif mutation == "environment":
+        job.pop("environment")
+    elif mutation == "permissions":
+        job["permissions"]["id-token"] = "write"
+    elif mutation == "artifact":
+        next(step for step in job["steps"] if "download-artifact@" in step.get("uses", ""))["with"][
+            "artifact-ids"
+        ] = "${{ needs.build.outputs.artifact_id }}"
+    else:
+        next(step for step in job["steps"] if "run" in step)["run"] += "\ngh release create v0.1.3"
+    assert _release_assets_violations(workflow)
+
+
+def test_connector_inventory_workflow_has_no_write_identity_or_live_scan():
+    workflow = _load(GITHUB / "workflows" / "connector-inventory.yml")
+    assert _trigger_names(workflow) == {"schedule", "workflow_dispatch"}
+    assert workflow["permissions"] == {"contents": "read"}
+    assert list(workflow["jobs"]) == ["inventory"]
+    job = workflow["jobs"]["inventory"]
+    assert "permissions" not in job
+    assert _if_clauses(job) == {"github.ref == 'refs/heads/main'"}
+    script = "\n".join(step.get("run", "") for step in job["steps"])
+    assert "python -m tools.connector_inventory --check" in script
+    assert "shadowscan scan" not in script
+    assert not _publication_violations(script)
 
 
 _REVIEWED = "a" * 40

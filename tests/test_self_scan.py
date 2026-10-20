@@ -91,6 +91,17 @@ def test_the_configuration_scans_the_checkout_and_only_adds_exclusions() -> None
     assert (CONFIG.parent / connector["paths"][0]).resolve() == ROOT
 
 
+def test_optional_companion_is_out_of_scope_but_the_local_benchmark_guide_is_scanned() -> None:
+    assert "benchmark-suite" in _exclusions()
+    assert "benchmarks" not in _exclusions()
+    assert (ROOT / "benchmarks" / "README.md").is_file()
+    workflow = yaml.safe_load(_text(ROOT / ".github" / "workflows" / "ci.yml"))
+    assert "benchmark-tests" in workflow["jobs"]["gate"]["needs"]
+    steps = workflow["jobs"]["benchmark-tests"]["steps"]
+    assert any("python -m tools.benchmark_suite" in step.get("run", "") for step in steps)
+    assert any("python -m tools.benchmark_complexity" in step.get("run", "") for step in steps)
+
+
 def test_each_exclusion_is_a_plain_unique_path_with_a_reason_above_it() -> None:
     lines = _text(CONFIG).splitlines()
     exclusions = _exclusions()

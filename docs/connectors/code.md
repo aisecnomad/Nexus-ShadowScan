@@ -46,6 +46,13 @@ do not duplicate the generic Kubernetes/container signature.
 
 ## `code.filesystem`
 
+For a local pre-commit check, `shadowscan code --quick` scans exact changed Git
+index blobs rather than unstaged working-tree content. It is bounded, does not
+execute hooks or source, and cannot establish a repository inventory or resolve
+baseline findings. `--preflight` performs readiness checks without source
+analysis. See [staged-file checks](../operations/code-precommit.md) for scope,
+limits, exit codes, a pre-commit hook and incomplete-scan remediation.
+
 Optional `diff_base` (`shadowscan code PATH --diff-base REF`) accepts a local
 Git branch, tag, or revision. It scans the files committed between the merge
 base and HEAD, plus every dependency manifest, `.env*` file and coding-agent
@@ -643,7 +650,7 @@ Include=... />`, `<PackageReference Update=... />`) and project files whose
 `PackageReference` items carry no version of their own.
 
 Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
-`max_notebook_size`, `max_ast_nodes`, `agent_granularity`, `scan_secrets`, `strict_coverage`, `include_tests`, `profile`, `triage`, `use_git`, `label`. When using labeled `paths`, supply unique
+`max_notebook_size`, `max_ast_nodes`, `agent_granularity`, `scan_secrets`, `staged`, `strict_coverage`, `include_tests`, `profile`, `triage`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
 
 `profile: ci` (`--profile ci`) declares the coverage gaps a source gate accepts

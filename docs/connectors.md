@@ -1,5 +1,8 @@
 # Connectors
 
+For local staged-file hooks and readiness checks, see
+[pre-commit scans](operations/code-precommit.md).
+
 Code connector analysis includes bounded local tool-import and dispatcher
 resolution from already-read snapshots. Python dispatcher imports must be
 unconditional module-level bindings before use; JavaScript aliases substitute

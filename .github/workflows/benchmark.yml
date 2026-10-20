@@ -39,7 +39,14 @@ jobs:
         run: |
           python -m pip install --require-hashes --only-binary=:all: -r requirements-ci.lock -r requirements.lock
           python -m pip install --no-deps --no-build-isolation -e .
+      - name: Initialize and verify the exact companion revision
+        run: |
+          git submodule update --init --depth 1 -- benchmark-suite
+          python -m tools.benchmark_suite
+          cd benchmark-suite
+          python -m tools.verify_migration
       - name: Fetch the pinned corpus
+        working-directory: benchmark-suite
         env:
           GIT_TERMINAL_PROMPT: "0"
         run: |
@@ -49,6 +56,7 @@ jobs:
         run: |
           printf '{"tools": {"shadowscan": {"bin": "%s"}}}\n' "$(command -v shadowscan)" > "$RUNNER_TEMP/tools.json"
       - name: Run ShadowScan on the corpus
+        working-directory: benchmark-suite
         env:
           REPOS: ${{ inputs.repos }}
         run: |
@@ -59,6 +67,7 @@ jobs:
             --checkouts "$RUNNER_TEMP/corpus" --out "$RUNNER_TEMP/run" --only shadowscan \
             --workers 2 --timeout 1500 "${extra[@]}"
       - name: Score and compare with the committed baseline
+        working-directory: benchmark-suite
         env:
           REPOS: ${{ inputs.repos }}
         run: |

@@ -12,6 +12,29 @@ put credentials, tenant exports or exploit details in a public issue.
 
 ## Trust boundary
 
+See the [STRIDE threat model](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/security/threat-model.md)
+for boundary-specific threats, controls and residual risks, and the
+[published hardening log](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/history/consolidated-review-2026-09-24.md)
+for dated implementation evidence.
+
+```mermaid
+flowchart LR
+    U[Untrusted repositories, exports, API responses] --> B[Bounded parsers and confined readers]
+    C[Trusted operator configuration] --> E[Scanner engine]
+    B --> E
+    E --> R[Sanitization and coverage accounting]
+    R --> O[Sensitive reports and cache]
+    E --> H[Origin-bound HTTPS client]
+    H --> N[Remote provider APIs]
+    P[Explicitly allowlisted plugin] --> E
+    C --> P
+```
+
+The process boundary around a plugin controls its lifecycle, not its access to
+operator resources. A report remains sensitive after sanitization. Cloud SDKs
+have separate transports; use network-level egress controls where required.
+
+
 The operator workstation or CI runner, scanner configuration and installed Python
 packages are trusted. Third-party connector execution requires an exact-name
 allowlist in `options.plugins` or repeatable `--allow-plugin`. Listing connectors

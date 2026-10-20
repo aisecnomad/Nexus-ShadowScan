@@ -73,9 +73,9 @@ jobs:
         # lines may not grow, and the baseline may not allow more than the code has.
         # docs/testing.md says how to lower or, after review, raise it.
         run: python -m tools.complexity_gate
-      - run: ruff check shadowscan tests tools benchmarks
-      - run: ruff format --check shadowscan tests tools benchmarks
-      - run: mypy shadowscan tools benchmarks
+      - run: ruff check shadowscan tests tools
+      - run: ruff format --check shadowscan tests tools
+      - run: mypy shadowscan tools
       # The full suite without coverage tracing; the Linux coverage leg of the
       # test job enforces both coverage floors. The console entry point is used
       # on purpose: it must import the checkout-only tools packages.
@@ -167,9 +167,9 @@ jobs:
         # lines may not grow, and the baseline may not allow more than the code has.
         # docs/testing.md says how to lower or, after review, raise it.
         run: python -m tools.complexity_gate
-      - run: ruff check shadowscan tests tools benchmarks
-      - run: ruff format --check shadowscan tests tools benchmarks
-      - run: mypy shadowscan tools benchmarks
+      - run: ruff check shadowscan tests tools
+      - run: ruff format --check shadowscan tests tools
+      - run: mypy shadowscan tools
       # Audit installed dependencies; the editable scanner is unpublished source,
       # so querying its version on PyPI is not a dependency vulnerability check.
       - run: pip-audit --skip-editable --progress-spinner off
@@ -474,10 +474,43 @@ jobs:
           path: ${{ runner.temp }}/container-evidence/*
           if-no-files-found: error
           retention-days: 14
+  benchmark-tests:
+    # The optional companion stays outside ordinary scanner installs. Its
+    # exact gitlink is tested here, so extraction never drops harness coverage.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install the candidate scanner and locked test tools
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r requirements.lock -r requirements-ci.lock -r requirements-build.lock
+          python -m pip install --no-deps --no-build-isolation -e .
+      - name: Initialize only the pinned public companion
+        run: |
+          git -c submodule.benchmark-suite.url=https://github.com/aisecnomad/Nexus-ShadowBench.git submodule update --init --depth 1 -- benchmark-suite
+          python -m tools.benchmark_suite
+      - name: Preserve the moved harness complexity ratchet
+        run: python -m tools.benchmark_complexity
+      - name: Verify preserved inputs and test benchmark tooling
+        working-directory: benchmark-suite
+        run: |
+          set -euo pipefail
+          python -m tools.verify_migration
+          ruff check tests tools benchmarks
+          ruff format --check tests tools benchmarks
+          MYPYPATH=.. mypy tools benchmarks
+          git ls-files -z | xargs -0 python tools/check_secrets.py
+          python -m pytest -q -n auto --dist worksteal
+
   gate:
     name: CI gate
     if: always()
-    needs: [dco, docs, test-macos, test, container-security]
+    needs: [dco, docs, test-macos, test, container-security, benchmark-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
@@ -490,6 +523,7 @@ jobs:
           TEST_RESULT: ${{ needs.test.result }}
           DCO_RESULT: ${{ needs.dco.result }}
           CONTAINER_RESULT: ${{ needs.container-security.result }}
+          BENCHMARK_RESULT: ${{ needs.benchmark-tests.result }}
         run: |
           python - <<'PY'
           import os
@@ -500,6 +534,7 @@ jobs:
               'MACOS_RESULT': 'success',
               'TEST_RESULT': 'success',
               'CONTAINER_RESULT': 'success',
+              'BENCHMARK_RESULT': 'success',
           }
           if event == 'pull_request':
               expected['DCO_RESULT'] = 'success'

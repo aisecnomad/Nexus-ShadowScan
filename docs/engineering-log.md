@@ -26,6 +26,61 @@ Counts and figures quoted in an entry are those of its date.
   records stay strict: `CoverageGap` rejects an unknown reason at creation.
   Regression tests cover acceptance, the preserved slug, the still-strict
   write path and the still-refused forgeries.
+### Local scan usability, companion benchmarks and release evidence (October 20)
+
+Added `shadowscan code --quick` for bounded scans of exact staged Git blobs,
+without working-tree substitutions, hooks, filters or network access. The
+reported scope cannot establish repository-wide absence or resolve baseline
+findings. Links, conflicts, submodules and unread or over-budget staged content
+fail closed. Temporary or alternate Git indexes are refused before any Git
+read; the hook requires `git add` followed by plain `git commit`. The incremental
+cache does not reuse working-tree results for staged content. `--preflight` reports readiness in its own schema and explicitly
+states that no scan ran; an explicitly supplied empty signature index is now
+honored rather than replaced by a full signature load.
+
+Incomplete exits suggest category-specific remediation without echoing source
+content. The existing per-root coverage budget and parser/redaction bounds are
+unchanged. A normal small application completes; deliberately adversarial
+redaction/parser fixtures still make the unrestricted scanner checkout
+incomplete. The documented self-scan configuration declares those exclusions.
+The requested 500 ms cold-scan target remains unmet; measured results and the
+scope limitations are documented in the local pre-commit guide.
+Optional native signature-pack event parsing reduces a seven-process quick-scan
+median from 835 ms to 616 ms on the same local fixture. Python composition and
+construction retain all resource and duplicate-key checks, with the original
+parser as fallback. Six additional offline application/library examples
+complete under the unchanged defaults; they do not establish field reliability.
+
+Added offline terminal report browsing with literal, sanitized display, bounded
+input and unchanged incomplete status across filtering. The proposed 1.0 public
+Python facade and CLI/report contracts have behavioral regressions; the package
+remains alpha pending independent review and acceptance gates.
+
+The README is below 300 lines and the changelog summarizes releases. Detailed
+examples, detection matrices, benchmark disclosures and prior change entries
+remain on the documentation site with their consistency checks. The existing
+STRIDE threat model now includes a trust-boundary diagram; the dated September
+hardening log is published as historical, AI-assisted evidence.
+
+Benchmark corpora, harnesses, recorded results and their tests move to a public
+companion pinned by a Git submodule. Original bytes, Git blobs, modes and source
+revision are retained in a migration manifest. Core evaluation stays local;
+a required CI job validates and tests the exact companion pin. All 28 existing
+harness function-complexity ceilings are retained in a separate parent ratchet,
+with no increases. The documented self-scan excludes that separately tested
+companion, so it also completes in an ordinary uninitialized checkout; the
+local benchmark guide remains in scope. Historical results retain their original source/tool
+provenance and are not new runs.
+
+The release workflow can attach original Sigstore provenance/SBOM bundles and
+checksummed assets to an existing maintainer-created release after protected
+production publication. It verifies source, workflow, run, tag and asset digests,
+refuses mismatched existing assets and never creates a release or tag. A
+read-only weekly connector inventory tracks actual registry declarations,
+dependency locks, permission references and failure guidance. The sample
+Dockerfile uses a verified multi-platform image digest; the benchmark npm
+installer already uses its reviewed lock. The runtime lock carries the same
+aiohttp 3.14.5 advisory fix as the existing dependency/bug-fix PR.
 
 ### Correlation disclosure privacy, manifest-defect inventory retention and MCP URL precision (October 20)
 
@@ -4280,7 +4335,8 @@ That review is not independent human review.
 
 - `benchmarks/shadowbench/` and `tools/shadowbench/`: two benchmark tracks
   that measure shadow AI agent discovery across all nine surfaces, from #193
-  and #194 (`python -m tools.shadowbench {cases|estate} <command>`). #195
+  and #194 (the `tools.shadowbench` cases/estate entry point, now retained in
+  [the companion](https://github.com/aisecnomad/Nexus-ShadowBench/tree/main/tools/shadowbench)). #195
   landed them as `synthetic` and `estate`; the track it called `synthetic`
   is `cases` here, since both tracks are synthetic, and this entry describes
   both tracks after the review fixes below. The *cases* track generates

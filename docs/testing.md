@@ -217,11 +217,11 @@ reason the sweep's input cannot reach it.
 `make complexity` runs `python -m tools.complexity_gate`, which holds two measures to
 [`tools/complexity_baseline.json`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/complexity_baseline.json):
 
-- the McCabe complexity that ruff reports as `C901` for every function in `shadowscan/`, `tools/`
-  and `benchmarks/` with complexity above 15. A nested function counts into the function around
+- the McCabe complexity that ruff reports as `C901` for every function in `shadowscan/` and `tools/`
+  with complexity above 15. A nested function counts into the function around
   it, as in ruff, and a `noqa` comment does not hide a function from the gate;
 - the physical line count of every module of the `shadowscan` package above 2,000 lines.
-  The corpus and fixture modules under `tools/` and `benchmarks/` grow with their data, so only
+  The corpus and fixture modules under `tools/` grow with their data, so only
   their functions are held.
 
 The baseline lists what is already over a limit, each at its value today. Anything not listed
@@ -241,6 +241,25 @@ file it cannot parse, or a malformed baseline. It measures with the ruff in the 
 complexity is counted, the gate names the versions and `--update` or `--rebaseline` records the
 new counts. The names are qualified function names, so a function that is renamed or moved has to
 leave the baseline under its old name; it does not carry its room along.
+
+The moved harnesses retain a separate parent-side ratchet:
+`tools/benchmark_complexity_baseline.json` contains the 28 original harness
+ceilings extracted from source commit
+`0792106b8d2cc09517f7f4ee2eeabf4f8eb8da2d`, with no increases. After initializing
+the optional companion, run this from the main checkout:
+
+```bash
+python -m tools.benchmark_complexity
+```
+
+It verifies the exact companion gitlink before measuring the moved harness roots
+with the same C901 limit. Corpus artifacts remain excluded by the companion's
+reviewed Ruff configuration. It rejects new over-limit functions, increases and
+obsolete higher ceilings. `python -m tools.benchmark_complexity --update` only
+lowers or removes ceilings; it cannot authorize an increase. The required
+`benchmark-tests` CI job runs this check before the companion tests, so extracting
+the harnesses does not remove their complexity gate. The published companion
+files remain unchanged.
 
 ## What CI runs
 

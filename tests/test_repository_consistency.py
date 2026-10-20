@@ -275,18 +275,10 @@ def test_relative_markdown_links_and_anchors_resolve(markdown: Path) -> None:
 
 
 def test_markdown_checks_cover_benchmarks_but_not_the_frozen_estate() -> None:
-    """Benchmark READMEs and run reports are documentation; the estate's authored files are scan input."""
+    """Main checks its migration pointer; companion artifacts are outside the local docs gate."""
     checked = {path.relative_to(ROOT).as_posix() for path in _markdown_files()}
-    assert {
-        "benchmarks/README.md",
-        "benchmarks/shadowbench/README.md",
-        "benchmarks/shadowbench/cases/README.md",
-        "benchmarks/shadowbench/estate/README.md",
-        "benchmarks/shadowbench/estate/results/2026-10-11/REPORT.md",
-    } <= checked
-    frozen = {path.relative_to(ROOT).as_posix() for path in _FROZEN_MARKDOWN.rglob("*.md")}
-    assert frozen, "the estate's authored Markdown moved; point _FROZEN_MARKDOWN at it"
-    assert not frozen & checked
+    assert "benchmarks/README.md" in checked
+    assert not any(path.startswith("benchmark-suite/") for path in checked)
 
 
 _REPOSITORY_LINK = re.compile(
@@ -691,6 +683,10 @@ _CI_WORDS = re.compile(r"\b(?:CI|jobs?|runners?|matrix|workflows?|legs?|tests?|t
 # Spans that record an earlier interpreter set on purpose, and why.
 _DATED_INTERPRETER_SPANS = {
     ("docs/assurance-results.md", "3.11/3.12"): "the CI matrix when that dated result was recorded",
+    (
+        "docs/reference/product-guide.md",
+        "3.11–3.13",
+    ): "the published PyPI 0.1.2 release, moved with its versioned install instructions",
     ("README.md", "3.11–3.13"): "the published PyPI 0.1.2 release, whose metadata excludes Python 3.14",
     ("docs/getting-started/install.md", "3.11–3.13"): "the published PyPI 0.1.2 release, not current source",
 }
@@ -1337,10 +1333,12 @@ def test_secret_check_runs_on_the_same_files_in_the_hook_and_ci() -> None:
         for step in job.get("steps") or []
         if "tools/check_secrets.py" in str(step.get("run", ""))
     ]
-    assert len(steps) == 1, "CI must run the secret check exactly once per test job"
-    lines = [line.strip() for line in steps[0]["run"].splitlines()]
-    assert lines[0] == "set -euo pipefail", "a failed `git ls-files` must fail the step"
-    assert "git ls-files -z | xargs -0 python tools/check_secrets.py" in lines
+    assert len(steps) == 2, "CI must check the scanner and pinned companion independently"
+    assert {step.get("working-directory", ".") for step in steps} == {".", "benchmark-suite"}
+    for step in steps:
+        lines = [line.strip() for line in step["run"].splitlines()]
+        assert lines[0] == "set -euo pipefail", "a failed `git ls-files` must fail the step"
+        assert "git ls-files -z | xargs -0 python tools/check_secrets.py" in lines
 
 
 def test_pre_commit_hooks_select_files_with_types_or() -> None:
@@ -1880,7 +1878,9 @@ def test_documented_csv_markers_match_the_reporter() -> None:
         for paragraph in _paragraphs(path)
         if "csv" in paragraph.lower() and "`'`" in paragraph
     ]
-    assert any(path.name == "README.md" for path, _ in claims), "README should describe the CSV markers"
+    assert any(path.name == "product-guide.md" for path, _ in claims), (
+        "Product guide should describe the CSV markers"
+    )
     for path, paragraph in claims:
         missing = [name for name in names if name not in paragraph]
         assert not missing, f"{_relative(path)} describes CSV markers without the separators {missing}"
@@ -2121,7 +2121,7 @@ _DEMO_ROW = re.compile(r"^ ([A-Z]+) +(\d+)  (\S+) +(\S+) +(\S+) +(.+?)\s*$", re.
 
 def test_readme_demo_output_matches_the_offline_demo(index) -> None:
     """The README's abridged example is the current result of the bundled offline demo."""
-    readme = _read(ROOT / "README.md")
+    readme = _read(ROOT / "docs/reference/product-guide.md")
     start = readme.index(_DEMO_COMMAND)
     block = readme[start : readme.index("```", start)]
     max_rows = int(block[len(_DEMO_COMMAND) :].split(None, 1)[0])
@@ -2187,7 +2187,7 @@ def test_readme_sarif_excerpt_is_the_first_result_of_the_offline_demo(index) -> 
     """The README's abridged SARIF result is current output of the demo the CLI example shows."""
     from shadowscan.reporters.sarif import render_sarif
 
-    readme = _read(ROOT / "README.md")
+    readme = _read(ROOT / "docs/reference/product-guide.md")
     start = readme.index("The same scan as SARIF")
     fence = readme.index("```json\n", start) + len("```json\n")
     excerpt = json.loads(readme[fence : readme.index("```", fence)])
@@ -2204,7 +2204,7 @@ def test_readme_detection_matrix_is_current() -> None:
     assert replace_block(text, render()) == text, "README detection matrix is stale; run `make readme-matrix`"
 
 
-_BENCHMARKS = ROOT / "benchmarks"
+_BENCHMARK_EVIDENCE = ROOT / "tools" / "benchmark_evidence.json"
 
 
 def _percentages(level: dict[str, Any]) -> str:
@@ -2220,16 +2220,16 @@ def _readme_section(readme: str, heading: str) -> str:
 
 def test_readme_benchmark_table_quotes_the_committed_results() -> None:
     """Every number in the README benchmark table comes from the committed metrics files."""
-    readme = _read(ROOT / "README.md")
+    readme = _read(ROOT / "docs/reference/product-guide.md")
     section = _readme_section(readme, "## Benchmarks")
+    evidence = json.loads(_BENCHMARK_EVIDENCE.read_text(encoding="utf-8"))
     estate_run = "shadowbench/estate/results/2026-10-11"
-    estate_metrics = json.loads((_BENCHMARKS / estate_run / "metrics.json").read_text(encoding="utf-8"))
-    corpus, tool = estate_metrics["corpus"], estate_metrics["tools"]["shadowscan"]
+    corpus, tool = evidence["estate"]["corpus"], evidence["estate"]["tool"]
     entity = tool["entity_level"]
     negatives = corpus["control"] + corpus["nearmiss"]
     assert entity["fp"] + entity["tn"] == negatives
     estate = [
-        f"blob/main/benchmarks/{estate_run}/REPORT.md",
+        f"/benchmarks/{estate_run}/REPORT.md",
         f"(2026-10-11, {tool['version']})",
         f"{corpus['entities']} authored vendor-format entities",
         f"{corpus['positive']} positive, {corpus['control']} control, {corpus['nearmiss']} near-miss",
@@ -2238,23 +2238,14 @@ def test_readme_benchmark_table_quotes_the_committed_results() -> None:
         f"{entity['fp']} of {negatives} controls and near-misses flagged",
     ]
     code_run = "shadow-ai-discovery/results/2026-10-09"
-    code_metrics = json.loads((_BENCHMARKS / code_run / "metrics.json").read_text(encoding="utf-8"))
-    corpus, tool = code_metrics["corpus"], code_metrics["tools"]["shadowscan"]
+    corpus, tool = evidence["code"]["corpus"], evidence["code"]["tool"]
     repos = tool["repo_level"]
     # An incomplete run left content unread, so its clean control or near-miss
     # is not a clean result and the README has to say how many there were.
-    labels = {
-        entry["id"]: entry["class"]
-        for entry in json.loads(
-            (_BENCHMARKS / "shadow-ai-discovery" / "corpus.json").read_text(encoding="utf-8")
-        )["repos"]
-    }
-    incomplete_negatives = sum(
-        labels[repo] in {"control", "nearmiss"} for repo in tool["incomplete_runs"]["repos"]
-    )
+    incomplete_negatives = evidence["code"]["incomplete_negatives"]
     assert incomplete_negatives
     code = [
-        f"blob/main/benchmarks/{code_run}/REPORT.md",
+        f"/benchmarks/{code_run}/REPORT.md",
         f"(2026-10-09, {tool['version']})",
         f"{corpus['repos']} public repositories pinned by SHA",
         f"{corpus['positive']} positive, {corpus['control']} control, {corpus['nearmiss']} near-miss",
@@ -2279,7 +2270,7 @@ def test_readme_estate_row_says_when_the_labels_were_frozen() -> None:
     estate protocol froze them after a label-completeness audit in which every runnable tool
     ran once (the run report already says so).
     """
-    readme = _read(ROOT / "README.md")
+    readme = _read(ROOT / "docs/reference/product-guide.md")
     section = " ".join(_readme_section(readme, "## Benchmarks").split())
     assert "frozen before any tool ran" not in section
     assert "label-completeness pass in which every runnable tool ran once" in section
@@ -2293,11 +2284,9 @@ def test_estate_benchmark_documents_say_later_shadowscan_runs_are_in_sample() ->
     the changelog entry for those rules, has to say so, and the benchmark-derived note-taker
     recognition is marked as such.
     """
-    readme = _read(ROOT / "README.md")
+    readme = _read(ROOT / "docs/reference/product-guide.md")
     documents = {
         "README.md": _readme_section(readme, "## Benchmarks"),
-        "benchmarks/shadowbench/README.md": _read(ROOT / "benchmarks/shadowbench/README.md"),
-        "benchmarks/shadowbench/estate/README.md": _read(ROOT / "benchmarks/shadowbench/estate/README.md"),
     }
     unstated = [name for name, text in documents.items() if "in-sample" not in " ".join(text.split())]
     assert not unstated, f"no in-sample disclosure for later ShadowScan estate runs in {unstated}"
@@ -2420,12 +2409,35 @@ def _runnable(module: str) -> bool:
     return spec is not None
 
 
-def _module_problem(module: str) -> str | None:
+def _module_problem(module: str, *, companion: bool = False) -> str | None:
     if not all(part.isidentifier() for part in module.split(".")):
         return "is not a module name"
+    if companion and module.partition(".")[0] in {"tools", "benchmarks"}:
+        evidence = json.loads(_BENCHMARK_EVIDENCE.read_text(encoding="utf-8"))
+        if module not in evidence["companion_modules"]:
+            return "is not a declared module of the pinned companion"
+        return None
     if module.partition(".")[0] in _FIRST_PARTY and not _runnable(module):
         return "is not a runnable module in this checkout"
     return None
+
+
+def _companion_command_lines(text: str) -> set[int]:
+    """Only an explicit `cd benchmark-suite` in the same code block changes command roots."""
+    selected: set[int] = set()
+    fenced = companion = False
+    for number, line in enumerate(text.splitlines(), 1):
+        if _FENCE.match(line.strip()):
+            fenced = not fenced
+            companion = False
+        elif fenced:
+            if line.strip() == "cd benchmark-suite":
+                companion = True
+            elif line.strip().startswith("cd "):
+                companion = False
+            if companion:
+                selected.add(number)
+    return selected
 
 
 def test_documented_python_modules_are_read_from_code_only() -> None:
@@ -2459,8 +2471,19 @@ def test_documented_python_modules_are_read_from_code_only() -> None:
         "shadowscan.",
         "tools.no_such_tool",
         "shadowscan.signatures.validat",
+        "benchmarks.sab_realworld",
         "benchmarks.sab_realworl",
     ]
+    assert _module_problem("benchmarks.sab_realworld", companion=True) is None
+    assert _module_problem("benchmarks.sab_realworl", companion=True) is not None
+
+
+def test_companion_commands_require_an_explicit_checkout_root() -> None:
+    text = "```bash\ncd benchmark-suite\npython -m tools.verify_migration\n```\n"
+    assert _companion_command_lines(text) == {2, 3}
+    assert _companion_command_lines("`python -m tools.verify_migration`") == set()
+    assert _module_problem("tools.verify_migration") is not None
+    assert _module_problem("tools.verify_migration", companion=True) is None
 
 
 def test_documented_python_modules_exist() -> None:
@@ -2474,7 +2497,17 @@ def test_documented_python_modules_exist() -> None:
         f"{_relative(path)}:{number}: {module} {problem}"
         for path in _markdown_files()
         for number, module in _python_modules(_read(path))
-        if (problem := _module_problem(module)) is not None
+        if (
+            problem := _module_problem(
+                module,
+                companion=number in _companion_command_lines(_read(path))
+                or (
+                    path.is_relative_to(ROOT / "archive")
+                    and module in json.loads(_BENCHMARK_EVIDENCE.read_text())["companion_modules"]
+                ),
+            )
+        )
+        is not None
     ]
     assert not problems, "documented `python -m` commands that cannot run:\n" + "\n".join(problems)
 
