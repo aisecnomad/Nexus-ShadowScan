@@ -118,6 +118,23 @@ def test_large_local_groups_keep_conflicting_and_partial_scopes_separate():
     assert all("related" not in entry.metadata for entry in group)
     assert all("related_truncation" in entry.metadata for entry in group)
     assert all("partial scopes" in entry.metadata["related_truncation"][0]["limitation"] for entry in group)
+    # The truncation token is salted per scope partition and equals that
+    # partition's membership token, so per-tenant report slices cannot be
+    # joined on identifier equality across conflicting scopes (#268). Members
+    # outside an exact partition disclose the omission alone: no token, no
+    # count that spans other scopes.
+    for index in range(3):
+        entries = group[index * 26 : (index + 1) * 26]
+        for entry in entries:
+            [omission] = entry.metadata["related_truncation"]
+            assert omission["identifier_group_id"] == entry.metadata["related_groups"][0]["group_id"]
+            assert omission["group_size"] == 26
+    tokens = {entry.metadata["related_truncation"][0]["identifier_group_id"] for entry in group[:78]}
+    assert len(tokens) == 3
+    for entry in group[78:]:
+        [omission] = entry.metadata["related_truncation"]
+        assert "identifier_group_id" not in omission
+        assert "group_size" not in omission
 
 
 def test_large_entra_group_still_requires_tenant_scope():

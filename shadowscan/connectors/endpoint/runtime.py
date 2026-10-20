@@ -48,14 +48,37 @@ _MAX_LABEL = 160
 _MAX_TOOLS = 500
 _MAX_OTEL_SPANS = 100_000
 # Base tool-poisoning rules. They match anywhere in a description, so they
-# also tag documentation URLs, tool references and quoted or prohibited
-# wording; the sentence audit below is additional, zero-weight signal and
-# never removes this tag.
+# also tag tool references and quoted or prohibited wording; the sentence
+# audit below is additional, zero-weight signal and never removes this tag.
+# An ordinary reference URL alone is not an instruction: it stays a separately
+# explained zero-weight indicator (#214) and never establishes the tag, while
+# a model-provider API host still does through _HOST below.
 _POISONING = re.compile(
     r"<\s*IMPORTANT\s*>|ignore\s+(?:all\s+)?(?:previous|prior)\s+instructions|"
-    r"(?:exfiltrat|send|forward)\w*\s+(?:the\s+)?(?:data|secret|credential|prompt)|https?://",
+    r"(?:exfiltrat|send|forward)\w*\s+(?:the\s+)?(?:data|secret|credential|prompt)",
     re.IGNORECASE,
 )
+_EXTERNAL_URL = re.compile(r"https?://", re.IGNORECASE)
+
+
+def _note_external_url(finding: Finding, desc: str) -> None:
+    """Zero-weight contextual note: a reference URL alone is not poisoning (#214)."""
+    if not _EXTERNAL_URL.search(desc):
+        return
+    finding.add_evidence(
+        Evidence(
+            signal="instruction:external-url",
+            description=(
+                "Tool description contains an external URL; a reference URL alone "
+                "is contextual and does not establish poisoning"
+            ),
+            location="description",
+            weight=0.0,
+            attributes={"category": "static-instruction-audit", "rule": "external-url"},
+        )
+    )
+
+
 # Invisible and bidirectional control characters, the set skill_audit treats
 # as invisible: zero-width and directional marks, embeddings and overrides,
 # word joiner and invisible operators, isolates, BOM and tag characters.
@@ -780,6 +803,7 @@ class MCPInventoryConnector(_EndpointConnector):
                         attributes={"category": "static-instruction-audit", "rule": "terminal-escape"},
                     )
                 )
+            _note_external_url(finding, desc)
             yield finding
 
     # ------------------------------------------------------------ A2A cards
