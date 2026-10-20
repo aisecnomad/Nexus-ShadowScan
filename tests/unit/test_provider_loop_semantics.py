@@ -600,3 +600,73 @@ def test_modular_provider_loop_corpus_regressions(tmp_path, run_connector, case_
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
     assert not ctx.stats.incomplete, ctx.stats.errors
     assert any(finding.kind == Kind.AGENT and signature in finding.frameworks for finding in findings)
+
+
+@pytest.mark.parametrize(
+    "limited,incomplete",
+    [("worker.unrelated", False), ("worker.tools", True)],
+    ids=["unrelated-import", "selected-dispatcher"],
+)
+def test_dispatch_limits_are_raised_only_for_the_selected_dispatcher(
+    tmp_path, run_connector, monkeypatch, limited, incomplete
+):
+    from shadowscan.connectors.code import python_dispatch
+
+    fixture = Path(__file__).parents[1] / "fixtures/code/provider_dispatch_imports/worker/tools.py"
+    (tmp_path / "worker").mkdir()
+    (tmp_path / "worker/tools.py").write_text(fixture.read_text())
+    (tmp_path / "worker/unrelated.py").write_text("def helper(value):\n    return value\n")
+    resolver = python_dispatch.PythonDispatches.resolver
+
+    def limited_resolver(self, project, consumer_rel=""):
+        resolve = resolver(self, project, consumer_rel)
+
+        def checked(module, symbol):
+            if module == limited:
+                raise python_dispatch.DispatchLimitError("Python dispatch source inventory budget exceeded")
+            return resolve(module, symbol)
+
+        return checked
+
+    monkeypatch.setattr(python_dispatch.PythonDispatches, "resolver", limited_resolver)
+    source = DISPATCH_LOOP.replace("import json\n", "import json\nfrom worker.unrelated import helper\n", 1)
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert ctx.stats.incomplete is incomplete, ctx.stats.errors
+    errors = [error for error in ctx.stats.errors if "dispatch source inventory budget" in error]
+    if incomplete:
+        # Fail closed where the verdict matters: the consumer is named.
+        assert errors and all("app.py" in error for error in errors)
+    else:
+        assert not errors
+        agents = [finding for finding in findings if finding.kind == Kind.AGENT]
+        assert len(agents) == 1
+
+
+@pytest.mark.parametrize(
+    "sdk_import,queued",
+    [("import litellm\n", False), ("from openai import OpenAI\n", True)],
+    ids=["litellm-only", "openai"],
+)
+def test_only_loop_request_sdks_queue_nested_dispatch_consumers(
+    tmp_path, run_connector, monkeypatch, sdk_import, queued
+):
+    from shadowscan.connectors.code import file_scan
+
+    monkeypatch.setattr(file_scan, "MAX_PENDING_FILES", 0)
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg/helpers.py").write_text("def run(name, args):\n    return name, args\n")
+    (tmp_path / "pkg/service.py").write_text(f"{sdk_import}from pkg.helpers import run\nrun('a', {{}})\n")
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    errors = [error for error in ctx.stats.errors if "re-export source budget exceeded" in error]
+    assert bool(errors) is queued, ctx.stats.errors
+    assert ctx.stats.incomplete is queued, ctx.stats.errors
+
+
+def test_nested_consumer_predicate_tracks_loop_requests():
+    from shadowscan.connectors.code import provider_evidence
+
+    # The queue exists only for requests provider_tool_loop_lines understands.
+    assert {"provider.openai", "provider.anthropic"} == provider_evidence.LOOP_REQUEST_SIGNATURES
+    assert {signature for signature, _ in provider_evidence._LOOP_REQUESTS.values()} == (
+        provider_evidence.LOOP_REQUEST_SIGNATURES
+    )
