@@ -10,604 +10,6 @@ data. Redaction reduces accidental disclosure; it does not make reports public.
 [Supported versions](#supported-versions) which versions receive fixes. Never
 put credentials, tenant exports or exploit details in a public issue.
 
-## Trust boundary
-
-The operator workstation or CI runner, scanner configuration and installed Python
-packages are trusted. Third-party connector execution requires an exact-name
-allowlist in `options.plugins` or repeatable `--allow-plugin`. Listing connectors
-does not import plugin code. The allowlist is not a sandbox: an approved plugin
-runs with scanner privileges. A spawned plugin worker is started without the
-credential-shaped environment variables exported for the built-in connectors
-(`*_TOKEN`, `*_SECRET`, `*_KEY`, `*_PASSWORD`, `*_PAT`, connection strings,
-webhook URLs and URLs that carry a password, the CI, cloud SDK and package
-tooling credential variables; the
-[plugin contract](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/connectors.md#third-party-plugin-execution)
-lists them)
-unless `options.plugin_env` names them, so they are neither in its
-environment (`os.environ`, on Linux `/proc/self/environ`) nor in that of the
-programs it starts; a thread-mode plugin shares the scanner's environment. This
-keeps credentials from a plugin that does not look for them, not from one that
-does. Process mode is lifecycle isolation, not a sandbox: the worker runs as the
-scanner's user, so a plugin can still read its parent's environment, every
-withheld variable and `SHADOWSCAN_IDENTITY_KEY` included, from
-`/proc/<ppid>/environ` on Linux (other systems have equivalents), and every file
-that user can read. Pass the built-in connectors' credentials through files
-(such as the cloud SDKs' credential files) or a secrets manager rather than
-exported variables, which keeps them out of the environment the scanner and
-every program it starts carry; a plugin running as the scanner's user can
-still read a file the scanner can. To keep a credential from an untrusted
-plugin, run that plugin under a separate user or in a separate container, in a
-scan job that does not hold the credential. Built-in connector names cannot be
-replaced.
-
-Remote responses, scanned repositories and offline exports are untrusted inputs.
-Review signature packs before installation. Built-in signature IDs are reserved
-unless `options.allow_signature_override` / `--allow-signature-override` explicitly
-permits replacement. Directory walks do not follow signature/inventory symlinks.
-
-Use dedicated read-only audit credentials and narrowly scoped inventory approvals.
-
-CSV inventory approval identities preserve embedded line separators in quoted
-fields. Imported finding evidence is type-checked before postprocessing, and
-malformed cache entries are discarded in favor of a fresh scan. Provider error
-envelopes and malformed collection flags must not establish complete empty
-coverage, even when a response includes an empty collection field.
-
-## Implemented controls and limits
-
-* Gateway inventory reconciliation requires authenticated caller-field
-  assurance before an exact card binding grants registration or ownership.
-  Operator-asserted and unverified names remain review candidates, without
-  registration risk credit. Provider-field assurance still depends on the log
-  producer's integrity and the supplied export's provenance; the scanner does
-  not authenticate an offline export merely by parsing it.
-* Make blueprint and Zapier pagination metadata are validated before collection
-  can be considered complete. CODEOWNERS reads remain anchored to the source
-  scan's directory descriptor. A root replacement detected before ownership
-  lookup makes the scan incomplete; later replacements cannot redirect reads.
-* Optional filesystem model/artifact inspection uses confined regular-file
-  access, file identity checks and bounded metadata reads. It never executes
-  packaged code, unpickles objects, loads tensor data or follows ONNX external
-  data references. A recognized format is inventory evidence, not a working
-  model or an agent. Lockfile parsing never runs a package manager.
-* Optional Linux runtime inspection reads bounded maps and descriptor-link
-  metadata and, separately, allowlisted environment key names. It never opens
-  descriptor targets or `/proc/<pid>/mem`, and environment values and mapped
-  paths are not retained. PID namespace/start identity checks reject changed
-  observations; denied or truncated selected inspection remains incomplete.
-  These observations cannot establish arbitrary memory-only Python execution.
-* MCP/skill instruction review is static and bounded. It emits fixed heuristic
-  explanations and locations, not a safety verdict, and never launches a
-  discovered server, invokes a described tool or follows a supplied URL.
-  Zeek JA4 ingestion and temporal DNS attribution likewise operate solely on
-  supplied records; neither introduces live capture or DNS queries.
-* Source and manifest inputs are decoded from UTF-8, from UTF-16 or UTF-32
-  with a byte-order mark, and for Python from the declared PEP 263 codec. An
-  analyzed file with binary or undecodable content (dense NUL bytes, mostly invalid
-  UTF-8; in other text, invalid bytes are replaced and noted while no 8 KiB window
-  has more than four replaced characters and more than 10% of the window, and a
-  few stray NUL bytes in large valid UTF-8 text are noted; names are matched
-  without them, and a source file whose lexing differs with and without them
-  is incomplete), or whose declared codec
-  does not read ASCII as ASCII (UTF-16 or UTF-32 without a byte-order mark,
-  UTF-7, EBCDIC), leaves coverage incomplete;
-  ordinary binary assets are not text evidence. IAM wildcard and
-  agent-definition front-matter matching shares the bounded matcher budget;
-  keep an external worker/job deadline for hard isolation.
-* Shared `HttpClient` requests require HTTPS without embedded credentials, and
-  a URL containing a backslash is refused (it reads as one host to the URL
-  parser and another to the transport). A credentialed endpoint taken from a
-  remote response is also matched against an exact host, not a hostname suffix.
-  Redirects and pagination stay on the configured origin. By default, private,
-  loopback, link-local, metadata and other non-global addresses are rejected.
-  The HTTPS adapter checks the addresses at connection time and connects directly
-  to the checked address, retaining hostname TLS verification. A trusted private
-  API requires `allow_private_origin: true` on its connector,
-  `options.allow_private_origin: true` (every connector) or
-  `--allow-private-origin`; `--deny-private-origin` refuses that grant for
-  every connector, connector-level grants included. It does not revoke
-  `options.allow_instance_credentials`: under that opt-in cloud connectors
-  still contact the instance metadata service, and the `cloud.gcp` credential
-  transport accepts a private token endpoint. Pass `--deny-instance-credentials`
-  as well to keep cloud connectors off both.
-  This exception does not relax origin or TLS checks. HTTP proxies, including
-  environment proxy settings, are unsupported by this transport.
-* The shared HTTPS adapter bounds response acquisition, including status/header
-  delivery, separately from body reads. Cancellation interrupts the active socket
-  before it can be pooled for another request. System DNS resolution runs in a
-  bounded worker: the resolver call itself cannot be cancelled, but each wait
-  fails closed at its budget, at most 20 seconds, and a late result is
-  discarded before any connection. At connection the client timeout and the
-  acquisition deadline tighten the budget. The `validate_url` preflight is
-  tightened by the connector deadline and, for `HttpClient` requests, by the
-  client timeout and the client's deadline; its other callers (Git clone
-  checks, SDK, MCP registry and JWKS preflights) and the clone pin lookup get
-  only the connector deadline. A spent budget refuses without starting a
-  lookup, and at most 32 lookups wait on the resolver at once; further ones
-  fail closed once their budget passes without a free slot. A stalled resolver
-  therefore holds a worker for a bounded time and cannot pile up threads. A
-  process/job supervisor remains necessary for a hard execution limit,
-  including external SDK transports.
-* Default shared HTTP responses and JSON/pagination helpers are limited to 16 MiB
-  of decoded bytes, and each body must arrive within twice the client timeout
-  (60 seconds by default). Oversized, slow and malformed collection responses
-  fail collection, which marks the scan incomplete; a partial body is never
-  analyzed.
-  Explicit raw streaming callers are responsible for bounded reads and closure.
-  Injected Requests sessions have their adapters replaced by destination policy.
-  GitLab source-file downloads have a stricter 512 KB (512,000 bytes) per-file cap.
-* Configured header values are validated before any request is built; a value
-  with control characters (typically a secret file's trailing newline) fails
-  without being echoed. The Okta `SSWS` scheme is redacted like `Bearer` and
-  `Basic`, and known configuration values are also redacted in their
-  `repr()`-escaped spelling, which library errors use.
-* Connector warning/error log events contain fixed summaries, never diagnostic
-  payloads or exception arguments. Bounded, sanitized diagnostic details remain
-  in the scan report; treat reports as sensitive operational artifacts because
-  arbitrary upstream text can contain data beyond recognized secret formats.
-  An unexpected connector or repository failure raised inside third-party code
-  (an SDK or a plugin) is reported by exception type only.
-  Shared HTTP retry warnings and HTTP errors retain only a validated HTTPS
-  origin and status. Paths, userinfo, queries and fragments are omitted;
-  malformed URL diagnostics use fixed messages rather than parser exception text.
-  Opaque `api_token`, `foundry_token`, and `github_token` values, including the
-  `GH_TOKEN` fallback, are sensitive.
-  Diagnostic sanitization preserves credential context across errors, warnings
-  and skip reasons; JSON publication also checks connector statistics together.
-* Live collectors assign record classification and collection scope after
-  copying provider fields. Provider data cannot replace these local provenance
-  fields. Offline exports remain untrusted operator-supplied records and do not
-  authenticate the declared collection scope.
-* Code/cloud credential evidence uses domain-separated HMAC pseudonyms under
-  one private key per Engine scan. `SHADOWSCAN_IDENTITY_KEY` supplies an optional
-  stable key (at least 32 random bytes, hex/base64); it is never exported or
-  cached. Direct library calls use an ephemeral process key. Without a stable
-  key, credential-bearing results are rescanned rather than replaying cached
-  pseudonyms. Key rotation invalidates cache reuse and collection comparability.
-  Resource finding IDs remain stable. Old public credential digests and private
-  legacy gateway binding mappings remain sensitive; see the
-  [credential evidence migration](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production-migrations.md#credential-evidence-identity-migration).
-* `options.connector_timeout_seconds` / `--connector-timeout-seconds` defaults
-  to a 120-second cooperative completion deadline. Late connector results are
-  discarded and coverage is incomplete. Legacy `connector_timeout` /
-  `--connector-timeout` remain compatibility aliases; legacy YAML null uses the
-  default. Python cannot forcibly interrupt blocked threads: calls may outlive
-  `Engine.run()`. The CLI writes an incomplete report and exits without joining
-  an abandoned worker once timeout handling returns. A filesystem replacement
-  already in progress can finish after the timeout report; a cache or record
-  file from a timed-out connector is unaccepted even if it exists. Record export
-  manifests mark these entries `exported: false`. Embedded callers still need a
-  process supervisor; worker concurrency remains bounded. Enforce an external
-  process or job deadline when a hard runtime limit is needed.
-* Azure App Service settings and OCI Function configuration are exported under
-  `environment`, so record dumps redact every value; Salesforce token
-  values are never requested.
-* Cloud SDKs and Git use separate transports. A clone is pinned to the addresses
-  ShadowScan resolved and checked (`http.curloptResolve`, proxy variables
-  ignored), so Git does not resolve the clone host again; the cloud SDKs get no
-  such pin. Network egress rules remain needed for those paths.
-  Custom non-Requests transport doubles remain trusted extension/test mechanisms.
-* JWT classification remains unverified by default. Optional `jwks_url` signature
-  verification uses the shared transport with a bounded JWKS body and key count.
-  Only allowlisted asymmetric algorithms and unambiguous eligible public keys
-  are accepted. Symmetric and private keys are rejected. `allowed_algorithms`
-  can narrow the supported set; `expected_issuer` validates an operator-supplied
-  exact issuer. An unverified issuer does not select a JWKS source. Expiry and
-  audience are not authorization checks: historical tokens are valid analysis
-  inputs. `metadata.verified` never grants permission to act.
-* Offline exports use bounded reads without following symlinks, including
-  intermediate path components. YAML construction bounds nodes, aliases, depth,
-  merge expansion and expanded content before Python objects are constructed.
-  Sanitization bounds expanded structure and total replacement work. Ownership
-  patterns use bounded matching instead of backtracking regexes, and the code
-  scanner's IaC and agent front-matter patterns run on the bounded engine under
-  the per-input matching budget. Symbolic links count toward `max_files` and
-  their checks stop at the connector deadline. Limit hits and
-  malformed inputs make coverage incomplete while retaining valid neighboring
-  findings. These are resource safeguards, not process isolation or a universal
-  deadline across every external SDK call.
-* Record dumps enforce replay's encoded-byte line and file limits and reject
-  non-finite JSON numbers. Omitted valid export records remain available to
-  live analysis, but the scan and export manifest are incomplete and the new
-  dump is not published. Sanitizer safety-limit rejections skip the record and
-  also abort dump publication. Preserve the manifest when replaying;
-  a direct partial JSONL replay cannot establish collection completeness.
-* Git history enrichment is disabled by default. Explicit `use_git: true`
-  uses metadata-only commands with lazy fetching and every transport disabled;
-  stdout and stderr share a 16 KiB limit, identity fields are capped, and
-  cancellation or deadlines terminate the metadata process group. Unsupported
-  Git behavior, malformed metadata or exceeded limits makes coverage incomplete.
-  Metadata preflight rejects common-directory and alternate-object indirections,
-  local `include`/`includeIf` configuration sections, internal links and special
-  files. Local `config` and `config.worktree` are read through confined
-  descriptors within a 1 MiB limit; unsupported section syntax, encodings,
-  continuations and multiline values fail closed. Inputs must remain immutable while Git runs;
-  preflight is not a filesystem snapshot or process sandbox.
-  Clone calls have a separate HTTPS-only policy: credentials stay scoped to the
-  approved origin and redirects are disabled. Hooks and inherited Git overrides
-  are suppressed, and clones verify the objects they receive. A termination signal
-  or the job deadline stops in-flight clones and removes their checkouts. Unsafe
-  branch values are dropped with incomplete diagnostics.
-  Remote repository data cannot select an internal offline filesystem path.
-  Keep Git patched and use disposable workers for untrusted inputs.
-* Reports and generated inventory stubs are written atomically with mode 0600,
-  never to a symbolic link and never through a directory link that another user
-  owns, a link inside another link's target included; the file is created and
-  renamed relative to the opened real directory. `..` in the output path is
-  resolved before any link is followed: `-o mylink/../r.json` writes `r.json`
-  beside `mylink`, not in the parent of the link's target.
-  An existing character device given as the output path (such as `/dev/null`)
-  is written in place, and an existing named pipe only when the current user
-  owns it with mode 0600; other non-regular paths are refused.
-  Dump directories must be private (0700); record files use 0600 and unique
-  per-instance filenames. An export manifest records provenance/completion without
-  raw connector configuration. JWT records are never exported. No `--dump-raw`
-  option exists.
-### What is redacted
-
-- **By token shape:** Source excerpts and the provider text connectors shorten for a report
-  (descriptions, instructions and prompts, welcome messages, trigger conditions, matching rules
-  and policy statements) are redacted before they are shortened; lists of names (scopes,
-  permissions, variable names) are cut first. Redaction withholds
-  recognized token formats (provider prefixes such as `sk-`, `ghp_`, `glpat-`,
-  `glrt-`, `xoxb-`, `xapp-`, `AIza`, `ya29.`, `npm_`, `pypi-`, `dop_v1_`,
-  `ABSK` and `bedrock-api-key-`),
-  JWTs, private key blocks (PEM, PGP, SSH2 and PuTTY, an unterminated one to the
-  end of the text), URL userinfo (including schemes whose name contains an
-  underscore, such as SQLAlchemy dialect URLs), credential query keys (including
-  `auth`, `pwd` and `pat`) and webhook or MCP-server path segments (Slack,
-  Discord, Teams, Zapier hooks and Zapier MCP server URLs), every cookie in a `Cookie`
-  header, and compact `name:value` headers and passwords (`x-api-key:value`).
-  A token or JWT is withheld behind a JSON-escaped line break or tab
-  (`\n`, `\t`), a percent escape (`%3D`) or an underscore, and the prefixes no
-  ordinary word contains (`sk-proj-`, `ghp_`, `AKIA`, `eyJ` and similar) also
-  behind a digit; a word that merely ends in a prefix's text (`risk-`, `disk-`)
-  stays. URL userinfo is withheld whole when the password holds a raw `/`, `?`
-  or `#` (`postgres://u:example#pw@host`). A URL inside another URL's text
-  (`redis://:pw@a,redis://:pw@b`, `?next=https://u:secret@b`) is read as a URL
-  as well.
-- **By naming context:** It also withholds values that their context names as credentials:
-  assignments, including annotated, multiline and R (`<-`) expressions and
-  every operator that joins a name to a value, with the operator kept (`=>`,
-  `:=`, `||=`, `+=`, `.=`, `?=`); a quoted word or an opaque value compared with a
-  sensitive name (`if token == "..."`, `!=`, `===`, `=~`);
-  names such as `passphrase`, `db_pass`, `smtp_pwd`, `SECRET_KEY_BASE`, `creds` and
-  npm's `_auth`, and an ODBC connection string's `Pwd=` (a braced value whole,
-  `Pwd={a;b}`); the value after `password`, `passwd` and `account` in a netrc
-  entry (`machine h login u password v`, on one line or one token per line,
-  with keywords in any case as curl reads them, `default` anywhere on a line,
-  vertical tabs and form feeds as blanks, also in a string with `\n`, `\t`,
-  `\v` or `\f` escapes or PowerShell's `` `n ``, or written by `echo`),
-  whatever it looks like, including a value that is itself a keyword
-  (`login account password v` withholds both words after `account`), one
-  after a Windows domain login (`login CORP\fred`, also `CORP\\fred` in a
-  string, where an escape is read only on a line that holds a quote or an
-  escape next to a keyword, or before one with blanks between), one after a
-  token the format does not define once the entry's `machine`, `default`,
-  `login` or `user` is read, on the line of the entry's last token
-  (`machine h force yes password v`, `default force yes password v`) or on
-  a later line before a `password`, `passwd` or `account` in the entry's
-  region, which spans the eight lines from that of the entry's last token
-  and ends before at a blank line or the next entry's `machine`, `default`
-  or `macdef` (`machine h`, then `force yes`, then `password v` on the next
-  lines), one in an entry spread over adjacent string literals, which a
-  closing quote, then blanks, line breaks, a `+` or a line continuation,
-  then an opening quote join (`("machine h\n"`, then `"login u\n"` and
-  `"password v\n")` on the next lines), one after a keyword glued to a
-  closing quote, which Python's `netrc` reads as the next token
-  (`login "u"password v`, also after a quoted word glued to the name, as in
-  `login "u""v"password v`), an entry in a comment, also right after its
-  `#` (a `#` after a blank or a line-break escape starts a comment, which
-  runs to the end of its line or, in escaped text, to the next line-break
-  escape: where escapes are read and its line holds an escape next to a
-  keyword or before one with blanks between (`machine h # c\n  login u`), a
-  line-break escape before the `#`, or the same quote both before and after
-  it, so the password of `"machine h\n  # bot\npassword v"` is withheld,
-  while a netrc file's own `# Bob's share is C:\new\data` runs to the end
-  of its line; a keyword that is a directory of a Windows path, right after
-  a backslash or right before one that starts no escape, is no escape next
-  to a keyword, so `# home \\nas\user\fred` and `# C:\Users\bob\default\new`
-  run to the end of theirs too), and the lines of a netrc `macdef` macro up to the empty
-  line that ends it (a word after `default password` in prose is withheld
-  as well, and so is a word after `password` or `account` that follows
-  `machine`, `default` or `login` on its line or in its region, as in
-  `the machine needs an account and a key`, `the default service account
-  of the instance`, or `machine learning tools` with
-  `create an account for each user` on the next line); Yarn 1's `.yarnrc`
-  registry credentials written `name value`
-  (`"//registry.yarnpkg.com/:_authToken" "v"`, `_auth v`);
-  mappings, YAML block scalars, properties and INI entries; `getenv`-style
-  calls; name/value records such as Kubernetes `env` lists; XML elements and
-  `key`/`value` attributes; Dockerfile `ENV NAME value`, `setx`, `setenv` and
-  C `#define`; command-line options such as `--api-key`, `--token`,
-  `--password`, `--passphrase`, `--pat`, `--auth`, `curl -u user:secret`,
-  `-H "X-Api-Key:value"` (and any header whose name ends in a
-  credential word, such as `X-Token: value` or `X-Functions-Key: value`), `-p` after
-  `docker login` and other registry or cloud logins (`az`, `az acr`, `oc`,
-  `cf`), `sshpass -p`, MySQL's `-pVALUE` and a literal echoed into
-  `--password-stdin`; literal defaults of credentials read from the
-  environment (`process.env.OPENAI_API_KEY || "..."`, `?? "..."`,
-  `or "..."`, `?: "..."`, `${OPENAI_API_KEY:-...}`), also after a subscript
-  or call read assigned to a credential name (`azure_api_key:
-  os.environ['K'] if PROD else '...'`, `or '...'`, and an opaque one under
-  `azureKey: process.env['K'] ?? '...'`); and string literals,
-  including Python f-strings without replacement fields and backtick
-  strings, passed to credential constructors and helpers such as
-  `AzureKeyCredential("...")`, Rust's `AzureKeyCredential::new("...")`, C#'s
-  target-typed `AzureKeyCredential credential = new("...")`,
-  `HTTPBasicAuth("user", "...")`, `Credentials.basic("user", "...")`,
-  `auth=("user", "...")` and `setBearerToken("...")`, including methods down a
-  builder chain (`builder().apiKey("...")`). XML key/name attributes, element
-  names and name/value records are read as settings: a hierarchical .NET name
-  counts by its last `:`, `__` or `.` segment as well as whole
-  (`<add key="OpenAI:Secret" value="..."/>`, `- name: AzureOpenAI__Token`,
-  `<entry key="openai.token">`). A key/name attribute names the element's
-  value attributes, `<value>` child and content, and the element's own name
-  decides its content as well (`<token key="openai.token" value="">...</token>`).
-  A literal that looks like an opaque key is also withheld from a name whose
-  last word, ignoring trailing digits, names a credential: in assignments
-  (`openaiKey = "..."`, `key = "..."`, `KEY1=...`, YAML `openaiKey: ...`),
-  settings (`<add key="AzureOpenAI:Key" value="..."/>`,
-  `<OpenAIKey>...</OpenAIKey>`, `{name: OpenAIKey, value: ...}`), options
-  (`--key ...`, also in an argv list) and `dotnet user-secrets set NAME
-  VALUE`; ordinary values under such names (`<add key="CacheKey"
-  value="users"/>`, `cacheKey: users-by-id`) stay. It is also withheld from a
-  lone unindented line after a sensitive key such as `token:`. Variable
-  references (`$VAR`, `${{ secrets.X }}`), environment variable names and
-  placeholders stay visible, and so does a value that is exactly one read of
-  an environment variable by an upper-case name (`apiKey =
-  process.env.OPENAI_API_KEY`, `api_key = os.getenv("OPENAI_API_KEY")`). Only
-  blanks and then the end of the line, `;`, `,` or a closing bracket may follow
-  the read: with a default argument, a fallback literal, any other operand or a
-  comment after it the value is withheld up to where the value lexer ends it
-  (a quote, bracket, `,` or `;` of the expression). On a line that joins a
-  credential name to a value (by `:`, `=` or a PHP or Ruby `=>`), or that
-  gives a callee whose last word names a credential its arguments
-  (`sgMail.setApiKey(...)`, a builder's `.apiKey(...)`), every string literal
-  after that name and the comment (`//`, `#`, `/* */` or an XML or HTML
-  `<!-- -->`, read to its end when it runs past the line) keep their words,
-  references and model names, but each token in them
-  that looks like an opaque key is withheld, wherever the value ended: a
-  fallback after a cut read (`azureApiKey: process.env.K?.trim() || "..."`,
-  `os.environ[ 'K' ] if PROD else '...'`, `cfg("a", "b") || "..."`), a default
-  argument (`os.getenv("K", "...")`) and a comment after the `,` or `;` that
-  ends the value (`apiKey: process.env.KEY, // old: ...`, `api_key =
-  os.environ["KEY"]; # ...`). A later line goes on with that value when it
-  starts with a fallback operator (Black's `    or "...",`) or the line before
-  ends with one, with comment lines between. Under each
-  password's or secret's name on the line (`password`, `passwd`, `pwd`,
-  `passphrase`, `pass` or `secret` as the last word, or a last word that runs
-  words together and ends in one of them but `pass` and `pwd`, such as
-  `dbpassword` or `CLIENTSECRET`), not only under its first credential name (`{
-  apiKey: ..., password: ... }`, `client.setApiKey(k); ... { password: ...
-  }`), every string literal of the value up to the next entry of its own
-  mapping, object or argument list is withheld whole, whatever its shape
-  (`dbPassword: process.env.DB_PASSWORD?.trim() || "..."`, `db_password:
-  os.getenv("K", "...")`, `clientSecret: process.env.S?.trim() || "..."`, a
-  passphrase with spaces too), as the assignment form withholds it: after an
-  environment read the matcher reports such a fallback whatever its shape. A keyword argument of the read is part of the value
-  (`cfg.get("db", "password", fallback="...")`, `env("P",
-  default_value="...")`, `{ fallback: "..." }`), and a closer that closes
-  no opener on the line (an earlier pass withheld it with the start of the
-  value, or a line before opened it) counts as one opened in the value, so
-  the value goes on past the entries before it. Spans
-  withheld for one value merge, so a literal whose start looks like a token
-  is withheld to its end, not only that token. An upper-case variable name,
-  a path, a URL, a placeholder and a literal of fewer than six characters
-  stay. A template that assembles its text from
-  expressions (`${prefix}...`) stays, as in assignments. A read is withheld
-  as well when its variable name looks like a key pasted in place of the
-  name: letters and digits
-  alternate in a long run of it, or it has 16 characters or more and no `_`
-  (an upper-case key or a base32 secret, with or without digits; a name such
-  as `HUGGINGFACEHUBAPITOKEN` is withheld with them).
-- **Structured records:** Structured name/value records that connectors
-  pass to the sanitizer read their name as a setting too, in either field
-  order (`{"name": "OpenAI:Secret", "value": "..."}`, and an opaque value under
-  `OpenAIKey`); an environment-style name there (`PAGE_TOKEN`) withholds only
-  an opaque value. The fields of structured records (including every record
-  of `--dump-records`) are withheld by name and by the words of the name: the
-  last word, ignoring digits, is `secret`, `token`, `password`, `passwd`,
-  `pwd`, `passphrase`, `pass`, `credential(s)`, `cookie` or `bearer`
-  (`webhook_secret`, `bot_token`, `jwtSecret`, `db_pass`), or is `key` after
-  `api`, `access`, `secret`, `private`, `signing`, `client`, `license`,
-  `encryption`, `master`, `auth`, a provider such as `openai` or similar
-  (`client_key`, `openai_key`). Cursors (`next_token`, `page_token`,
-  `skipToken`), tokenizer tokens (`eos_token`), switches (`requires_auth`,
-  `has_secret`), the bare `key` of tags and S3 objects, `sort_key`,
-  `partition_key` and `cache_key` stay. A value that is not JSON-like (bytes,
-  a set, an exception, a plugin's object) is converted to text before it is
-  redacted, so `default=str` never prints it raw. The rules added for settings, options,
-  numbered names and YAML values run after the earlier rules, on their
-  output, so they only withhold more.
-  Credential constructor calls also accept whitespace and
-  comments before the parenthesis, redundant parentheses, static C# `$`
-  strings, verbatim multiline C# strings with doubled quotes, and multiline
-  triple-quoted literals. Recognized unterminated quoted flow-record values
-  and credential-call literals are withheld through their bounded text tail.
-  Supported Go SDK imports bind credential-call receivers, including aliases
-  and dot imports, before evidence truncation. This lexical recognition shares
-  the sanitization work and binding limits; exhausting either withholds the
-  evidence and marks coverage incomplete. Local shadowing can over-redact.
-  Dynamic function reassignment is outside this bounded direct-call recognition.
-  Known environment lookup
-  fallback literals inherit the credential constructor's context even when
-  their environment variable name is ordinary. Textual flow records support
-  either name/value field order, braces and escaped quotes inside quoted
-  values; preceding YAML sibling values are read within sixteen lines without
-  crossing a list-item or mapping boundary. A quoted assignment value, a
-  double-quoted option value and an `auth=` password close at their first
-  quote that no backslash escapes, so `{"log": "password: \"S\""}` and
-  `--password "a\"S"` withhold all of `S`. Explicit signature and credential
-  query fields are withheld in scheme-less URLs and copied query strings too.
-  Command-specific `llm -k` and credential options glued after another option
-  value are recognized; unrelated `-k` flags stay visible. Under key-like
-  assignment names, an opaque identifier with at least three digit runs and
-  only short letter fragments is also withheld; ordinary type names and
-  `--key users` values remain visible.
-  `aws configure set` also withholds positional `aws_access_key_id`,
-  `aws_secret_access_key`, `aws_session_token` and legacy `aws_security_token`
-  values in shell text and literal argv lists, in any letter case and for
-  `aws`, `aws.exe` and `aws.cmd`, including `default.` and `profile.<name>.`
-  settings, global options (an unlisted `--option` is read both as a flag and
-  as taking a value), quoted words (including JSON-escaped quotes), POSIX,
-  PowerShell backtick and cmd caret line continuations, `#` and `//` comments
-  and string prefixes such as `r"..."` or `b"..."` between source argv
-  elements, a bare `--` before the value, and an executable passed apart from
-  its list (`spawn("aws", [...])`, `spawn("aws", args=[...])`,
-  `["aws"] + [...]`, `Command::new("aws").args([...])`). Native argv exports remove
-  copies of those values from
-  sibling fields too. Variable references, placeholders and metavariables
-  stay visible. Adjacent quoted shell fragments, escaped bare values and source
-  argv expressions beginning
-  with a literal are withheld as a whole; the reader does not evaluate them.
-  Entirely computed argv values remain outside this command reader.
-  Recognition is bounded to 32 arguments and 16 KiB per candidate: a candidate
-  that exceeds either limit fails sanitization closed rather than publishing
-  a later value.
-
-### What can remain
-
-- **Credentials in a file over `max_file_size` are not read.** The credential
-  pass reads every analyzable file up to `max_file_size` (1,000,000 bytes by
-  default), and no further: a key in an oversize cassette, fixture or data
-  export is not reported. The scan records the file as a coverage gap of a
-  whole entry wherever it lies (it is never declared by `profile: ci` or
-  weighed down as test code), so a few such files are tolerated within the
-  coverage budget, listed in `stats[].coverage.details` and counted in
-  `summary.tolerated_gaps`, and more of them exit 3. An oversize dotenv file
-  (`.env`, `.env.production`) always exits 3 while credentials are scanned; an
-  oversize tool credential file (`.npmrc`, `.netrc`) is one such entry. Raise
-  `max_file_size`, or set `--max-coverage-gap 0`, where such a key must not be
-  missed.
-- **Limitations:** Redaction cannot withhold a credential that nothing names or shapes as one,
-  so treat reports as confidential. In evidence snippets only, a last-resort
-  pass also withholds a quoted literal that looks generated: at least 20
-  token characters mixing upper case, lower case and digits, switching between
-  them often, with high per-character entropy. Hex digests, UUIDs and ordinary
-  identifiers keep their text; a short or low-entropy secret can still pass,
-  and descriptions, titles and metadata do not get this pass. Outside
-  snippets, these forms can remain: an unprefixed
-  literal passed to an ordinary function, or nested in another call inside a
-  credential constructor (`AzureKeyCredential(str("..."))`) when it does not
-  look like an opaque key (one that does is withheld, as after any credential
-  name on its line); a value assembled by a computed expression; after a read
-  the value lexer cuts, in `name: value` form or a callee's arguments, a
-  literal under a name that is no password's or secret's that does not look
-  like an opaque key, punctuated or not (`apiKey: cfg("a", "b") ||
-  "correct-horse-battery-staple"`), and under a password's or secret's name a literal of fewer than six characters or one that
-  reads as an upper-case variable name (`|| "HUNTERPASS"`); a literal on a later
-  line that the value lexer does not reach when that line does not start with
-  a fallback operator and the line before does not end with one; a key in a
-  block comment opened on a line that names no credential. Recognized credential calls with mixed interpolation
-  withhold opaque static material; pure variable references remain visible. A few LLM SDK
-  calls take a key positionally under a name that names no credential; the
-  literal at the key's position in these is withheld: Semantic Kernel's .NET
-  Azure OpenAI and OpenAI connectors
-  (`AddAzureOpenAIChatCompletion("deployment", endpoint, "...")`,
-  `AddOpenAIChatCompletion("model", "...")`, including the overloads that
-  take an endpoint `Uri` before the key, and their chat client, embedding,
-  text-to-image and audio siblings and the matching services), go-openai's
-  `openai.DefaultConfig("...")`, `openai.NewClient("...")` and
-  `openai.DefaultAzureConfig("...", url)`, `new OpenAiService("...")`
-  (com.theokanning.openai) and `new GoogleGenerativeAI("...")`. Where a
-  variable stands at the key's position, a later literal such as an
-  organization ID may be withheld instead. Any other SDK call is an ordinary
-  function, as is a key at a position no listed overload uses. The three
-  go-openai helpers also recognize literal imports of
-  `github.com/sashabaranov/go-openai`, including aliases and dot imports;
-  import references must be present in the full source passed to redaction.
-  These forms can also remain: a word-like or short value under
-  a name that is not itself sensitive and that lacks recognized opaque
-  structure; a lowercase word
-  after a space-separated option or as a fallback default; an option this
-  list does not name, including command-specific one-letter options other
-  than the recognized forms above; a positional
-  argument of any other command besides the supported AWS credential settings;
-  the part of an unquoted option value after a
-  bracket, brace or comma; a literal fallback outside recognized credential
-  contexts;
-  URL userinfo that cannot be delimited: a password holding raw whitespace,
-  quotes or angle brackets, one holding both a raw `@` and a raw `/`, `?` or
-  `#`, a token without a colon that holds one of those
-  (`https://tok?en@host`), a numeric password followed by one
-  (`https://user:00000000?x@host`, which reads as a port), or a
-  percent-encoded URL inside a query value
-  (`?u=https%3A%2F%2Fu%3Apw%40h`); a token glued to a
-  letter (`apisk-proj-...`) or, for a shorter prefix, a digit; a value named
-  only by a comment (`x = "..."  # openai key`); a bare value that is not an
-  opaque key compared with a sensitive name (`token == hunter2`), a literal written before the
-  operator (`"..." == token`) or compared with a subscript
-  (`headers["token"] == "..."`); a readable value glued to the colon of a
-  sensitive name (`password:hunter2`) or under a bare `pwd` (the shell's
-  working directory has that name); a field of a structured record whose
-  name does not end in a credential word as above (`OpenAIKey`, `key1`, a
-  bare `auth` or `pass`) and holds a value that looks like no credential; a
-  record outside the bounded sibling/flow rules above; a
-  value split across concatenated strings; a netrc entry spread over
-  prefixed string literals or JavaScript template literals (Python's
-  `b"machine h\n"`, `f"..."` or `r"..."` on the next lines, `` `machine h\n`
-  + `` and so on), whose prefix or backtick the join of adjacent literals
-  does not read, so the entry ends after `machine`; a netrc value after a token the
-  format does not define on a later line than the entry's last token, which
-  ends the entry there as prose after `machine learning` does, when a blank
-  line, the next entry's `machine`, `default` or `macdef`, or the end of the
-  eight-line region comes before the value's `password`, `passwd` or
-  `account` (`force yes` and an empty line between `machine h` and
-  `password v`), or in an entry whose `machine` is glued to other text; a
-  commented-out netrc token that is not part of an entry in its comment, on
-  a comment line of its own that holds no `machine` or `default`
-  (`# password v` under a commented `# machine h`) or after an entry's own
-  tokens (`login u # was password v`); the escaped lines after a netrc
-  comment that those rules run to the end of its line, in escaped text
-  where no escape sits next to a keyword or before one with blanks
-  between, none breaks a line before the `#` and no quote comes both
-  before and after it (`machine h # it's\nforce password v`); a netrc
-  keyword written in quotes, which Python's `netrc` reads as the keyword,
-  and the value after it (`login u "password" v`,
-  `"machine" h login u password v`); and sensitive business data.
-- **Plural collection names are not sensitive names.** `credentials` names a
-  credential, but the list or mapping under a plural `secrets` or `tokens`
-  key keeps its values unless each one has a recognized shape or a sensitive
-  name of its own: `secrets: [prod-db-password]` lists the names a secret
-  store holds, which the Secrets Manager, Key Vault, Secret Manager and OCI
-  Vault collectors read and report as inventory, and `tokens: 12` is a count.
-  A raw credential placed under one of those keys without a recognized shape
-  therefore remains (the structural pass still removes it wherever a
-  sensitive-named field holds the same value). Keep that in mind for a
-  GitHub Actions `secrets:` block or a Kubernetes manifest an operator pastes
-  into an issue.
-
-### Other implemented controls
-
-* Generated inventory resource bindings escape literal glob characters. Manual
-  wildcard approvals remain possible and require operator review. Surface,
-  provider and account restrictions still apply; ambiguous matches do not approve.
-  Atlassian app keys require a concrete configured HTTPS site and an explicit
-  account constraint on the approval. Unknown site identity leaves the scan
-  incomplete and generated cards unbound; site fields in untrusted exports
-  cannot supply or override that trusted scope.
-* Configuration rejects missing or empty required environment substitutions,
-  duplicate YAML keys, unknown top-level/options fields and invalid gate levels.
-  Explicit `${VAR:-default}` fallbacks remain an operator policy decision.
-* Incomplete scans exit 3 and set SARIF executionSuccessful=false. Only complete
-  results qualify for incremental reuse. Comparisons infer resolution only for
-  complete scans with matching collection, detection and finding-identity schemas,
-  and never for a finding in content the current scan declared (`--profile ci`,
-  `declared_omissions`) or tolerated (coverage budget, `stats[].coverage`) as
-  unread. A gap the default profile discounts in test code (a warning ending
-  "test code is discounted evidence") is counted in neither and does not hold a
-  missing finding back.
-  Explicit unmatched connector selections and unsupported/error exports fail
-  visibly. Incremental input roots and ancestor symlinks are ineligible for reuse;
-  pre/post hashing is not an atomic filesystem snapshot. Keep inputs immutable
-  while scanning. Runtime telemetry attribution does not prove that a particular
-  dependency executed.
-
-See [deployment and migration](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md),
-[scan semantics](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/scanning.md),
-and [connector permissions](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/connectors.md).
-
 ## Supported versions
 
 Version `0.1.2` is an alpha version. Fixes land on `main`; there is no
@@ -652,3 +54,112 @@ land on `main`; there is no released-version backport commitment. A confirmed
 fix should include a regression test and any necessary rollout or migration
 notes. Reporter credit and publication timing should be agreed in the advisory.
 Only test repositories, accounts and tenants you are authorized to assess.
+
+## Threat model at a glance
+
+ShadowScan reads security-sensitive estates and writes reports about them. The
+diagram shows what it trusts, what it does not, and where each boundary is
+enforced. The
+[threat model](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/security/threat-model.md)
+maps each threat to its control, and
+[controls and limits](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/security/controls.md)
+gives every control with what it does not cover.
+
+```mermaid
+flowchart LR
+    subgraph untrusted["Untrusted"]
+        direction TB
+        api["Remote API responses"]
+        repos["Scanned repositories"]
+        exports["Offline exports and logs"]
+        corpora["Benchmark corpora and artifacts"]
+        plugins["Third-party plugins"]
+    end
+
+    subgraph trusted["Trusted: operator workstation or CI runner"]
+        direction TB
+        config["Scan configuration"]
+        packages["Installed Python packages"]
+        egress{{"HTTPS, origin and<br/>private-address controls"}}
+        readers{{"Bounded readers and parsers,<br/>no symlinks followed"}}
+        allowlist{{"Plugin allowlist:<br/>exact names, not a sandbox"}}
+        engine["Engine and built-in connectors"]
+        coverage{{"Fail-closed coverage accounting:<br/>incomplete scan exits 3"}}
+        redaction{{"Sanitization and redaction"}}
+        reports[("Reports, record dumps and<br/>incremental state: sensitive")]
+    end
+
+    api --> egress --> engine
+    repos --> readers
+    exports --> readers
+    corpora -.->|read as data, never executed| readers
+    readers --> engine
+    plugins --> allowlist --> engine
+    config --> engine
+    packages --> engine
+    engine --> coverage --> redaction --> reports
+```
+
+### Trust boundary
+
+The operator workstation or CI runner, the scan configuration and installed
+Python packages are trusted. Remote API responses, scanned repositories,
+offline exports, third-party plugins, and the benchmark corpora and artifacts
+under `benchmarks/` (which hold prompt-injection text and MCP launch commands on
+purpose and are never executed) are untrusted.
+
+- **Fail closed.** Limits, malformed exports, denied APIs and timed-out
+  connectors mark the scan incomplete (exit 3); an incomplete scan is never
+  presented as an empty one.
+- **Egress.** Shared `HttpClient` requests require HTTPS without embedded
+  credentials, redirects and pagination stay on the configured origin, and
+  private, loopback, link-local, metadata and other non-global addresses are
+  rejected unless `allow_private_origin` grants them; `--deny-private-origin`
+  refuses that grant.
+- **Untrusted files.** Directory walks do not follow signature or inventory
+  symlinks, offline exports use bounded reads without following symlinks, and
+  parsers are bounded. The scanner does not act on scanned content: it never
+  unpickles a model artifact or launches a discovered MCP server.
+- **Plugins.** Third-party connector execution requires an exact-name allowlist
+  in `options.plugins` or repeatable `--allow-plugin`, and an approved plugin
+  runs with scanner privileges. Process mode is lifecycle isolation, not a
+  sandbox: the worker starts without the credential-shaped variables exported
+  for the built-in connectors unless `options.plugin_env` names them, but it
+  runs as the scanner's user and can still read its parent's environment from
+  `/proc/<ppid>/environ` on Linux, and every file that user can read. Pass
+  credentials through files or a secrets manager rather than exported
+  variables, and to keep a credential from an untrusted plugin, run that plugin
+  under a separate user or in a separate container, in a scan job that does not
+  hold the credential.
+- **Credentials.** Use dedicated read-only audit credentials and narrowly
+  scoped inventory approvals.
+
+### What is redacted
+
+Known token formats, JWTs, private key blocks, credential-bearing URLs and
+values that their context names as credentials are withheld before findings or
+record exports are persisted; secret stores are read for names only.
+The full rules are in
+[redaction](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/security/redaction.md#what-is-redacted).
+
+### What can remain
+
+Redaction cannot withhold a credential that nothing names or shapes as one, and
+a file over `max_file_size` is not read for credentials at all, so treat every
+report as confidential. The forms that can remain are listed under
+[what can remain](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/security/redaction.md#what-can-remain).
+
+## Further reading
+
+- [Threat model](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/security/threat-model.md):
+  assets, trust boundaries, threats and controls in STRIDE terms, and residual risks.
+- [Controls and limits](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/security/controls.md):
+  every implemented control, including the HTTP read deadline, Git, plugin and
+  output-file safeguards.
+- [Redaction](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/security/redaction.md):
+  what is withheld and what can remain.
+- [Hardening log](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/security/hardening-log.md):
+  the maintainer's AI-assisted self-review hardening record, not an independent audit.
+- [Deployment and migration](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md),
+  [scan semantics](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/scanning.md)
+  and [connector permissions](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/connectors.md).
