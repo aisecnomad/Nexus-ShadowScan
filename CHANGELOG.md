@@ -17,6 +17,8 @@ Notion bots, gateway routes, Kubernetes serving images, n8n HTTP model calls
 and ServiceNow flow names were adjusted), so a later ShadowScan run on that
 estate is in-sample.
 
+- Two CPython 3.11 serial-run test flakes no longer depend on cyclic-GC timing (October 19)
+- Dependabot #270-#274 carried with regenerated hash locks; aiohttp 3.14.4 fixes three advisories; #273's runtime lock no longer sits below its own extras floors (October 19)
 - New cdxgen benchmark installations use a frozen npm dependency graph, a patched Undici override and disabled lifecycle scripts with a lock-digest receipt (October 18)
 - Local Python dispatcher proof retains import scope/order checks; JavaScript aliases substitute before parent-path normalization (October 18)
 - App-name attribution requires corroboration; provider tool loops, local executable JavaScript tools and structural Kubernetes image attribution corrected (October 18)
