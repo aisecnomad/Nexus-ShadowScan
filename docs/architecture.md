@@ -112,6 +112,10 @@ cannot fill is recorded in the scan statistics and makes the scan incomplete
       consumers must read group membership as well as `related` to reconstruct
       the available relationships. Large groups with compatible but different
       partial scopes are not merged: compatibility is not transitive. Group
+      tokens are salted with the partition's verified scope, so per-tenant
+      report slices cannot be joined on an identifier-equality assertion the
+      link policy refuses; a member outside an exact-scope partition carries
+      the omission disclosure without a token or count. Group
       tokens contain no raw identifier and establish no ownership, runtime
       activity or approval. A fully qualified reference (an ARN, a
       GCP resource name, an Azure resource id, an OCI OCID) carries its own

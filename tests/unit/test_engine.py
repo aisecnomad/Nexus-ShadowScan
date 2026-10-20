@@ -10,7 +10,7 @@ import pytest
 from shadowscan.config import ConnectorSpec, ScanConfig, parse_set_options
 from shadowscan.connectors.common import unique_records
 from shadowscan.correlation import correlate
-from shadowscan.engine import Engine, _prune_runtime_links, _resource_pattern_breadth
+from shadowscan.engine import Engine, _prune_related, _prune_runtime_links, _resource_pattern_breadth
 from shadowscan.merge import merge
 from shadowscan.models import Evidence, Finding, Kind, RiskLevel, ScanStats, Surface, now_iso
 from shadowscan.registry import UNVERIFIED_IDENTITY_TAG, Inventory, card_stub_for
@@ -196,6 +196,37 @@ def test_confidence_threshold_prunes_links_to_omitted_findings(monkeypatch, exac
         assert by_id[findings["cloud"].id].metadata["related"] == [findings["identity"].id]
         assert by_id[findings["identity"].id].metadata["related"] == [findings["cloud"].id]
     assert "related_candidates" not in by_id[findings["bot"].id].metadata
+
+
+def test_pruning_recomputes_group_disclosures_over_retained_findings():
+    """A membership token held by one retained finding, or a member count that
+    includes omitted findings, would disclose findings the report leaves out
+    (#268). Memberships shrink to the retained count or disappear; truncation
+    entries keep the omission disclosure and lose the unbacked token and count."""
+    from shadowscan.correlation import correlate
+    from tests.unit.test_correlation_limits import _role_group
+
+    group = _role_group(26)
+    correlate(group)
+    assert all(entry.metadata["related_groups"][0]["member_count"] == 26 for entry in group)
+
+    retained = group[:10]
+    _prune_related(retained)
+    for entry in retained:
+        [membership] = entry.metadata["related_groups"]
+        assert membership["member_count"] == 10
+        [omission] = entry.metadata["related_truncation"]
+        assert omission["group_size"] == 10
+        assert omission["identifier_group_id"] == membership["group_id"]
+
+    survivor = group[:1]
+    _prune_related(survivor)
+    [entry] = survivor
+    assert "related_groups" not in entry.metadata
+    [omission] = entry.metadata["related_truncation"]
+    assert omission["reason"] == "identifier-group-limit"
+    assert "identifier_group_id" not in omission
+    assert "group_size" not in omission
 
 
 def test_confidence_threshold_prunes_runtime_links_to_omitted_gateway_findings():

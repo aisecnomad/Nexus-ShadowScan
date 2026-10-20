@@ -331,6 +331,37 @@ def test_unread_directory_member_blocks_module_package_collision():
     assert not index.resolver(".")("tools", "run_tool")
 
 
+def test_colliding_module_invalidates_memoized_dispatch_proof():
+    """Dispatch verdicts are memoized per (module, symbol) (#268); a later
+    colliding module copy makes the binding ambiguous and must veto anyway."""
+    index = dispatch.PythonDispatches()
+    index.add(".", "tools.py", HTTP)
+    resolve = index.resolver(".")
+    assert resolve("tools", "dispatch")
+    assert resolve("tools", "dispatch")
+    index.add(".", "tools.py", HTTP)
+    assert not resolve("tools", "dispatch")
+
+
+def test_unread_source_miss_does_not_veto_a_later_dispatch_proof():
+    index = dispatch.PythonDispatches()
+    index.note_path(".", "tools.py")
+    resolve = index.resolver(".")
+    assert resolve("tools", "dispatch") is False
+    index.add(".", "tools.py", HTTP)
+    assert resolve("tools", "dispatch") is True
+
+
+def test_dispatch_cache_cannot_grow_with_unknown_import_names():
+    index = dispatch.PythonDispatches()
+    index.add(".", "tools.py", HTTP)
+    resolve = index.resolver(".")
+    assert resolve("tools", "dispatch") is True
+    for number in range(1000):
+        assert resolve("tools", f"absent_{number}") is False
+    assert len(index._dispatch_results[(".", "tools")]) == 1
+
+
 def test_conditional_path_reassignment_cannot_supply_file_handler_proof():
     source = TABLE.replace(
         "    return path.read_text()", "    if flag:\n        path = unknown()\n    return path.read_text()"
