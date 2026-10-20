@@ -12,7 +12,6 @@ import time
 from typing import TYPE_CHECKING
 
 from shadowscan.connectors.code.javascript_imports import JavascriptImportLimit
-from shadowscan.connectors.code.provider_evidence import LOOP_REQUEST_SIGNATURES
 from shadowscan.connectors.code.python_dispatch import DispatchLimitError, has_dispatch_import
 from shadowscan.connectors.code.python_reexports import ReexportLimitError, has_local_import, project_path
 from shadowscan.connectors.code.scan_records import _local_module_predicate, _MatchedSource, _SourceFile
@@ -60,10 +59,11 @@ class CrossFileSources:
             # consumers additionally need SDK import evidence: ordinary local
             # imports cannot produce provider loops and need no queued pass
             # (or the eager excerpt redaction that queued sources require).
-            # Only requests bound to LOOP_REQUEST_SIGNATURES ever read the
-            # dispatch verdict, so other SDK imports (e.g. litellm) would only
-            # fill the scan-wide queue with consumers that cannot use it.
-            provider_imported = any(match.signature_id in LOOP_REQUEST_SIGNATURES for match in source.imports)
+            # Only openai/anthropic-bound requests reach provider_tool_loop_lines,
+            # the sole reader of the dispatch verdict; non-provider platform
+            # imports such as litellm would only fill the scan-wide queue with
+            # consumers that cannot use it.
+            provider_imported = any(match.signature.category == "provider" for match in source.imports)
             candidate = root_reexport or provider_imported and has_dispatch_import(file.text, local)
         else:
             candidate = False
