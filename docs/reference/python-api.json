@@ -1055,7 +1055,7 @@
         }
       },
       "get_index": {"kind": "function", "signature": "(extra_dirs: list[str] | None = None, reload: bool = False, *, allow_override: bool = False) -> SignatureIndex"},
-      "load_signatures": {"kind": "function", "signature": "(extra_dirs: Sequence[str | os.PathLike[str]] | None = None, include_builtin: bool = True, *, allow_override: bool = False) -> list[Signature]"}
+      "load_signatures": {"kind": "function", "signature": "(extra_dirs: Sequence[str | os.PathLike[str]] | None = None, include_builtin: bool = True, *, allow_override: bool = False, libyaml_builtin: bool = True) -> list[Signature]"}
     },
     "shadowscan.triage": {
       "PROVIDERS": {"kind": "constant", "type": "dict"},
