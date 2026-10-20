@@ -99,6 +99,29 @@ def test_gcp_valid_empty_unreachable_is_complete(index):
     assert not connector.ctx.stats.incomplete
 
 
+@pytest.mark.parametrize("project", ["acme", "timeout-project", "permission-403-project"])
+@pytest.mark.parametrize(
+    ("page", "reason"),
+    [
+        ([], "unparsed-input"),
+        ({"items": "invalid"}, "unparsed-input"),
+        ({"unreachable": "invalid"}, "unparsed-input"),
+        ({"nextPageToken": 3}, "unparsed-input"),
+        ({"nextPageToken": "more"}, "analysis-limit"),
+        ({"unreachable": ["us-central1"]}, "upstream-error"),
+        ({"error": {"code": 500}}, "upstream-error"),
+        (None, "upstream-error"),
+    ],
+)
+def test_gcp_listing_reason_comes_from_failure_not_resource_name(index, project, page, reason):
+    connector = GcpConnector(context(index, max_pages=1))
+    connector.http = Mock()
+    connector.http.get_json.return_value = page
+    assert list(connector._pages(f"https://run.googleapis.com/v2/projects/{project}/services", "items")) == []
+    assert connector.ctx.stats.incomplete
+    assert connector.ctx.stats.incomplete_reasons == {reason: 1}
+
+
 def test_cloud_run_bad_location_does_not_erase_valid_neighbor(index):
     connector = GcpConnector(context(index))
     connector.http = Mock()

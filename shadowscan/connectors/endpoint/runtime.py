@@ -90,7 +90,10 @@ _TOOL_REF = re.compile(r"\b(?:use|call|invoke)\s+the\s+[`\"']?([A-Za-z][\w.-]{0,
 # include every googleapis.com host the bundled signatures name. Each is matched with
 # its regional prefix (``us-central1-aiplatform``, ``eu-documentai``) and as the
 # mutual-TLS endpoint Google client libraries use with a client certificate
-# (``aiplatform.mtls.googleapis.com``). Other googleapis.com hosts (fonts, storage,
+# (``aiplatform.mtls.googleapis.com``), plus a known service's Private Service
+# Connect name (``aiplatform-prodpsc.p.googleapis.com``). The service and endpoint
+# together must fit one DNS label; a cloud-owned address alone is no proof.
+# Other googleapis.com hosts (fonts, storage,
 # www, ...) are not AI services, and Google front-end addresses carry many of them,
 # so a flow's destination names must not match them. A Google host is matched from
 # the start of its label only, so a hostile run of hyphenated words is scanned once,
@@ -100,7 +103,10 @@ _GOOGLE_AI_SERVICES = "|".join(
 )
 _HOST = re.compile(
     r"(?:https?://)?(?:[a-z0-9-]{1,63}\.(?:openai\.com|anthropic\.com)"
-    rf"|(?<![\w-])(?:[a-z0-9-]{{1,63}}-)?(?:{_GOOGLE_AI_SERVICES})(?:\.mtls)?\.googleapis\.com)\b",
+    rf"|(?<![\w-])(?:[a-z0-9-]{{1,63}}-)?(?:{_GOOGLE_AI_SERVICES})(?:\.mtls)?\.googleapis\.com"
+    rf"|(?<![\w.-])(?=[a-z0-9-]{{1,63}}\.p\.googleapis\.com\b)"
+    rf"(?:{_GOOGLE_AI_SERVICES})-[a-z0-9](?:[a-z0-9-]{{0,61}}[a-z0-9])?\.p\.googleapis\.com"
+    r"(?!\.[a-z0-9-]))\b",
     re.IGNORECASE,
 )
 
@@ -322,11 +328,11 @@ _MAX_HOST_PATH = 1024
 # (``.ollama/models``), each with its layout.
 _MODEL_STORE_ROOTS = tuple((tuple(store.root.casefold().split("/")), store.layout) for store in MODEL_STORES)
 # A home directory as the case-folded components a path starts with, after any
-# Windows drive: ``~`` (or ``~user``), a home variable or ``/root``, one component;
+# Windows drive: ``~``, a home variable or ``/root``, one component;
 # ``/home/<user>``, ``/Users/<user>`` (``C:\Users\<user>``) and macOS's ``/var/root``, two.
-_HOME_COMPONENTS = frozenset({"$home", "${home}", "%userprofile%", "root"})
+_HOME_COMPONENTS = frozenset({"~", "$home", "${home}", "%userprofile%"})
 _HOME_PARENTS = frozenset({"home", "users"})
-_WINDOWS_DRIVE = re.compile(r"[a-z]:")
+_WINDOWS_HOME = re.compile(r"^[a-z]:[\\/]")
 # The directories an Ollama store keeps its models in.
 _OLLAMA_STORE_DIRECTORIES = frozenset({"manifests", "blobs"})
 # The catalog's contexts for its ambiguous product names as case-folded path
@@ -440,14 +446,22 @@ def _names_product(parts: list[str], folded: list[str], keys: frozenset[str]) ->
     )
 
 
-def _below_home(parts: list[str]) -> list[str] | None:
-    """The case-folded path components ``parts`` below the home directory they start
-    at (see _HOME_COMPONENTS), or None when they start at none."""
-    if parts and _WINDOWS_DRIVE.fullmatch(parts[0]):
-        parts = parts[1:]
-    if not parts:
+def _below_home(parts: list[str], path: str) -> list[str] | None:
+    """Components below a literal home anchor, without expansion or filesystem access.
+
+    Relative names ``home/u`` and ``root``, drive-relative Windows paths and
+    named-tilde prefixes do not establish a home. Traversal components invalidate
+    this shortcut instead of attributing a path that may leave the store.
+    """
+    if not parts or any(part in {".", ".."} for part in parts):
         return None
-    if parts[0].startswith("~") or parts[0] in _HOME_COMPONENTS:
+    if parts[0] in _HOME_COMPONENTS and not path.startswith(("/", "\\")):
+        return parts[1:]
+    if _WINDOWS_HOME.match(path.casefold()):
+        return parts[3:] if len(parts) > 2 and parts[1] == "users" else None
+    if not path.startswith("/") or path.startswith("//"):
+        return None
+    if parts[0] == "root":
         return parts[1:]
     if (parts[0] in _HOME_PARENTS and len(parts) > 1) or parts[:2] == ["var", "root"]:
         return parts[2:]
@@ -474,7 +488,7 @@ def _holds_store_layout(parts: list[str], root: tuple[str, ...], layout: str) ->
     return any(name.startswith("models--") for name in following)
 
 
-def _in_model_store(parts: list[str]) -> bool:
+def _in_model_store(parts: list[str], path: str) -> bool:
     """Whether the path whose case-folded components are ``parts`` is, or lies in, one
     of the catalog's model stores.
 
@@ -486,7 +500,9 @@ def _in_model_store(parts: list[str]) -> bool:
     directory): an application's ``jan/models`` directory, or a user named jan with a
     ``models`` directory, is not a model store.
     """
-    below_home = _below_home(parts) or []
+    if any(part in {".", ".."} for part in parts):
+        return False
+    below_home = _below_home(parts, path) or []
     return any(
         tuple(below_home[: len(root)]) == root or _holds_store_layout(parts, root, layout)
         for root, layout in _MODEL_STORE_ROOTS
@@ -526,8 +542,9 @@ class HostConnector(_EndpointConnector):
         if self._product_keys is None:
             self._product_keys = _host_product_keys(self.index)
         for key in ("name", "path", "process"):
-            parts, folded = _path_parts(self._text(record.get(key), _MAX_HOST_PATH))
-            if _names_product(parts, folded, self._product_keys) or _in_model_store(folded):
+            path = self._text(record.get(key), _MAX_HOST_PATH)
+            parts, folded = _path_parts(path)
+            if _names_product(parts, folded, self._product_keys) or _in_model_store(folded, path):
                 return True
         return False
 
@@ -1325,10 +1342,10 @@ _EBPF_READERS: tuple[tuple[str, Callable[[dict[str, Any], set[str]], dict[str, A
 _EBPF_PORT_KEYS = ("port", "destination_port")
 # The flat fields that say where a record connected.
 _EBPF_FLAT_DESTINATION_KEYS = frozenset({*_EBPF_DESTINATION_KEYS, *_EBPF_PORT_KEYS})
-# Top-level keys of a producer's own events that the flat shape also names: a
-# Falco alert's ``hostname`` is the sensor's host, and a bare Hubble flow's
-# ``destination`` is the destination endpoint, neither of them a flat destination.
-_EBPF_PRODUCER_KEYS = {"Falco": frozenset({"hostname"}), "Hubble": frozenset({"destination"})}
+# A native event's top-level ``hostname`` describes its sensor or log shipper,
+# not the connection target. A bare Hubble flow's ``destination`` is also its
+# endpoint map, but a wrapper can carry a separately enriched flat destination.
+_EBPF_PRODUCER_KEYS = {producer: frozenset({"hostname"}) for producer, _ in _EBPF_READERS}
 
 
 def _flat_ebpf_record(
@@ -1389,7 +1406,9 @@ def _normalize_ebpf_record(record: dict[str, Any]) -> _EbpfReading | None:
         native = reader(record, defects)
         if native is None:
             continue
-        own = _EBPF_PRODUCER_KEYS.get(producer, frozenset())
+        own = _EBPF_PRODUCER_KEYS[producer]
+        if producer == "Hubble" and "flow" not in record:
+            own = own | {"destination"}
         if (_EBPF_FLAT_DESTINATION_KEYS - own).isdisjoint(record):
             return native, [(producer, defects)]
         flat_defects: set[str] = set()

@@ -101,9 +101,9 @@ _TIMEOUT_WARNING = (
 _TRIAGE_RESERVE_SHARE = 0.1
 _TRIAGE_RESERVE_MIN = 5.0
 _TRIAGE_RESERVE_MAX = 60.0
-# The supervisor's time for preparing one expired job's surrendered findings. It
-# enforces no other job's deadline meanwhile, and the report waits; what is left
-# when it is spent is omitted and counted, never reported as a complete result.
+# The supervisor's total time for preparing expired jobs' surrendered findings.
+# It enforces no other job's deadline meanwhile. This allowance is shared across
+# every expiry in a scan; omitted observations are counted as incomplete.
 _SURRENDER_BUDGET_SECONDS = 5.0
 
 # The operator's stable identity key comes from IDENTITY_KEY_ENV only, never
@@ -329,7 +329,9 @@ def _surrendered_copy(finding: Finding, plugin: str | None) -> Finding | None:
     return copied
 
 
-def _surrender(spec: ConnectorSpec, state: _JobState, st: ScanStats) -> list[Finding]:
+def _surrender(
+    spec: ConnectorSpec, state: _JobState, st: ScanStats, *, budget_seconds: float | None = None
+) -> list[Finding]:
     """An expired job's findings, prepared as ``_collect`` and ``_run_one`` prepare a completed job's.
 
     The abandoned worker still holds these objects and may change them while the
@@ -341,8 +343,9 @@ def _surrender(spec: ConnectorSpec, state: _JobState, st: ScanStats) -> list[Fin
     check, not another sanitizer pass.
 
     This runs on the supervisor thread, which meanwhile enforces no other job's
-    deadline, so it stops after ``_SURRENDER_BUDGET_SECONDS``: the findings left
-    are omitted and counted. It is outside any worker's isolation, and the job's
+    deadline, so it stops when its share of ``_SURRENDER_BUDGET_SECONDS``
+    is spent: the supervisor shares that allowance across all expired jobs, and
+    findings left are omitted and counted. It is outside any worker's isolation, and the job's
     class can still run plugin code. Whatever that code raises, ``sys.exit()``
     included, omits the finding or withholds the records, as ``_run_one`` and
     ``_hook_failure`` treat it; only a KeyboardInterrupt still ends the scan.
@@ -351,13 +354,14 @@ def _surrender(spec: ConnectorSpec, state: _JobState, st: ScanStats) -> list[Fin
     candidates = state.take_partial()
     surrendered = []
     unreadable = 0
-    ends = time.monotonic() + _SURRENDER_BUDGET_SECONDS
+    allowance = _SURRENDER_BUDGET_SECONDS if budget_seconds is None else budget_seconds
+    ends = time.monotonic() + allowance
     for number, finding in enumerate(candidates):
         if time.monotonic() >= ends:
             _timeout_error(
                 st,
                 f"{len(candidates) - number} finding(s) completed before the deadline omitted: "
-                f"the {_SURRENDER_BUDGET_SECONDS:g}-second budget for reporting them was spent",
+                f"the {allowance:g}-second budget for reporting them was spent",
             )
             break
         copied = _surrendered_copy(finding, spec.name if plugin else None)
@@ -1071,6 +1075,7 @@ class _Supervisor:
         self._started_at = started_at
         self.completed: dict[int, _JobResult] = {}
         self.timed_out: set[int] = set()
+        self._surrender_remaining = _SURRENDER_BUDGET_SECONDS
 
     def run(self) -> None:
         pending = set(self._futures)
@@ -1140,7 +1145,11 @@ class _Supervisor:
             # exit-3 explanation reads the reasons, not the messages.
             incomplete_reasons={"timeout": 1},
         )
-        partial = _surrender(spec, state, stats)
+        surrender_started = time.monotonic()
+        partial = _surrender(spec, state, stats, budget_seconds=self._surrender_remaining)
+        self._surrender_remaining = max(
+            0.0, self._surrender_remaining - (time.monotonic() - surrender_started)
+        )
         stats.findings = len(partial)
         if partial:
             stats.warnings.append(

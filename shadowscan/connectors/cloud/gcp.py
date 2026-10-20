@@ -436,7 +436,7 @@ class GcpConnector(BaseConnector):
             data = self.http.get_json(url, params=params or None)
             if data is None:
                 self._attest(url, "failed")
-                self.ctx.warn(f"cloud.gcp: empty response for {url.split('?')[0]}")
+                self.ctx.warn(f"cloud.gcp: empty response for {url.split('?')[0]}", reason="upstream-error")
             else:
                 self._attest(url, "ok")
             return data
@@ -457,7 +457,7 @@ class GcpConnector(BaseConnector):
         try:
             return next_page_token(data.get("nextPageToken"), seen)
         except InvalidPageTokenError:
-            self.ctx.warn(warn)
+            self.ctx.warn(warn, reason="unparsed-input")
             return None
 
     def _pages(self, url: str, items_key: str, **params: Any) -> Generator[dict[str, Any], None, bool]:
@@ -478,7 +478,12 @@ class GcpConnector(BaseConnector):
                 return False  # _get has already recorded the collection failure
             if not isinstance(data, dict) or "error" in data:
                 self._attest(url, "failed")
-                self.ctx.warn(f"cloud.gcp: invalid response for {url}")
+                self.ctx.warn(
+                    f"cloud.gcp: invalid response for {url}",
+                    reason="upstream-error"
+                    if isinstance(data, dict) and "error" in data
+                    else "unparsed-input",
+                )
                 return False
             # Aggregated list APIs may succeed while omitting unavailable regions.
             # Keep reachable observations, but never turn partial success into a
@@ -488,30 +493,33 @@ class GcpConnector(BaseConnector):
                 not isinstance(loc, str) or not loc for loc in unreachable
             ):
                 self._attest(url, "failed")
-                self.ctx.warn(f"cloud.gcp: invalid unreachable locations for {url}")
+                self.ctx.warn(f"cloud.gcp: invalid unreachable locations for {url}", reason="unparsed-input")
                 complete = False
             elif unreachable:
                 self._attest(url, "unavailable")
                 self.ctx.warn(
-                    f"cloud.gcp: {len(unreachable)} unreachable location(s) for {url}; coverage unknown"
+                    f"cloud.gcp: {len(unreachable)} unreachable location(s) for {url}; coverage unknown",
+                    reason="upstream-error",
                 )
                 complete = False
             items = data.get(items_key, [])
             if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
                 self._attest(url, "failed")
-                self.ctx.warn(f"cloud.gcp: invalid {items_key} page for {url}")
+                self.ctx.warn(f"cloud.gcp: invalid {items_key} page for {url}", reason="unparsed-input")
                 return False
             yield from items
             try:
                 token = next_page_token(data.get("nextPageToken"), seen)
             except InvalidPageTokenError:
                 self._attest(url, "failed")
-                self.ctx.warn(f"cloud.gcp: invalid or repeated pagination token for {url}")
+                self.ctx.warn(
+                    f"cloud.gcp: invalid or repeated pagination token for {url}", reason="unparsed-input"
+                )
                 return False
             if token is None:
                 return complete
         self._attest(url, "truncated")
-        self.ctx.warn(f"cloud.gcp: pagination limit reached for {url}")
+        self.ctx.warn(f"cloud.gcp: pagination limit reached for {url}", reason="analysis-limit")
         return False
 
     @staticmethod

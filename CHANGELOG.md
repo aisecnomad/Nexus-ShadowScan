@@ -8,6 +8,19 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## Unreleased
 
+Expired connectors share one five-second allowance for preparing partial findings,
+so repeated overruns cannot each delay the report for another five seconds.
+Native eBPF sensor names no longer imply an AI destination; wrapped Hubble
+destination enrichment and service-specific Google AI Private Service Connect
+names are retained.
+
+Host inventory preserves Jan and LM Studio Windows install-directory context
+and no longer treats relative home-like or traversal paths as home model stores.
+
+Malformed GCP list responses, pagination limits, invalid Okta grants and conflicting
+Entra permission labels now record explicit incomplete categories, independent of
+resource names or diagnostic wording.
+
 The optional live DNS snapshot enhancement now has a scoped design and
 acceptance plan; an explicit regression guards the offline network boundary.
 Live DNS collection and snapshot replay remain unimplemented (#210).
