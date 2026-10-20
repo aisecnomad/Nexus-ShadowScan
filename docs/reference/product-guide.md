@@ -501,8 +501,9 @@ and **not** measured production precision or recall.
 | [Shadow AI discovery, code surface](https://github.com/aisecnomad/Nexus-ShadowScan/blob/0792106b8d2cc09517f7f4ee2eeabf4f8eb8da2d/benchmarks/shadow-ai-discovery/results/2026-10-09/REPORT.md) (2026-10-09, 0.1.2+7bdea5300551) | 87 public repositories pinned by SHA: 65 positive, 10 control, 12 near-miss; 839 expected facts | Fact precision / recall / F1 99.8% / 94.8% / 97.2% **after** tuning on this corpus; 65 of 65 positive repositories flagged; 0 of 22 controls and near-misses flagged (4 of those 22 runs incomplete) | In-sample: the detection changes were driven by this corpus's errors, so these numbers measure fit to it, not field accuracy. 43 of 87 runs were incomplete (exit 3): fact counts are a lower bound, and an incomplete clean run is not a clean result |
 
 The archived [2026-10-08 discovery metrics](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/benchmarks/shadow-ai-discovery/results/2026-10-08/metrics.json)
-record in-scope fact F1 of 90.9%. Labels and adapters also changed between the
-archived runs, so this and the later 97.2% are not a controlled before/after
+record in-scope fact F1 of 90.9%. The earlier report uses a different expected-fact
+universe, and labels and adapters also changed between the archived runs, so
+this and the later 97.2% are not a controlled before/after
 comparison. Some companion prose quotes later re-scored baseline figures; the
 original metrics and historical files remain unchanged.
 
@@ -540,6 +541,8 @@ also records that the producing harness revision was not captured, scoring was
 revised with the results in view, and result files have no hashes binding them
 to the original run. The current companion pin and migration hashes preserve
 the archived bytes; they do not reconstruct that missing run provenance.
+The tools also ran as root with host home directories visible, which limits
+attribution of endpoint discoveries to the intended repository inputs.
 ShadowScan's specificity on decoy entities in this run was 63%.
 
 ### Synthetic head-to-head
@@ -559,9 +562,13 @@ Unsupported surfaces count as misses in this chart. Several tools ran below
 full capability, and narrower tools can be precise within their scope. Read
 the report's in-scope results and [execution limits](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/tools/benchmark/results/README.md#limits)
 before comparing tools. These archived scores do not establish a current
-product ranking. In the three [real-world repository runs](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/benchmarks/README.md)
-from 2026-10-08 (34, 41 and 326 repositories), other tools scored higher; those
-protocols count ShadowScan's incomplete scans as misses.
+product ranking. Other tools scored higher on selected metrics in the real-world
+runs of [34](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/tools/benchmark/results-realworld/REPORT.md),
+[41](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/tools/benchmark_realworld/results/REPORT.md)
+and [326 public repositories](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/tools/benchmark/realworld/REPORT.md)
+from 2026-10-08, partly because those runs count incomplete positive scans as
+misses. Their labels, error policies and intervals have further limitations
+documented in each report.
 
 ### Cross-benchmark summary
 
