@@ -244,7 +244,9 @@ class OktaConnector(BaseConnector):
         grants = []
         for grant in app.get("_grants") or []:
             if not self._record_fields_valid(grant, required=("scopeId",)):
-                self.ctx.warn("identity.okta: invalid grant; permission inventory incomplete")
+                self.ctx.warn(
+                    "identity.okta: invalid grant; permission inventory incomplete", reason="unparsed-input"
+                )
                 continue
             grants.append(grant)
         tokens = []

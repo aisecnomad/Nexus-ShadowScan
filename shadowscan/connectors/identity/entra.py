@@ -1012,7 +1012,7 @@ class EntraConnector(BaseConnector):
         conflict = (resource or resource_app, role_id)
         if labels and conflict not in graph.reported_role_conflicts:
             graph.reported_role_conflicts.add(conflict)
-            self.ctx.warn("identity.entra: conflicting role labels; permission-name coverage incomplete")
+            self.ctx.warn("identity.entra: conflicting role labels", reason="unparsed-input")
         return role_id
 
     def _unresolved_finding(self, sp_id: str, graph: _GraphExport) -> Finding | None:
