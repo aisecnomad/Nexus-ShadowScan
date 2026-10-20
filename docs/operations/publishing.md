@@ -171,22 +171,85 @@ package.
    commit with that backend; treat it as a release incident. Release 0.1.2
    predates the sdist: it was a wheel built with `pip wheel` from a
    `git archive`, and was attested as `aisecnomad/Project-Nexus` before the rename.
-7. **Optionally, create the GitHub release by hand** from the tag, using the
-   version's `RELEASE_NOTES.md` section. The workflow never creates one. Attach
-   the signed evidence to it, so that the release carries its own signatures
-   rather than only a pointer to the attestation store: the wheel, the sdist,
-   `SHA256SUMS` from `release-candidate-<SHA>`, and `provenance.sigstore.json`
-   and `sbom.sigstore.json` from `release-attestations-<SHA>`. The provenance
-   bundle covers every file in the candidate, `SHA256SUMS` included. The
-   `.sigstore.json` suffix is what release-signature checks, such as OpenSSF
-   Scorecard's Signed-Releases, look for among a release's assets. Anyone can
-   then check a downloaded file without the attestation store, against the
-   bundle from the same release:
+7. **Review and publish the draft GitHub release.** After a `pypi` upload,
+   the `github-release-assets` job of the same run downloads the attested
+   `publication-input` artifact, checks it with `sha256sum --check`, verifies
+   every file against its own Sigstore bundle, and attaches to a **draft**
+   release for `v<version>` (creating the draft when the tag has no release,
+   or adding to an existing release):
+
+   | Asset | What it is |
+   | --- | --- |
+   | `nexusshadowscan-<version>-py3-none-any.whl`, `nexusshadowscan-<version>.tar.gz` | the exact files uploaded to PyPI |
+   | `SHA256SUMS` | digests of the candidate files |
+   | `nexusshadowscan-<version>.provenance.sigstore.json` | Sigstore bundle of the SLSA provenance, covering every candidate file |
+   | `nexusshadowscan-<version>.sbom.sigstore.json` | Sigstore bundle of the CycloneDX SBOM attestation, covering the wheel and sdist |
+   | `nexusshadowscan-<version>.intoto.jsonl` | the provenance bundle as JSON Lines, one bundle per line |
+
+   The job has only `contents: write`, checks out nothing, has no OIDC token,
+   re-reads the tag and refuses to attach when it does not point at the run's
+   commit, never creates or moves a tag, never publishes or edits a release,
+   and never replaces an attached file (an identical one is skipped; a
+   different one fails the job). It does not run for `testpypi` or `none`, or
+   when the upload failed.
+
+   The `.sigstore.json` and `.intoto.jsonl` suffixes are the ones OpenSSF
+   Scorecard's Signed-Releases check counts as signatures and provenance
+   (`probes/releasesAreSigned` and `probes/releasesHaveProvenance` in
+   ossf/scorecard). Scorecard sees only published releases, so the check
+   changes only once the maintainer publishes the draft.
+
+   The maintainer then opens the draft, replaces its notes with the version's
+   `RELEASE_NOTES.md` section, checks that the assets match the table above
+   and `SHA256SUMS`, and publishes it by hand. Anyone can check a downloaded
+   file without the attestation store, against the bundles in the same
+   release:
 
    ```bash
    gh attestation verify "nexusshadowscan-$version-py3-none-any.whl" \
-     --repo aisecnomad/Nexus-ShadowScan --bundle provenance.sigstore.json
+     --repo aisecnomad/Nexus-ShadowScan \
+     --bundle "nexusshadowscan-$version.intoto.jsonl" \
+     --signer-workflow aisecnomad/Nexus-ShadowScan/.github/workflows/release.yml \
+     --source-ref refs/heads/main --deny-self-hosted-runners
+   gh attestation verify "nexusshadowscan-$version-py3-none-any.whl" \
+     --repo aisecnomad/Nexus-ShadowScan \
+     --bundle "nexusshadowscan-$version.sbom.sigstore.json" \
+     --predicate-type https://cyclonedx.org/bom
+   sha256sum --check --ignore-missing SHA256SUMS
    ```
+
+   **Backfilling v0.1.2 (maintainer-run, once).** Release 0.1.2 predates this
+   job and carries only the wheel and the evidence zip. Its attestations exist
+   in the attestation store; it was attested as `aisecnomad/Project-Nexus` before the rename. A maintainer
+   with write access downloads the wheel's attestations, checks them, and
+   attaches them to the existing release. Nothing here changes the published
+   wheel, the tag or the notes, and `gh release upload` without `--clobber`
+   refuses to replace an existing asset.
+
+   ```bash
+   mkdir v0.1.2-backfill && cd v0.1.2-backfill
+   gh release download v0.1.2 --repo aisecnomad/Nexus-ShadowScan \
+     --pattern 'nexusshadowscan-0.1.2-py3-none-any.whl'
+   wheel=nexusshadowscan-0.1.2-py3-none-any.whl
+   # Writes sha256:<digest>.jsonl, one Sigstore bundle per line.
+   gh attestation download "$wheel" --repo aisecnomad/Nexus-ShadowScan
+   digest="$(sha256sum "$wheel" | cut -d' ' -f1)"
+   bundles="sha256:$digest.jsonl"
+   gh attestation verify "$wheel" --repo aisecnomad/Nexus-ShadowScan --bundle "$bundles"
+   # Split the provenance from any SBOM attestation by predicate type.
+   jq -c 'select((.dsseEnvelope.payload | @base64d | fromjson | .predicateType)
+     | startswith("https://slsa.dev/provenance/"))' "$bundles" \
+     > nexusshadowscan-0.1.2.intoto.jsonl
+   head -n 1 nexusshadowscan-0.1.2.intoto.jsonl > nexusshadowscan-0.1.2.provenance.sigstore.json
+   gh attestation verify "$wheel" --repo aisecnomad/Nexus-ShadowScan \
+     --bundle nexusshadowscan-0.1.2.intoto.jsonl
+   gh release upload v0.1.2 --repo aisecnomad/Nexus-ShadowScan \
+     nexusshadowscan-0.1.2.intoto.jsonl nexusshadowscan-0.1.2.provenance.sigstore.json
+   ```
+
+   If `jq` selects nothing or more than one provenance line, stop and check
+   the downloaded file by hand rather than attaching it. If verification
+   rejects the current repository name for 0.1.2, verify 0.1.2 with `--repo aisecnomad/Project-Nexus` instead.
 8. **Open the next candidate.** Bump the version (for example to `0.1.3`) and
    add a new unreleased section to the changelog and release notes.
 
