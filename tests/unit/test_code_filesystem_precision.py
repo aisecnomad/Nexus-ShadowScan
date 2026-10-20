@@ -846,6 +846,41 @@ def test_ci_profile_declares_the_gaps_of_a_templated_project(run_connector, tmp_
     assert all(path.startswith(f"{template}/") for path in stats.declared_paths)
 
 
+@pytest.mark.parametrize(
+    ("manifest", "templated", "real"),
+    [
+        ("pyproject.toml", '[project]\nname = "{{folder_name}}"\n', '[project]\nname = "flow"\n'),
+        (
+            "pyproject.toml",
+            '[tool.poetry]\nname = "{% if x %}a{% endif %}"\n',
+            '[tool.poetry]\nname = "flow"\n',
+        ),
+        ("Cargo.toml", '[package]\nname = "${crate}"\n', '[package]\nname = "flow"\n'),
+        ("package.json", '{"name": "{{folder_name}}"}\n', '{"name": "flow"}\n'),
+    ],
+)
+def test_ci_profile_declares_a_project_its_manifest_names_with_template_syntax(
+    run_connector, tmp_path, manifest, templated, real
+):
+    # Regression (crewAI's CLI scaffolds): the placeholders sit only inside TOML strings,
+    # so the manifest parses and its directory was a deployable project whose unparsed
+    # template source exited 3 under ci. No index or build backend accepts that name.
+    write(tmp_path, "pyproject.toml", '[project]\nname = "root"\nversion = "0.1"\n')
+    write(tmp_path, "src/app.py", "VALUE = 1\n")
+    write(tmp_path, f"templates/flow/{manifest}", templated)
+    write(tmp_path, "templates/flow/main.py", "class {{flow_name}}:\n    pass\n")
+    write(tmp_path, "templates/flow/src/{{folder_name}}/tool.py", "class {{class_name}}(BaseTool):\n")
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert not stats.incomplete and not stats.errors, stats.warnings
+    assert sorted(stats.declared_paths) == [
+        "templates/flow/main.py",
+        "templates/flow/src/{{folder_name}}/tool.py",
+    ]
+    write(tmp_path, f"templates/flow/{manifest}", real)
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert stats.incomplete and "templates/flow/main.py" not in stats.declared_paths
+
+
 @pytest.mark.parametrize("manifest", ["package.json", "pyproject.toml"])
 def test_ci_profile_declares_gaps_below_a_manifest_that_does_not_parse(run_connector, tmp_path, manifest):
     # A docs/ directory whose manifest never parses is not a deployable

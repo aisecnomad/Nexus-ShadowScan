@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 import tomllib
-from typing import Any
+from typing import Any, NamedTuple
 
 import yaml
 
@@ -430,6 +430,11 @@ def _mcp_server_record(
     if not isinstance(cfg, dict):
         errors.append("MCP server entry must be an object")
         return None
+    entry = cfg
+    reference = _block_reference(cfg, errors)
+    if reference is not None:
+        # A Continue block reference: the override is the part of the launch it configures here.
+        cfg = reference.override
     if any(sum(alias in cfg for alias in aliases) > 1 for aliases in _MCP_FIELD_ALIASES):
         # Which spelling a client honors is not knowable here; picking one
         # could hide the credentials or endpoint the other one configures.
@@ -447,7 +452,12 @@ def _mcp_server_record(
     if command is not None and not isinstance(command, str):
         errors.append("MCP command must be a string")
         command = None
-    if not (command and command.strip()) and not (url and url.strip()) and not _has_mcp_package(cfg):
+    if (
+        not (command and command.strip())
+        and not (url and url.strip())
+        and not _has_mcp_package(cfg)
+        and reference is None
+    ):
         if cfg.get("disabled") is not True and cfg.get("enabled") is not False:
             errors.append("MCP server entry has no command, URL, or valid package")
         return None
@@ -457,13 +467,14 @@ def _mcp_server_record(
         errors.append("MCP args must be an array of strings")
         args = []
         launch_unreadable = True
-    inline_locations = _inline_secret_locations(env, headers)
+    inline_locations = _inline_secret_locations(env, headers, reference.inputs if reference else {})
     transport = _mcp_alias(cfg, ("type", "transport"), "stdio" if command else ("http" if url else "unknown"))
     if not isinstance(transport, str):
         errors.append("MCP transport must be a string")
         transport = "unknown"
-    # Project only after sanitizing with the entire config: a credential in
-    # env/headers may be repeated as an otherwise unrecognizable argument.
+    # Project only after sanitizing with the entire config (a block reference's whole entry,
+    # ``with`` included): a credential in env/headers may be repeated as an otherwise
+    # unrecognizable argument.
     field_names = (
         "name",
         "transport",
@@ -477,7 +488,7 @@ def _mcp_server_record(
     )
     clean_values = sanitize(
         (
-            cfg,
+            entry,
             [
                 str(name),
                 transport,
@@ -513,6 +524,17 @@ def _mcp_server_record(
         safe["packages"] = _manifest_packages(cfg.get("packages"), errors)
     if command and launch_unreadable:
         safe["launch_unidentified"] = True
+    if reference is not None:
+        # The referenced block defines the launch; an override changes part of it.
+        # Sanitized with the whole entry, as every other field is, so userinfo, a query token or
+        # a credential repeated from ``with`` never reaches the report.
+        block = sanitize((entry, reference.uses))[1]
+        safe["block_reference"] = block
+        safe["launch_unidentified"] = True
+        if block != reference.uses:
+            inline_locations.append("uses")
+            safe["secrets_inline"] = True
+            safe["secret_locations"] = inline_locations
     raw = {
         "command": command,
         "args": args,
@@ -617,11 +639,21 @@ def _has_mcp_package(cfg: dict[str, Any]) -> bool:
     )
 
 
-def _inline_secret_locations(env: dict[Any, Any], headers: dict[Any, Any]) -> list[str]:
-    """Name the tables that hold a credential-looking literal rather than a reference."""
+def _inline_secret_locations(
+    env: dict[Any, Any], headers: dict[Any, Any], inputs: dict[Any, Any] | None = None
+) -> list[str]:
+    """Name the tables that hold a credential-looking literal rather than a reference.
+
+    ``inputs`` is a Continue block reference's ``with`` table: the referenced block reads its
+    values as it would ``env`` values, so a literal key passed there is just as inline.
+    """
     return [
         location
-        for location, items in (("env", env.items()), ("headers", headers.items()))
+        for location, items in (
+            ("env", env.items()),
+            ("headers", headers.items()),
+            ("with", (inputs or {}).items()),
+        )
         if any(
             isinstance(value, str)
             and value
@@ -644,3 +676,34 @@ def _mcp_disabled(cfg: dict[str, Any], errors: list[str]) -> bool:
         # Unknown activation state cannot substantiate an active server.
         return True
     return disabled or not enabled
+
+
+_BLOCK_REFERENCE_KEYS = frozenset({"uses", "with", "override"})
+
+
+class _BlockReference(NamedTuple):
+    uses: str
+    inputs: dict[Any, Any]
+    override: dict[str, Any]
+
+
+def _block_reference(cfg: dict[str, Any], errors: list[str]) -> _BlockReference | None:
+    """A Continue block reference (``uses`` with optional ``with`` and ``override``), or None.
+
+    Continue's schema allows exactly these keys on an ``mcpServers`` entry that names a hub
+    block or a local block file. Any other key, or a ``uses`` that is not a non-empty string,
+    is not a reference, and the entry is judged as a server (and reported when it is not one).
+    The referenced block is never fetched or followed: a local block inside the scanned tree
+    is scanned on its own.
+    """
+    uses = cfg.get("uses")
+    if not isinstance(uses, str) or not uses.strip() or not set(cfg) <= _BLOCK_REFERENCE_KEYS:
+        return None
+    inputs = _mcp_mapping(cfg.get("with"), "block reference with", errors)
+    override = cfg.get("override")
+    if override is None:
+        override = {}
+    elif not isinstance(override, dict):
+        errors.append("MCP block reference override must be an object")
+        override = {}
+    return _BlockReference(uses, inputs, override)

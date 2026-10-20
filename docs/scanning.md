@@ -241,7 +241,11 @@ partial gap is counted under it. The categories are `oversize-file` (a file
 over `max_file_size` or `max_notebook_size`), `unresolved-link` (a symbolic
 link, gitlink or submodule not followed), `unparsed-input` (content that did
 not parse or could not be decoded, or an input defect, including a structured
-document whose excerpts were withheld because it did not parse),
+document whose excerpts were withheld because it did not parse; a manifest,
+agent manifest or MCP configuration that is empty or holds only whitespace and
+a byte-order mark declares nothing and leaves nothing unread, so it is a file
+note (`analyzed in full with a note (empty ...)`) rather than a gap, still
+counted under `strict_coverage`, and a file with a NUL byte stays undecodable),
 `sanitization-limit` (a sanitizer or parser resource limit that left the
 credential-redaction context unestablished, so excerpts were withheld),
 `timeout` (a file's matching budget, a connector deadline or a job deadline,

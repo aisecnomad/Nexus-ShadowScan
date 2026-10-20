@@ -7,6 +7,25 @@ revision; at release time they fold into the release notes. The
 [candidate change history](history/production-change-history.md) keeps the
 full dated log.
 
+## October 20 unparsed-input triage (Unreleased)
+
+- A Continue `mcpServers` block reference (`{uses, with?, override?}`) is now
+  an `mcp-server` finding instead of an input defect. The record gains
+  `block_reference` (sanitized) and `launch_unidentified: true`; its `override`
+  is projected as the server's fields, and a literal credential in `with` sets
+  `secrets_inline` with `secret_locations: ["with"]`. Repositories with such
+  configs gain findings and may stop exiting 3; re-baseline. Finding identity of
+  existing servers is unchanged (unnamed list entries keep index names).
+- An empty or whitespace/BOM-only manifest, agent manifest or MCP configuration
+  is a file note instead of an `unparsed-input` gap. `strict_coverage` still
+  counts it; NUL-bearing files stay undecodable gaps.
+- Under `--profile ci`, a directory whose manifest names its project with
+  template syntax is judged as a template, so its gaps are declared (counted in
+  `declared_omissions`), as for a manifest that does not parse.
+
+These are authored regression fixes measured on offline corpus clones; they do
+not supply live-tenant or independent acceptance.
+
 ## October 18 application and static-tool attribution (Unreleased)
 
 - Display names, publisher labels and descriptions no longer establish an AI
