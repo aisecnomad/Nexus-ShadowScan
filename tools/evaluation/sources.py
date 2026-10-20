@@ -87,6 +87,7 @@ def bundled_source_index() -> SourceIndex:
                 "attribution_corpus.json",
                 "current_idioms_corpus.json",
                 "benchmark_followup_corpus.json",
+                "sab_holdout_corpus.json",
             )
         ),
     ):
