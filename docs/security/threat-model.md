@@ -5,7 +5,9 @@ control enforces each boundary. It restates the trust model that
 [`AGENTS.md`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/AGENTS.md)
 holds for contributors and the per-connector egress and limit notes in
 [production](../production.md), so a reviewer can start here instead of
-reassembling them. [SECURITY.md](../security.md) remains the reporting policy.
+reassembling them. [SECURITY.md](../security.md) remains the reporting policy;
+[controls and limits](controls.md) lists every implemented control with its
+limits, and [redaction](redaction.md) what reports withhold.
 
 ## What is being protected
 
@@ -34,6 +36,61 @@ purpose and are never executed.
 The configuration is trusted because an operator authors it. It can therefore
 grant capability deliberately, and each such grant is explicit and narrow
 rather than implied.
+
+The diagram, also in [SECURITY.md](../security.md), shows where each boundary
+is enforced: untrusted input crosses into the scanner only through the egress
+controls, the bounded readers or the plugin allowlist, and nothing reaches a
+report without fail-closed coverage accounting and redaction.
+
+```mermaid
+flowchart LR
+    subgraph untrusted["Untrusted"]
+        direction TB
+        api["Remote API responses"]
+        repos["Scanned repositories"]
+        exports["Offline exports and logs"]
+        corpora["Benchmark corpora and artifacts"]
+        plugins["Third-party plugins"]
+    end
+
+    subgraph trusted["Trusted: operator workstation or CI runner"]
+        direction TB
+        config["Scan configuration"]
+        packages["Installed Python packages"]
+        egress{{"HTTPS, origin and<br/>private-address controls"}}
+        readers{{"Bounded readers and parsers,<br/>no symlinks followed"}}
+        allowlist{{"Plugin allowlist:<br/>exact names, not a sandbox"}}
+        engine["Engine and built-in connectors"]
+        coverage{{"Fail-closed coverage accounting:<br/>incomplete scan exits 3"}}
+        redaction{{"Sanitization and redaction"}}
+        reports[("Reports, record dumps and<br/>incremental state: sensitive")]
+    end
+
+    api --> egress --> engine
+    repos --> readers
+    exports --> readers
+    corpora -.->|read as data, never executed| readers
+    readers --> engine
+    plugins --> allowlist --> engine
+    config --> engine
+    packages --> engine
+    engine --> coverage --> redaction --> reports
+```
+
+## STRIDE summary
+
+Each row names a representative threat and the controls that answer it; the
+tables under [threats and controls](#threats-and-controls) and the
+[controls and limits](controls.md) page give the detail and the limits.
+
+| Category | Representative threat | Controls |
+|---|---|---|
+| **Spoofing** | An unverified gateway caller name or an unverified JWT granting registration, ownership or permission | Exact card bindings need authenticated caller-field assurance; operator-asserted and unverified names stay review candidates. JWT classification is unverified by default, optional `jwks_url` verification accepts only allowlisted asymmetric algorithms, and `metadata.verified` never grants permission to act. |
+| **Tampering** | Symbolic links, a replaced scan root or provider data redirecting reads or overwriting local provenance | Walks open with `O_NOFOLLOW` and record a link as skipped coverage; CODEOWNERS reads stay anchored to the scan's directory descriptor; live collectors assign classification and collection scope after copying provider fields; reports are written atomically, never to a symbolic link. |
+| **Repudiation** | A report that cannot show what was and was not examined | Incomplete scans exit 3 and set SARIF `executionSuccessful=false`; reports count incomplete reasons and the coverage ledger; record export manifests record provenance and completion; releases carry build provenance and an SBOM attestation. Offline exports remain unauthenticated operator input. |
+| **Information disclosure** | Credentials reaching findings, logs or exports; SSRF to metadata services; correlation of credentials across scans | Redaction before persistence, fixed-summary log events, HMAC credential pseudonyms under a per-scan key, reports with mode 0600; HTTPS only, origin-pinned pagination and refusal of private, loopback, link-local and metadata destinations. |
+| **Denial of service** | YAML expansion, catastrophic regex backtracking, oversized or slow responses, a stalled resolver | Bounded YAML loader, per-pattern match timeouts, response size caps and read deadlines, bounded DNS lookups; every limit hit marks the scan incomplete rather than empty. |
+| **Elevation of privilege** | Code execution through pickles, YAML object tags, Git configuration of untrusted content, or a plugin | Model artifacts are header-parsed and never unpickled; explicit YAML object tags are rejected; Git runs with system and global configuration disabled and hooks suppressed; third-party plugins need an exact-name allowlist and run with scanner privileges, which is not a sandbox. |
 
 ## Threats and controls
 

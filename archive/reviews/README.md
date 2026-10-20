@@ -1,8 +1,12 @@
 # Review logs
 
 Internal, AI-assisted hardening and review logs from September and October
-2026, kept for history. They are not part of the published documentation and are not
-independent review; see [governance](../../docs/governance.md).
+2026, kept for history. They are not independent review; see
+[governance](../../docs/governance.md). The consolidated log is also published
+on the documentation site as the [hardening log](../../docs/security/hardening-log.md),
+which includes it unchanged apart from its three relative links, made absolute
+so that they resolve there too. The other records are not part of the published
+documentation.
 
 Each record was written by the maintainer with an AI assistant, most while
 changing the code they describe, and says so in its first lines. None is a second-person

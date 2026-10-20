@@ -71,7 +71,7 @@ Passing the CI checks, the CodeQL analysis or the OpenSSF Scorecard is not indep
 |---|---|---|---|
 | `repo_public` | MUST | **Met** | [`aisecnomad/Nexus-ShadowScan`](https://github.com/aisecnomad/Nexus-ShadowScan) is public on GitHub. |
 | `repo_track` | MUST | **Met** | The git history records who changed what and when. |
-| `repo_interim` | MUST | **Met** | Changes reach `main` through pull requests between releases, and [RELEASE_NOTES.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/RELEASE_NOTES.md) lists the ones not yet released under Unreleased. |
+| `repo_interim` | MUST | **Met** | Changes reach `main` through pull requests between releases, and the [release notes](../release-notes.md) and [`CHANGELOG.md`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md) list the ones not yet released under Unreleased. |
 | `repo_distributed` | SUGGESTED | **Met** | The repository uses git, a distributed version control system. |
 
 #### Unique version numbering
@@ -86,7 +86,7 @@ Passing the CI checks, the CodeQL analysis or the OpenSSF Scorecard is not indep
 
 | Criterion | Level | Status | Evidence |
 |---|---|---|---|
-| `release_notes` | MUST | **Met** | [`RELEASE_NOTES.md`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/RELEASE_NOTES.md) has one written section per release, and [`CHANGELOG.md`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md) records the changes. Neither is a `git log`. |
+| `release_notes` | MUST | **Met** | The [release notes](../release-notes.md) (`docs/release-notes.md`, which [`RELEASE_NOTES.md`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/RELEASE_NOTES.md) points to) have one written section per release, and [`CHANGELOG.md`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md) summarizes the changes of each. Neither is a `git log`. |
 | `release_notes_vulns` | MUST | **Confirm** | N/A is allowed when no release has fixed a publicly known vulnerability in ShadowScan itself that already had a CVE. Check the repository's [security advisories](https://github.com/aisecnomad/Nexus-ShadowScan/security/advisories) before choosing it. |
 
 ### Reporting

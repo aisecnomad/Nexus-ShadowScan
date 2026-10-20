@@ -77,7 +77,7 @@ package.
 1. **Prepare the candidate.** Set the same version in `pyproject.toml`,
    `shadowscan/__init__.py` and `CITATION.cff` (CI checks that they match).
    Date the release headings in `CHANGELOG.md`, `docs/engineering-log.md` and
-   `RELEASE_NOTES.md` and remove "unreleased" from them. Merge through the normal review process.
+   `docs/release-notes.md` and remove "unreleased" from them. Merge through the normal review process.
 2. **Review and accept the exact commit**, as the
    [release process](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/GOVERNANCE.md#release-process)
    requires. A green CI run is not that review.
@@ -200,7 +200,7 @@ package.
    changes only once the maintainer publishes the draft.
 
    The maintainer then opens the draft, replaces its notes with the version's
-   `RELEASE_NOTES.md` section, checks that the assets match the table above
+   `docs/release-notes.md` section, checks that the assets match the table above
    and `SHA256SUMS`, and publishes it by hand. Anyone can check a downloaded
    file without the attestation store, against the bundles in the same
    release:

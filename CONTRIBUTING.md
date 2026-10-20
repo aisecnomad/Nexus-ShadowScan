@@ -93,7 +93,7 @@ Dependabot and the tests read them from there:
 | `mkdocs.yml` | Documentation site configuration and navigation |
 | `Dockerfile`, `.dockerignore` | The worker image and its build-context allow-list |
 | `agent-card.yaml` | Sample Agent Capability Card used by the offline demo, the quick start and the image |
-| `CHANGELOG.md`, `docs/engineering-log.md`, `RELEASE_NOTES.md` | One line per change, the detailed engineering log, and the operator summary of what changes on upgrade |
+| `CHANGELOG.md`, `RELEASE_NOTES.md` | A short list of changes per release; `RELEASE_NOTES.md` points to the operator release notes in `docs/release-notes.md`, and `docs/engineering-log.md` holds the detailed entry for each change |
 | `AGENTS.md` | Rules for coding agents working in this repository |
 | `CITATION.cff`, `NOTICE`, `LICENSE`, `CODEOWNERS` | Citation metadata, attribution, licence and review ownership |
 
@@ -313,7 +313,8 @@ contract. In brief:
    test fails when it is stale. Document required API scopes and the offline
    export format in the connector guide under `docs/connectors/`, and add the
    connector's summary row to [docs/connectors.md](docs/connectors.md). Run
-   `make readme-matrix` too: the README detection matrix lists the identity,
+   `make readme-matrix` too: the
+   [detection matrix](docs/reference/detection-matrix.md) lists the identity,
    gateway, low-code, SaaS and network connectors, and a test fails when it is
    stale. Run `make readme-visuals` as well: the connector diagram under
    `docs/assets/` names every built-in connector, and a test fails when it is
@@ -331,7 +332,7 @@ Signatures are YAML. Add a pack directory with `--signatures` or the
 ```bash
 python -m shadowscan.signatures.validate
 make evaluate
-make readme-matrix   # the README detection matrix is generated from the built-in packs
+make readme-matrix   # docs/reference/detection-matrix.md is generated from the built-in packs
 ```
 
 See [docs/signatures.md](docs/signatures.md) for the schema and authoring guide.

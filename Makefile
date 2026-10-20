@@ -230,11 +230,11 @@ connector-inventory: ## Regenerate docs/connectors/inventory.json, the machine-r
 	python -m tools.connector_inventory
 
 .PHONY: readme-matrix
-readme-matrix: ## Regenerate the README detection matrix from the signature packs and connector classes
+readme-matrix: ## Regenerate the detection matrix (docs/reference/detection-matrix.md) from the signature packs and connector classes
 	python -m tools.readme_matrix
 
 .PHONY: readme-visuals
-readme-visuals: ## Regenerate the README banner, architecture diagrams and benchmark chart (docs/assets/*.svg)
+readme-visuals: ## Regenerate the README banner, architecture diagrams and evaluation benchmark chart (docs/assets/*.svg)
 	python -m tools.readme_visuals
 
 .PHONY: mapping-reference

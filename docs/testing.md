@@ -212,6 +212,38 @@ it fails, make the pattern linear (possessive quantifiers from the `regex` modul
 run under `pattern_timeout()`), bound its input, or add it to `ALLOWED` with the
 reason the sweep's input cannot reach it.
 
+## Make targets
+
+`make help` lists every target by section. The ones you need most:
+
+| Target | Description |
+|---|---|
+| `make install` | Editable install with dev + cloud + docs extras from hash-locked requirements |
+| `make install-dev` | Dev extras only (no cloud SDKs) |
+| `make lint` | Run ruff linter |
+| `make format` | Run ruff formatter |
+| `make typecheck` | Run mypy type checker |
+| `make complexity` | Fail when a function or module grows past `tools/complexity_baseline.json` |
+| `make test` | Test suite with coverage (80% floor) |
+| `make test-fast` | Tests without coverage, stop at first failure |
+| `make test-parallel` | Tests in parallel with pytest-xdist |
+| `make coverage-gate` | Per-connector 75% coverage floor |
+| `make signatures` | Validate all signature schemas |
+| `make mappings` | Validate mapping catalogs |
+| `make secrets` | Hardcoded credential gate |
+| `make self-scan` | Scan this checkout with ShadowScan itself; an incomplete scan fails |
+| `make audit` | pip-audit on environment and all lock files |
+| `make evaluate` | Run bundled regression corpora |
+| `make check` | All quality gates combined |
+| `make demo` | Run bundled offline demo |
+| `make docs` | Build MkDocs documentation site |
+| `make connector-reference` | Regenerate connector reference page |
+| `make readme-matrix` | Regenerate the [detection matrix](reference/detection-matrix.md) |
+| `make readme-visuals` | Regenerate banner and architecture SVGs |
+| `make build` | Build sdist and wheel |
+| `make docker` | Build container image |
+| `make clean` | Remove build artifacts and caches |
+
 ## Function and module size
 
 `make complexity` runs `python -m tools.complexity_gate`, which holds two measures to

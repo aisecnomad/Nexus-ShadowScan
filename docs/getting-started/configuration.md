@@ -6,12 +6,36 @@ values fail closed. An invalid configuration, like an invalid command-line
 option, stops the command with exit code 1 before anything is scanned (see
 [exit codes](../operations/ci.md#exit-code-handling)).
 
+## Minimal example
+
+```yaml
+# shadowscan.yaml — minimal example
+inventory: [./inventory]
+connectors:
+  - name: identity.entra
+    tenant_id: ${AZURE_TENANT_ID}
+    client_id: ${AZURE_CLIENT_ID}
+    client_secret: ${AZURE_CLIENT_SECRET}
+  - name: saas.slack
+    token: ${SLACK_TOKEN}
+  - name: cloud.aws
+    regions: [us-east-1, eu-west-1]
+```
+
+!!! warning "Security"
+    Keep secrets in the environment (`${VAR}`), never in the file.
+    The scanner rejects a configuration that mixes a live code connector with
+    credentialed tenant connectors unless `options.allow_credential_mixing` is set,
+    and cloud instance-metadata credentials need `options.allow_instance_credentials`.
+    Run repository scans separately from live tenant collection.
+
 ## Common options
 
-This page shows the options most configurations use. `parallel`, `incremental`,
-`state_dir`, `workdir`, `job_deadline_seconds`, `risk_basis` and `risk_weights`
-are documented in [risk scoring](../concepts/risk.md),
-[scan semantics](../scanning.md) and [production deployment](../production.md).
+This page shows the options most configurations use. `parallel`, `workdir` and
+`risk_weights`, and the details of `incremental`, `state_dir`,
+`job_deadline_seconds` and `risk_basis`, are documented in
+[risk scoring](../concepts/risk.md), [scan semantics](../scanning.md) and
+[production deployment](../production.md).
 
 ```yaml
 # shadowscan.yaml
@@ -22,6 +46,7 @@ options:
   fail_on: high                       # exit 2 if any finding reaches this level
   dump_records: ./exports             # sanitized records for offline re-runs
   # connector_timeout_seconds: 300    # fixed deadline per connector; omit it for 120 s, raised to fit a large tree
+  job_deadline_seconds: 600           # whole-process deadline
   allow_private_origin: false         # permit non-global IP addresses (every connector)
   allow_instance_credentials: false   # permit cloud instance-metadata credentials
   allow_credential_mixing: false      # permit repo + live tenant in one scan
@@ -29,6 +54,9 @@ options:
   plugins: []                         # exact-name allowlist for third-party connectors
   plugin_execution: process           # or thread: in-process plugins (previous default)
   plugin_env: []                      # credential-shaped variables a plugin worker keeps
+  risk_basis: combined                # or danger (excludes governance factors)
+  incremental: false                  # content-addressed result caching
+  state_dir: .shadowscan-state       # private incremental state directory
 
 connectors:
   - name: code.github
@@ -217,6 +245,10 @@ static exports. Live APIs and gateway logs are refreshed on every run.
 shadowscan connectors                      # list all connectors with config keys
 shadowscan connectors --surface code       # filter by surface
 ```
+
+`shadowscan connectors` lists each connector's configuration keys and required
+extras; `shadowscan connectors --json` also lists offline export formats. The
+[connector guide](../connectors.md) covers credential scopes and offline formats.
 
 ## Signature listing
 
