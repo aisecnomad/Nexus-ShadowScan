@@ -354,6 +354,7 @@ rest.
 | module | responsibility |
 |---|---|
 | `shadowscan/utils/http.py` | shared HTTPS client: destination policy, retries, 16 MiB response limit and whole-body read deadline |
+| `shadowscan/utils/http_scope.py` | the per-worker private-origin policy and request deadline the engine sets around every connector; the client reads the same context variables, and local scans set them without importing `requests` |
 | `shadowscan/utils/files.py` | confined reads: no link followed in any path component, directories opened for traversal only (`O_PATH` on Linux) |
 | `shadowscan/utils/output.py` | atomic, owner-readable output files and private export directories |
 | `shadowscan/utils/redaction.py` | redaction API (`sanitize`, `sanitize_text`, `policy_token`) driving the passes in the `redaction_*` modules; patch rules here, never in a `redaction_*` module |

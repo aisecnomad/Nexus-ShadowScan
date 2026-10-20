@@ -65,7 +65,6 @@ from shadowscan.connectors.base import ConnectorError, _positive_limit
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.matcher import reported_credential
-from shadowscan.utils.http import HttpError
 from shadowscan.utils.placeholders import PLACEHOLDER_WORDS as _PLACEHOLDER_WORDS
 from shadowscan.utils.placeholders import TRANSLATED_CREDENTIAL_WORDS as _TRANSLATED_CREDENTIAL_WORDS
 from shadowscan.utils.placeholders import TRANSLATED_PLACEHOLDER_WORDS as _TRANSLATED_PLACEHOLDER_WORDS
@@ -108,6 +107,10 @@ def failure_summary(exc: BaseException) -> str:
     Provider error documents and SDK messages can echo request arguments or
     credentials, so connector diagnostics never include them.
     """
+    # Imported here: local code scans load this module but never the HTTP transport,
+    # and an HttpError can only exist once a connector has imported it.
+    from shadowscan.utils.http import HttpError
+
     return f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
 
 
@@ -118,6 +121,8 @@ def failure_outcome(exc: BaseException) -> str:
     the client could not wait out. The shared paginators report their page limit in a fixed
     message; every other failure is ``failed``.
     """
+    from shadowscan.utils.http import HttpError
+
     if isinstance(exc, HttpError):
         if exc.status in (401, 403):
             return "denied"
