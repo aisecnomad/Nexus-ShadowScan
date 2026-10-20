@@ -94,7 +94,9 @@ JSON reports ── diff · merge (fleet) · dashboard · controls · inventory 
 
 Detection knowledge lives in YAML signature packs and threat and control
 references in YAML mapping catalogs, so adding a product is a data change, not
-a code change. Collection and analysis fail closed: an API error, a timeout,
+a code change.
+
+Collection and analysis fail closed: an API error, a timeout,
 a refused page, an unparseable manifest or a malformed export marks the scan
 incomplete (exit 3) rather than producing a smaller report that looks clean.
 A gap the scanner can bound — a handful of unreadable entries in a large tree
@@ -170,8 +172,8 @@ shadowscan jwt --file tokens.txt --jwks-url https://login.example.com/.well-know
 ```
 
 `agent-card.yaml`, `examples/` and the sample exports under `tests/fixtures/`
-come from a repository checkout; the wheel does not ship them. Scanning the
-ShadowScan checkout itself with `shadowscan code .` reports an incomplete scan
+come from a repository checkout; the wheel does not ship them.
+Scanning the ShadowScan checkout itself with `shadowscan code .` reports an incomplete scan
 (exit 3): a few redaction test files are built to exceed the sanitizer's own
 safety limits, and a finding the sanitizer cannot bound is withheld rather than
 published unredacted — that is unbounded, so no budget applies to it. Its handful
@@ -234,21 +236,21 @@ documents every command and option; `shadowscan <command> --help` prints them fo
 | **3** | Scan incomplete (API error, timeout, denied access, limit, malformed export); `diff` returns 3 when reports are not comparable |
 
 Gate CI on any non-zero exit: exit 1 means nothing was scanned, and an
-incomplete scan never reads as clean. On exit 3 the CLI names the reason
-categories on stderr (`scan incomplete (exit 3): oversize-file 2`) and the
+incomplete scan never reads as clean.
+On exit 3 the CLI names the reason categories on stderr (`scan incomplete (exit 3): oversize-file 2`), and the
 report counts them in `summary.incomplete_reasons`; `shadowscan code --profile ci`
 declares the gaps a source gate accepts (dangling test certificate links,
 malformed fixtures, generated code) in advance and counts them in
 `summary.declared_omissions`, never one that left a file unread for
-credentials. Exit 0 from a complete
-static scan does not prove that no agent runs; see
+credentials.
+Exit 0 from a complete static scan does not prove that no agent runs; see
 [scan semantics](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/scanning.md).
 
 ---
 
 ## Python API reference
 
-The CLI is built on the same Python API. The JSON report (`--format json`) is
+The CLI uses the same Python API. The JSON report (`--format json`) is
 the stable contract; treat the Python objects as unstable between releases
 until 1.0 and pin a reviewed commit.
 
@@ -485,7 +487,7 @@ endpoint and runtime connectors are in [Surfaces & connectors](#surfaces--connec
 Offline results from this repository's own benchmarks. The maintainer wrote
 ShadowScan, both corpora, their labels and the harnesses, with AI coding
 assistants (Claude, Codex, Grok, Google Antigravity and others), so these numbers are
-regression evidence about the listed inputs. They are **not** independent review
+regression evidence about the listed inputs. They are **not** independent reviews
 and **not** measured production precision or recall.
 
 | Track (run, version) | Inputs | ShadowScan result | Limits |
@@ -495,18 +497,19 @@ and **not** measured production precision or recall.
 
 Each report also runs other open-source tools on their declared scope, which is
 narrower than nine surfaces; compare their in-scope columns in the report, not
-these headline numbers. After the 2026-10-11 estate run, ShadowScan's
-detection rules were changed with that run's errors in view (ambiguous Gemini
-names, Notion bots, gateway `/api/chat` and `/generate` routes, Kubernetes
+these headline numbers.
+After the 2026-10-11 estate run, ShadowScan's detection rules were changed with that run's errors in view
+(ambiguous Gemini names, Notion bots, gateway `/api/chat` and `/generate` routes, Kubernetes
 serving-engine images, n8n HTTP model calls, ServiceNow flow names, and the
-Wudpecker note-taker). A ShadowScan run on the estate after those changes is
+Wudpecker note-taker).
+A ShadowScan run on the estate after those changes is
 in-sample: fewer errors on it are not evidence of better field accuracy.
 ShadowScan's weakest surfaces in the
 [cases run](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/cases/results/2026-10-11/REPORT.md)
 are identity (57% entity precision at 97% recall) and SaaS (51% at 88%)
 against decoy-heavy exports, so read the per-surface tables before relying
-on any single surface. The
-[benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md)
+on any single surface.
+The [benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md)
 lists every benchmark with its protocol and limits.
 
 <p align="center">
