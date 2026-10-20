@@ -360,10 +360,11 @@ and the
 - The advisory AI review gate (`tools/ai_review`, `.github/workflows/ai-review-gate.yml`)
   runs only for pull requests that carry evidence under `.github/ai-review/`;
   its best outcome is a `neutral` check, never `success`, it posts `COMMENT`
-  reviews only, and it must not be a required check. The governance documents record the 2026-10-10 ruleset
-  readback: `CI gate` is required, but both `main` rulesets still list four
-  `always` bypass actors, so the merge gate is not yet enforced against a
-  repository administrator.
+  reviews only, and it must not be a required check. The historical October 10
+  ruleset readback listed four `always` bypass actors; the later
+  [October 18 administrator readback](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/operations/merge-policy.md#october-18-readback)
+  recorded empty bypass lists. Verify current enforcement and exact-head review
+  before merging or deploying; historical snapshots do not establish live policy.
 
 ### Known limitations
 

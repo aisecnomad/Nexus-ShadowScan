@@ -25,6 +25,8 @@ reflect only retained findings. YAML integrity defects preserve generic image
 inventory while keeping scans incomplete, and ordinary reference URLs alone no
 longer flag MCP tool poisoning. Dispatch proof caching remains bounded and
 respects import shadowing; scan summaries share incomplete-reason aggregation.
+The sample Dockerfile uses a digest-pinned Node 22 image and an integrity-locked
+CLI dependency graph, with package lifecycle scripts disabled.
 
 ## 0.1.2 — 2026-10-08
 

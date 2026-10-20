@@ -71,7 +71,7 @@ Passing the CI checks, the CodeQL analysis or the OpenSSF Scorecard is not indep
 |---|---|---|---|
 | `repo_public` | MUST | **Met** | [`aisecnomad/Nexus-ShadowScan`](https://github.com/aisecnomad/Nexus-ShadowScan) is public on GitHub. |
 | `repo_track` | MUST | **Met** | The git history records who changed what and when. |
-| `repo_interim` | MUST | **Met** | Changes reach `main` through pull requests between releases, and [RELEASE_NOTES.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/RELEASE_NOTES.md) lists the ones not yet released under Unreleased. |
+| `repo_interim` | MUST | **Met** | Changes reach `main` through pull requests between releases, and [RELEASE_NOTES.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/RELEASE_NOTES.md) identifies the current candidate and distinguishes release preparation from publication. |
 | `repo_distributed` | SUGGESTED | **Met** | The repository uses git, a distributed version control system. |
 
 #### Unique version numbering

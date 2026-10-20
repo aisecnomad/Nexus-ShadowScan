@@ -13,6 +13,19 @@ Counts and figures quoted in an entry are those of its date.
 
 ## 0.1.3 — 2026-10-20
 
+### Lock the sample Dockerfile's CLI dependency graph (October 20)
+
+The post-merge Scorecard report still found an unpinned global npm installation
+in the synthetic support-bot Dockerfile. A separate manifest and lock now pin
+Claude Code 2.1.304 and all eight native optional packages to registry SHA-512
+integrities. The fixture uses `npm ci` with lifecycle scripts disabled and a
+verified Node 22-slim image digest to satisfy the package's engine requirement.
+The dependency remains detectable without implying that an agent is running.
+No fixture image or CLI was executed, and no production dependency changed.
+The [alert triage record](operations/security-alert-triage.md#october-20-fixture-pinning-follow-up)
+preserves the prior dispositions and distinguishes this correction from a
+measured Scorecard result.
+
 ### Local scan usability, companion benchmarks and release evidence (October 20)
 
 Added `shadowscan code --quick` for bounded scans of exact staged Git blobs,

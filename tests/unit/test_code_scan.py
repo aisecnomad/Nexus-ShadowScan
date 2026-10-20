@@ -35,6 +35,7 @@ def _by_kind(findings):
 def test_sample_repo_scan(run_connector, fixtures):
     findings, ctx = run_connector("code.filesystem", path=str(fixtures / "sample_repo"), label="fixture")
     assert not ctx.stats.errors
+    assert not ctx.stats.incomplete
     kinds = _by_kind(findings)
     projects = {f.metadata["path"]: f for f in kinds[Kind.AGENT] if f.resource_type == "project"}
     research = projects["services/research-agent"]
@@ -46,6 +47,9 @@ def test_sample_repo_scan(run_connector, fixtures):
     assert research.owner == "@acme/data-science"  # CODEOWNERS
     support = projects["services/support-bot"]
     assert "framework.vercel-ai-sdk" in support.frameworks and "protocol.mcp" in support.frameworks
+    cli = next(f for f in findings if f.metadata.get("path") == "services/support-bot/claude-cli")
+    assert cli.kind == Kind.FRAMEWORK_USAGE  # An installed CLI dependency alone does not prove an agent.
+    assert "npm:@anthropic-ai/claude-code" in cli.metadata["dependencies_matched"]
     root = projects["."]
     assert {
         "framework.microsoft-agent-framework",
