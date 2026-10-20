@@ -26,6 +26,37 @@ Counts and figures quoted in an entry are those of its date.
   records stay strict: `CoverageGap` rejects an unknown reason at creation.
   Regression tests cover acceptance, the preserved slug, the still-strict
   write path and the still-refused forgeries.
+
+### Repository scan completion and bounded processing (October 20)
+
+Adapted reviewed changes from
+[PR #284](https://github.com/aisecnomad/Nexus-ShadowScan/pull/284) onto the
+existing staged-scan and readiness workflows. The filesystem probe counts up to
+180,000 entries within its unchanged one-second bound and proposes at most
+1800 seconds at the 120-second default. The existing rate of 12,000 entries per
+default budget, engine ceiling and treatment of explicit timeouts are unchanged.
+This removes the earlier 200-second estimate ceiling; it does not establish a
+measured throughput or promise that every repository finishes.
+
+Recognized media and font headers can identify binary artifacts selected only
+by a broad file glob. Source and agent-instruction names still record binary
+coverage gaps. Hypothesis's `.hypothesis` example database joins the documented
+default tool-cache exclusions; disabling those exclusions restores its scope.
+Supported IPython package-manager automagic is normalized within a single-line
+notebook cell, while unknown forms and malformed multiline cells remain gaps.
+
+Generic credential-assignment matching avoids repeated regex work inside long
+failed identifiers while preserving long valid assignments, match spans and
+order, quotas and incomplete-scan semantics. Only the exact supported grammar
+receives the optimization; other custom patterns retain their original behavior.
+Required-literal hints still derive from the declared pattern. The signature
+pack's declared patterns and the bounded native-event YAML parser are unchanged.
+
+The [incomplete-scan guide](getting-started/incomplete-scans.md) links readiness
+checks, private reports, reason categories and scope-aware remediation. No
+coverage budget, file-size, parser, sanitizer or credential quota is relaxed.
+The existing preflight schema continues to report that no scan ran.
+
 ### Local scan usability, companion benchmarks and release evidence (October 20)
 
 Added `shadowscan code --quick` for bounded scans of exact staged Git blobs,

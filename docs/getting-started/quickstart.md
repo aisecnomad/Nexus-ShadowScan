@@ -19,6 +19,8 @@ ShadowScan checkout, `make self-scan` scans it with
 documented reason, and completes with exit 0.
 `shadowscan code tests/fixtures/sample_repo --inventory agent-card.yaml`
 scans the bundled sample repository and completes in seconds.
+For an incomplete result on your own repository, follow
+[incomplete-scan troubleshooting](incomplete-scans.md).
 
 To mark which agents are sanctioned, add `--inventory <path>` with an existing
 card file or directory (for example the bundled `agent-card.yaml`); the path must

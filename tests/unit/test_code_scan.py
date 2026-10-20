@@ -361,6 +361,19 @@ def test_disclosed_names_are_a_subset_of_the_default_excludes():
     assert quiet <= DEFAULT_EXCLUDES and not quiet & DISCLOSED_DEFAULT_EXCLUDES
 
 
+def test_hypothesis_cache_is_quietly_excluded_and_can_be_scanned(tmp_path, run_connector):
+    _default_exclusion_repo(tmp_path, ".hypothesis")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert "framework.langgraph" in _frameworks(findings)
+    assert "framework.crewai" not in _frameworks(findings)
+    assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+    findings, ctx = run_connector(
+        "code.filesystem", path=str(tmp_path), use_git=False, default_excludes=False
+    )
+    assert {"framework.langgraph", "framework.crewai"} <= _frameworks(findings)
+    assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+
+
 @pytest.mark.parametrize("name", sorted(DISCLOSED_DEFAULT_EXCLUDES))
 def test_default_excluded_directory_is_disclosed_and_can_be_scanned(tmp_path, run_connector, name):
     _default_exclusion_repo(tmp_path, name)
@@ -560,8 +573,27 @@ def _notebook(*cells: str) -> str:
         "%matplotlib inline\n%load_ext autoreload\n",
         "%%time\nimport json\n",
         "for package in ['langchain']:\n    !pip install {package}\n",
+        # IPython's package-manager automagics also accept these without "%".
+        'pip install -U "autogen-agentchat" "autogen-ext[openai]"\n',
+        "conda install -y numpy\n",
+        "uv add langchain\n",
+        "uv pip install langchain\n",
+        "mamba install numpy\n",
+        "micromamba install numpy\n",
     ],
-    ids=["pip-magic", "shell", "line-magics", "cell-magic", "indented-shell"],
+    ids=[
+        "pip-magic",
+        "shell",
+        "line-magics",
+        "cell-magic",
+        "indented-shell",
+        "pip-automagic",
+        "conda-automagic",
+        "uv-automagic",
+        "uv-pip-automagic",
+        "mamba-automagic",
+        "micromamba-automagic",
+    ],
 )
 def test_notebook_magics_and_shell_lines_keep_the_import_binder(tmp_path, run_connector, setup):
     # IPython rewrites these lines before Python sees them. They used to make the
@@ -570,6 +602,58 @@ def test_notebook_magics_and_shell_lines_keep_the_import_binder(tmp_path, run_co
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.warnings and not ctx.stats.errors
     assert any(finding.kind == Kind.AGENT for finding in findings)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "pip in installed",
+        "uv = install",
+        "pip.install(x)",
+        "conda(install)",
+        "uv.pip.install(x)",
+        "mamba += 1",
+    ],
+)
+def test_python_that_starts_with_a_package_manager_name_is_not_a_magic(line):
+    from shadowscan.connectors.code.source_text import _without_ipython_lines
+
+    assert _without_ipython_lines(line + "\n") == line + "\n"
+
+
+@pytest.mark.parametrize("line", ["pip3 install openai", "npm install openai"])
+def test_unregistered_package_manager_names_remain_unparsed_notebook_gaps(tmp_path, run_connector, line):
+    from shadowscan.connectors.code.source_text import _without_ipython_lines
+
+    assert _without_ipython_lines(line + "\n") == line + "\n"
+    (tmp_path / "agent.ipynb").write_text(_notebook(line + "\n", _LANGCHAIN_AGENT))
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+    assert ctx.stats.incomplete_reasons == {"unparsed-input": 1}
+
+
+@pytest.mark.parametrize("setup", ["pip install openai\n", "uv pip install openai\n"])
+def test_automagic_in_a_multiline_cell_remains_an_unparsed_gap(tmp_path, run_connector, setup):
+    (tmp_path / "agent.ipynb").write_text(_notebook(setup + _LANGCHAIN_AGENT))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete_reasons == {"unparsed-input": 1}
+    assert all(finding.kind != Kind.AGENT for finding in findings)
+
+
+def test_automagic_rewrite_preserves_cell_offsets_and_other_cell_content():
+    from shadowscan.connectors.code.source_text import _without_ipython_lines
+
+    first = "uv pip install openai\n"
+    second = 'example = """\npip install is documentation\n"""\n'
+    text = first + "\n" + second
+    cells = ((0, len(first)), (len(first) + 1, len(text)))
+    rewritten = _without_ipython_lines(text, cells)
+    assert len(rewritten) == len(text)
+    assert rewritten[: len(first)].strip() == "0"
+    assert rewritten[len(first) + 1 :] == second
+    assert [i for i, character in enumerate(rewritten) if character == "\n"] == [
+        i for i, character in enumerate(text) if character == "\n"
+    ]
 
 
 def test_percent_continuation_lines_in_a_notebook_are_python(tmp_path, run_connector):

@@ -231,15 +231,39 @@ def _quote_glob_values(front_matter: str) -> str:
 # alone on its line, as IPython rewrites them before Python reads the cell.
 # "% name" continuing an expression is the modulo operator and stays.
 _IPYTHON_LINE = re.compile(r"^([ \t]*+)((?:%%?[A-Za-z_]|!)[^\n]*)", re.MULTILINE)
+# Unescaped package-manager magics apply only to a single-line input cell.
+# A magic name followed by one of these subcommands is not a Python statement;
+# no subcommand listed is a keyword ("pip in xs" stays).
+_IPYTHON_AUTOMAGIC = re.compile(
+    r"^([ \t]*+)((?:uv[ \t]++pip\b|(?:pip|conda|mamba|micromamba|uv)[ \t]++"
+    r"(?:install|uninstall|download|list|show|freeze|check|config|create|env|remove|update|upgrade|"
+    r"add|sync|search|info|init)\b)[^\n]*)",
+)
 
 
-def _without_ipython_lines(text: str) -> str:
+def _without_ipython_lines(text: str, cells: _CellSpans = ()) -> str:
     """Replace a notebook's magic and shell lines with an inert expression, keeping every offset.
 
     IPython turns each into an expression statement, so an indented one can be a
     block's only statement: it becomes ``0`` padded to its length, not blanks.
+    Unescaped package-manager magics are restricted to single-line cells;
+    absent cell spans, ``text`` is one cell.
     """
-    return _IPYTHON_LINE.sub(lambda match: match[1] + "0" + " " * (len(match[2]) - 1), text)
+
+    def inert(match: re.Match[str]) -> str:
+        return match[1] + "0" + " " * (len(match[2]) - 1)
+
+    source = _IPYTHON_LINE.sub(inert, text)
+    pieces: list[str] = []
+    previous = 0
+    for start, end in cells or ((0, len(source)),):
+        cell = source[start:end]
+        if len(cell.splitlines()) == 1:
+            cell = _IPYTHON_AUTOMAGIC.sub(inert, cell)
+        pieces.extend((source[previous:start], cell))
+        previous = end
+    pieces.append(source[previous:])
+    return "".join(pieces)
 
 
 def _within(offset: int, spans: Sequence[tuple[int, int]]) -> bool:
@@ -331,7 +355,7 @@ def _notebook_binder_source(
     bound like any other cell. One that does not parse is blanked without being
     reported as unparsed: lexical evidence only, not a coverage gap.
     """
-    source = _without_ipython_lines(text)
+    source = _without_ipython_lines(text, cells)
     declared = set(foreign)
     unparsed: list[int] = []
     unread: list[tuple[int, int]] = []
