@@ -29,6 +29,13 @@ Counts and figures quoted in an entry are those of its date.
   from the example lost both and every pod's `python3` merged into one
   finding. Both rules now emit them; a regression test parses the example and
   fails on the previous version.
+- The execution rule also omitted `proc.name`, the reader's only process-name
+  field, while emitting `proc.cmdline`, which it does not read. An alert from
+  that template for `ollama serve` therefore produced no matching finding.
+  The template now emits `proc.name`; a regression builds an alert using only
+  the template's selected fields and verifies the expected workload resource.
+  The test fails before the change. This is an offline reader-contract check,
+  not a live Falco deployment test.
 - `RELEASE_NOTES.md` and `docs/production-migrations.md` did not describe
   several operator-visible changes: name-only app attribution, the
   `related_groups`/`related_truncation` contract (only `production.md` and

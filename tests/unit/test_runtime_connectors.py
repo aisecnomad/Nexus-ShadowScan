@@ -896,6 +896,28 @@ def test_example_falco_rules_emit_every_field_the_ebpf_reader_scores() -> None:
     ]
 
 
+def test_example_falco_execution_rule_preserves_the_process_name() -> None:
+    """Only template fields reach the reader; proc.cmdline cannot supply proc.name."""
+    rules = yaml.safe_load((ROOT / "examples/ebpf/falco-rules.yaml").read_text(encoding="utf-8"))
+    [execution] = [rule for rule in rules if rule["condition"] == "spawned_process"]
+    emitted = set(re.findall(r"%([a-z0-9_.]+)", execution["output"]))
+    available_fields = {
+        "user.name": "operator",
+        "proc.name": "ollama",
+        "proc.cmdline": "ollama serve",
+        "container.name": "local-model",
+        "k8s.ns.name": "ai",
+        "k8s.pod.name": "model-0",
+    }
+    alert = {
+        "rule": execution["rule"],
+        "priority": "Notice",
+        "output_fields": {field: available_fields[field] for field in emitted},
+    }
+    findings = list(_ebpf_connector().analyze([alert]))
+    assert [finding.resource for finding in findings] == ["ai/model-0/ollama"]
+
+
 def test_ebpf_reads_every_tracee_sockaddr_argument() -> None:
     connector = _ebpf_connector()
     event = {
