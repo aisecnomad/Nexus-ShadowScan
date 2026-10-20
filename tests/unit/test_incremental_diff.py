@@ -400,7 +400,7 @@ def test_diff_base_with_remote_repositories_applies_only_to_local_paths(tmp_path
     import shadowscan.cli as cli
 
     captured = []
-    monkeypatch.setattr(cli, "_run_scan", lambda config, opts: captured.append(config))
+    monkeypatch.setattr(cli, "_run_scan", lambda config, opts, **_: captured.append(config))
     result = CliRunner().invoke(
         cli.main,
         [

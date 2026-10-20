@@ -424,10 +424,8 @@ def _run_and_emit_with_deadline(
             _exit_abandoned_workers(
                 code, _abandoned_exit_message(result, code, len(engine.abandoned_workers))
             )
-        if preflight:
-            _explain_incomplete(result, preflight=True, code=code)
-        elif code == 3:
-            _explain_incomplete(result)
+        if preflight or code == 3:
+            _explain_incomplete(result, preflight=preflight, code=code)
         sys.exit(code)
     except KeyboardInterrupt:
         # Interpreter exit would join the blocked workers, so keep an exit

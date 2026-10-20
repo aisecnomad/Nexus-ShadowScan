@@ -168,7 +168,8 @@ def test_policy_token_sees_a_rule_replaced_in_any_single_module(monkeypatch, mod
 def test_every_defined_rule_is_part_of_the_policy_token():
     covered = {(id(namespace), name) for namespace, name in redaction._POLICY_BINDINGS}
     for module in MODULES:
-        for name in _defined(module) - {"_POLICY_BINDINGS"}:
+        # __all__ lists the public names; it is not a rule.
+        for name in _defined(module) - {"_POLICY_BINDINGS", "__all__"}:
             if redaction._is_policy(vars(module)[name]):
                 assert (id(vars(module)), name) in covered, (module.__name__, name)
 
