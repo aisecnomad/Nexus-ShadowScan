@@ -269,7 +269,7 @@ reports (`--format json`). None contacts a provider except
 
 | module | responsibility |
 |---|---|
-| `shadowscan/signatures/` | YAML schema (`schema.py`), loader and validator (`loader.py`, `validate.py`) and matchers (`matcher.py`); packs in `data/` |
+| `shadowscan/signatures/` | YAML schema (`schema.py`), loader and validator (`loader.py`, `validate.py`), matchers (`matcher.py`) and per-input execution budgets with built-in patterns compiled on first use (`budget.py`); packs in `data/` |
 | `shadowscan/registry.py` | inventory formats and reconciliation, capability-card stub generation |
 | `shadowscan/registries.py` | vendor registry record contract (`metadata.registry_record`), registry reconciliation statuses, approvals of trusted registries |
 | `shadowscan/mcp_registry.py` | MCP Registry snapshots: the `mcp-registry snapshot` client, snapshot pinning and loading, provenance of configured MCP servers, approved MCP catalogs |
