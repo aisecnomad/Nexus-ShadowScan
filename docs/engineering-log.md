@@ -13,6 +13,20 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Forward-compatible coverage-gap reasons in report readers (October 20)
+
+- `validate_coverage_summary` no longer refuses a report whose published
+  coverage gap carries a reason category this version does not know (#264):
+  a newer scanner's category is accepted when it has the exact shape of this
+  version's own categories, a short lowercase slug (`[a-z0-9][a-z0-9-]{0,31}`),
+  so `diff` and `merge` can still compare and republish the report, and a
+  newer consumer of the republished report keeps the category verbatim. Every
+  previously refused forged value (control characters, path-shaped text,
+  non-strings, uppercase, overlong) is still refused, and this version's own
+  records stay strict: `CoverageGap` rejects an unknown reason at creation.
+  Regression tests cover acceptance, the preserved slug, the still-strict
+  write path and the still-refused forgeries.
+
 ### Correlation disclosure privacy, manifest-defect inventory retention and MCP URL precision (October 20)
 
 Fixes for #268, #267 and #214, each found by an earlier coding-agent review

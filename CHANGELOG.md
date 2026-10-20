@@ -17,6 +17,7 @@ Notion bots, gateway routes, Kubernetes serving images, n8n HTTP model calls
 and ServiceNow flow names were adjusted), so a later ShadowScan run on that
 estate is in-sample.
 
+- Report readers accept a newer scanner's slug-shaped coverage-gap reason instead of refusing the report; forged values stay refused and the write path stays strict (October 20)
 - Correlation disclosures are scope-partition-salted and prune-consistent, a manifest integrity defect keeps the generic image inventory, and a bare URL is no longer MCP tool poisoning (October 20)
 - Two CPython 3.11 serial-run test flakes no longer depend on cyclic-GC timing (October 19)
 - Dependabot #270-#274 carried with regenerated hash locks; aiohttp 3.14.4 fixes three advisories; #273's runtime lock no longer sits below its own extras floors (October 19)
