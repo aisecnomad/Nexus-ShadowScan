@@ -610,15 +610,21 @@ def _scan_timeout(value: Any) -> float:
 
 
 class FilesystemConnector(BaseConnector):
-    #: Entries (directories and files) a probe counts before it stops, and the
-    #: seconds it may spend counting them. Bounded so the estimate costs a
-    #: fraction of a second even on a huge tree or a slow filesystem.
-    _PROBE_LIMIT = 20_000
-    _PROBE_SECONDS = 1.0
     #: Entries the default deadline comfortably covers. Above this the budget
     #: grows in proportion, because the walk's cost is roughly linear in
-    #: entries once signature matching dominates.
-    _ENTRIES_PER_DEFAULT_BUDGET = 12_000
+    #: entries once signature matching dominates. 50 entries a second is about
+    #: half the rate a contended four-CPU runner sustained on agent-framework
+    #: monorepos (AutoGPT, litellm, crewAI); at 100 a second those checkouts ran
+    #: out of time mid-walk and exited 3. A deadline is a ceiling, not a cost.
+    _ENTRIES_PER_DEFAULT_BUDGET = 6_000
+    #: Entries (directories and files) a probe counts before it stops, and the
+    #: seconds it may spend counting them. The limit is the count at which the
+    #: proposal reaches the engine's ceiling (MAX_AUTO_TIMEOUT at the 120 s
+    #: default), so the estimate can propose any deadline up to it; a probe
+    #: lists about 250,000 entries a second, so the bound still costs well under
+    #: a second, and a filesystem too slow to list in time gets the ceiling.
+    _PROBE_LIMIT = 90_000
+    _PROBE_SECONDS = 2.0
 
     @classmethod
     def cache_roots_separately(cls, roots: list[Any], root_ids: Any, *, labelled: bool) -> bool:
@@ -1100,7 +1106,7 @@ class FilesystemConnector(BaseConnector):
         result everywhere except the exit code. The probe counts entries up to
         ``_PROBE_LIMIT`` and stops; reaching the limit means "at least this
         many", so the proposal saturates at ``default * _PROBE_LIMIT /
-        _ENTRIES_PER_DEFAULT_BUDGET`` (200 s at the 120 s default), below the
+        _ENTRIES_PER_DEFAULT_BUDGET`` (1800 s at the 120 s default), the
         engine's own ceiling. A larger tree needs an explicit deadline; one
         that overruns this one is still incomplete.
         """

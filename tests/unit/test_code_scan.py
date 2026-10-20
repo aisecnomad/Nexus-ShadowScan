@@ -560,8 +560,12 @@ def _notebook(*cells: str) -> str:
         "%matplotlib inline\n%load_ext autoreload\n",
         "%%time\nimport json\n",
         "for package in ['langchain']:\n    !pip install {package}\n",
+        # IPython's automagic runs these without the "%"; microsoft/autogen's
+        # tutorial notebooks start this way and were reported as unparsed (exit 3).
+        'pip install -U "autogen-agentchat" "autogen-ext[openai]"\n',
+        "conda install -y numpy\nuv add langchain\n",
     ],
-    ids=["pip-magic", "shell", "line-magics", "cell-magic", "indented-shell"],
+    ids=["pip-magic", "shell", "line-magics", "cell-magic", "indented-shell", "pip-automagic", "automagics"],
 )
 def test_notebook_magics_and_shell_lines_keep_the_import_binder(tmp_path, run_connector, setup):
     # IPython rewrites these lines before Python sees them. They used to make the
@@ -570,6 +574,13 @@ def test_notebook_magics_and_shell_lines_keep_the_import_binder(tmp_path, run_co
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.warnings and not ctx.stats.errors
     assert any(finding.kind == Kind.AGENT for finding in findings)
+
+
+@pytest.mark.parametrize("line", ["pip in installed", "uv = install", "pip.install(x)", "conda(install)"])
+def test_python_that_starts_with_a_package_manager_name_is_not_a_magic(line):
+    from shadowscan.connectors.code.source_text import _without_ipython_lines
+
+    assert _without_ipython_lines(line + "\n") == line + "\n"
 
 
 def test_percent_continuation_lines_in_a_notebook_are_python(tmp_path, run_connector):

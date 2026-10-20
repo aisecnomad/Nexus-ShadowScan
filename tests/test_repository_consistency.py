@@ -1904,8 +1904,9 @@ def test_documented_automatic_deadline_ceiling_matches_the_probe() -> None:
     """The engineering log states the most the filesystem probe can propose, not the engine's cap.
 
     Regression: the entry said the deadline scales "capped at 30 minutes", the
-    engine's ceiling, which a probe that stops counting at 20,000 entries never
-    reaches: the proposal saturates at 200 seconds.
+    engine's ceiling, which a probe that stopped counting at 20,000 entries never
+    reached: the proposal saturated at 200 seconds. The probe now counts as far
+    as the ceiling; the claim must still be the probe's own arithmetic.
     """
     probe = FilesystemConnector
     ceiling = DEFAULT_CONNECTOR_TIMEOUT * probe._PROBE_LIMIT / probe._ENTRIES_PER_DEFAULT_BUDGET

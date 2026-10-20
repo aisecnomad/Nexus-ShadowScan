@@ -320,6 +320,54 @@ def test_signature_code_patterns_are_linear_on_planted_call_options(index, signa
     assert not slow, "superlinear signature patterns:\n  " + "\n  ".join(slow)
 
 
+# Credential patterns run on every file the scanner reads, test cassettes and data files
+# included. An identifier prefix such as ``\\b[A-Z_][A-Z0-9_.-]*API`` restarts at every word
+# boundary of a run like base64url text (``a-a-a-...``) and rescans it to the end: VCR
+# cassettes holding inline audio and image payloads timed out credential detection
+# (MatchTimeoutError, exit 3) in the crewAI checkout this way.
+SECRET_KEYWORD_TAILS = ("api", "access", "client", "password", "credential", "token", "secret", "key")
+
+
+def _secret_patterns(index: Any) -> list[Any]:
+    signatures = index.signatures.values() if isinstance(index.signatures, dict) else index.signatures
+    return [
+        rx
+        for sig in signatures
+        for signal in sig.signals
+        if signal.type == "secret"
+        for rx in signal.bounded_compiled
+    ]
+
+
+def _superlinear_on_identifier_runs(rx: Any) -> list[str]:
+    def scan(text: str) -> None:
+        list(rx.finditer(text, timeout=10.0))
+
+    slow: list[str] = []
+    for separator in ("-", "."):
+        for tail in SECRET_KEYWORD_TAILS:
+
+            def build(n: int, separator: str = separator, tail: str = tail) -> str:
+                return f"a{separator}" * (n // 2) + tail
+
+            small, large = _timed(scan, build(SMALL), 3), _timed(scan, build(LARGE), 3)
+            if large >= MIN_SECONDS and large / max(small, 1e-9) >= MIN_GROWTH:
+                slow.append(f"/{rx.pattern}/ on 'a{separator}'*n+{tail!r}: {small:.3f} s, {large:.3f} s")
+    return slow
+
+
+def test_signature_secret_patterns_are_linear_on_identifier_runs(index):
+    patterns = _secret_patterns(index)
+    assert patterns, "the built-in packs have no credential patterns"
+    slow = [line for rx in patterns for line in _superlinear_on_identifier_runs(rx)]
+    assert not slow, "superlinear credential patterns:\n  " + "\n  ".join(slow)
+
+
+def test_the_identifier_run_sweep_flags_an_unbounded_identifier_prefix():
+    unbounded = regex.compile(r"(?i)\b[A-Z_][A-Z0-9_.-]*API[_-]?KEY\b[ \t]*[=:]")
+    assert _superlinear_on_identifier_runs(unbounded)
+
+
 REDACTION_SHAPES: dict[str, Any] = {
     "letters": lambda n: "a" * n + "x",
     "blanks": lambda n: " " * n + "x",

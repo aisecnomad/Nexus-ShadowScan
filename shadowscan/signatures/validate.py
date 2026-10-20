@@ -156,6 +156,9 @@ def main(argv: list[str] | None = None) -> int:
             args.directories,
             include_builtin=not args.no_builtin,
             allow_override=args.allow_signature_override,
+            # The scanner parses the built-in packs with libyaml when it can;
+            # validation holds them to the bounded loader's budgets as well.
+            libyaml_builtin=False,
         )
         if not signatures:
             raise ValueError("no signature YAML files found")

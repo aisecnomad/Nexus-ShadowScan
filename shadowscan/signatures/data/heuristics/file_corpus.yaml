@@ -30,11 +30,11 @@ signatures:
       - type: secret
         # One keyword per pattern, so the literal prefilter can skip text without it.
         patterns:
-          - '(?i)\b[A-Z_][A-Z0-9_.-]*API[_-]?KEY\b[ \t]*[=:][ \t]*["'']?[A-Za-z0-9_./+=-]{16,256}'
-          - '(?i)\b[A-Z_][A-Z0-9_.-]*ACCESS[_-]?TOKEN\b[ \t]*[=:][ \t]*["'']?[A-Za-z0-9_./+=-]{16,256}'
-          - '(?i)\b[A-Z_][A-Z0-9_.-]*CLIENT[_-]?SECRET\b[ \t]*[=:][ \t]*["'']?[A-Za-z0-9_./+=-]{16,256}'
-          - '(?i)\b[A-Z_][A-Z0-9_.-]*PASSWORD\b[ \t]*[=:][ \t]*["'']?[A-Za-z0-9_./+=-]{16,256}'
-          - '(?i)\b[A-Z_][A-Z0-9_.-]*CREDENTIAL\b[ \t]*[=:][ \t]*["'']?[A-Za-z0-9_./+=-]{16,256}'
+          - '(?i)\b[A-Z_][A-Z0-9_.-]{0,255}API[_-]?KEY\b[ \t]*[=:][ \t]*["'']?[A-Za-z0-9_./+=-]{16,256}'
+          - '(?i)\b[A-Z_][A-Z0-9_.-]{0,255}ACCESS[_-]?TOKEN\b[ \t]*[=:][ \t]*["'']?[A-Za-z0-9_./+=-]{16,256}'
+          - '(?i)\b[A-Z_][A-Z0-9_.-]{0,255}CLIENT[_-]?SECRET\b[ \t]*[=:][ \t]*["'']?[A-Za-z0-9_./+=-]{16,256}'
+          - '(?i)\b[A-Z_][A-Z0-9_.-]{0,255}PASSWORD\b[ \t]*[=:][ \t]*["'']?[A-Za-z0-9_./+=-]{16,256}'
+          - '(?i)\b[A-Z_][A-Z0-9_.-]{0,255}CREDENTIAL\b[ \t]*[=:][ \t]*["'']?[A-Za-z0-9_./+=-]{16,256}'
           - '\bghp_[A-Za-z0-9]{36}\b'
           - '\bAKIA[A-Z0-9]{16}\b'
         weight: 0.8

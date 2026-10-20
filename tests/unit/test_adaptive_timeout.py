@@ -117,9 +117,11 @@ class TestEstimate:
         Measured on real trees: below the limit a larger tree gets a longer
         deadline, past it a tree ten times larger gets the same one. With the
         shipped limits, a probe that cannot finish proposes the most the
-        estimate can, which sits below the engine's own ceiling: a larger tree
-        needs an explicit deadline, which the engineering log says
-        (test_repository_consistency).
+        estimate can, which is the engine's own ceiling: the limit was 20,000
+        entries, a 200 s proposal, so the documented 1800 s ceiling was never
+        reached and agent-framework monorepos ran out of time mid-walk. A tree
+        larger than the ceiling covers needs an explicit deadline, which the
+        engineering log says (test_repository_consistency).
         """
         monkeypatch.setattr(FilesystemConnector, "_PROBE_LIMIT", 40)
         monkeypatch.setattr(FilesystemConnector, "_ENTRIES_PER_DEFAULT_BUDGET", 10)
@@ -137,7 +139,13 @@ class TestEstimate:
         largest = FilesystemConnector.estimate_timeout_seconds(
             {"paths": [str(tmp_path / "t400")]}, DEFAULT_CONNECTOR_TIMEOUT
         )
-        assert largest is not None and DEFAULT_CONNECTOR_TIMEOUT < largest < MAX_AUTO_TIMEOUT
+        assert largest == MAX_AUTO_TIMEOUT
+        ceiling = (
+            DEFAULT_CONNECTOR_TIMEOUT
+            * FilesystemConnector._PROBE_LIMIT
+            / FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET
+        )
+        assert ceiling == MAX_AUTO_TIMEOUT, "the probe limit must let the estimate reach the engine's ceiling"
 
     def test_a_missing_path_is_not_an_error(self) -> None:
         assert FilesystemConnector.estimate_timeout_seconds({"paths": ["/nonexistent/xyz"]}, 120.0) is None

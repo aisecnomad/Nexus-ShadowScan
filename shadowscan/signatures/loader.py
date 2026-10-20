@@ -270,11 +270,33 @@ def _safe_fragment(text: Any) -> str:
 
 _UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _unique_mapping)
 
+# The built-in packs ship inside the installed package, which the trust model
+# trusts (AGENTS.md), and CI loads every change to them with the bounded loader
+# (`python -m shadowscan.signatures.validate`). With libyaml they are parsed in
+# C: the same SafeLoader resolver and constructors, the same duplicate-key
+# rule, about six times faster, which is most of a small scan's start-up
+# (tests/unit/test_signature_loader_fast_path.py keeps both parses equal). The
+# C composer has no node, alias or depth budget, so custom packs, operator
+# input, keep the bounded pure-Python loader.
+_BuiltinPackLoader: type[Any] = _UniqueKeyLoader
+if getattr(yaml, "__with_libyaml__", False):
 
-def load_signature_file(path: Path) -> list[Signature]:
-    """Load one pack file; every pack problem is a :class:`SignaturePackError` naming ``path``."""
+    class _CUniqueKeyLoader(yaml.CSafeLoader):
+        """libyaml SafeLoader that rejects duplicate keys, for the trusted built-in packs only."""
+
+    _CUniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _unique_mapping)
+    _BuiltinPackLoader = _CUniqueKeyLoader
+
+
+def load_signature_file(path: Path, *, builtin: bool = False) -> list[Signature]:
+    """Load one pack file; every pack problem is a :class:`SignaturePackError` naming ``path``.
+
+    ``builtin`` says the file is one of the installed package's own packs, which
+    may be parsed by libyaml; any other pack is parsed by the bounded loader.
+    """
+    loader = _BuiltinPackLoader if builtin else _UniqueKeyLoader
     try:
-        docs = list(yaml.load_all(read_policy_text(path), Loader=_UniqueKeyLoader))
+        docs = list(yaml.load_all(read_policy_text(path), Loader=loader))
     except SignaturePackError as exc:
         raise SignaturePackError(f"{path}: {exc}") from None
     except YAMLResourceLimitError as exc:
@@ -365,11 +387,14 @@ def load_signatures(
     include_builtin: bool = True,
     *,
     allow_override: bool = False,
+    libyaml_builtin: bool = True,
 ) -> list[Signature]:
     """Load built-in signatures plus any extra packs.
 
     Built-in IDs are reserved unless ``allow_override`` is explicitly enabled.
     Later organization packs may replace IDs from earlier organization packs.
+    ``libyaml_builtin`` false parses the built-in packs with the bounded loader
+    too, as the pack validator does.
     """
     if not isinstance(allow_override, bool):
         raise ValueError("allow_override must be a boolean")
@@ -380,8 +405,9 @@ def load_signatures(
         if not d.is_dir():
             raise SetupPathError(sanitize_text(f"signature directory not found: {d}"))
         pack_ids: set[str] = set()
-        for f in _pack_files(d, custom=not (include_builtin and number == 0)):
-            for sig in load_signature_file(f):
+        builtin = include_builtin and number == 0
+        for f in _pack_files(d, custom=not builtin):
+            for sig in load_signature_file(f, builtin=builtin and libyaml_builtin):
                 if sig.id in pack_ids:
                     raise SignaturePackError(f"{f}: duplicate signature id {sig.id!r} in {d}")
                 if sig.id in reserved and not allow_override:
@@ -391,6 +417,6 @@ def load_signatures(
                     )
                 pack_ids.add(sig.id)
                 by_id[sig.id] = sig
-        if include_builtin and number == 0:
+        if builtin:
             reserved.update(pack_ids)
     return list(by_id.values())

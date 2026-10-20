@@ -229,8 +229,17 @@ def _quote_glob_values(front_matter: str) -> str:
 
 # IPython line and cell magics (%pip, %%time) and shell escapes (!pip), each
 # alone on its line, as IPython rewrites them before Python reads the cell.
-# "% name" continuing an expression is the modulo operator and stays.
-_IPYTHON_LINE = re.compile(r"^([ \t]*+)((?:%%?[A-Za-z_]|!)[^\n]*)", re.MULTILINE)
+# "% name" continuing an expression is the modulo operator and stays. So are the
+# package-manager magics IPython's automagic (on by default) runs without the
+# "%" ("pip install -U openai", the first cell of most tutorial notebooks): a
+# magic name and one of its subcommands, two names side by side, is never a
+# Python statement, and no subcommand listed is a keyword ("pip in xs" stays).
+_IPYTHON_LINE = re.compile(
+    r"^([ \t]*+)((?:%%?[A-Za-z_]|!|(?:pip3?|conda|mamba|micromamba|uv)[ \t]++"
+    r"(?:install|uninstall|download|list|show|freeze|check|config|create|env|remove|update|upgrade|"
+    r"add|sync|search|info|init)\b)[^\n]*)",
+    re.MULTILINE,
+)
 
 
 def _without_ipython_lines(text: str) -> str:
