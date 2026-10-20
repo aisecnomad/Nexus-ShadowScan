@@ -35,14 +35,8 @@ ALLOWED_INSIDE_PROTECTED_TREES = frozenset(
     {
         # Sample repositories built to look like shadow AI agents: the scanner's own inputs.
         "tests/fixtures",
-        # Call-shaped text without a closing parenthesis exceeds the call-lexing budget, and
-        # the lexer that enforces that budget holds the same shapes in comments and patterns.
-        "tests/unit/test_credential_form_redaction.py",
-        "shadowscan/utils/redaction_calls.py",
-        # The signature-authoring guide and the engineering log quote call shapes without a
-        # closing parenthesis (the same budget), and the log quotes the credential-shaped inputs
-        # of every review, past the five-per-format quota the scanner discloses as incomplete.
-        "docs/signatures.md",
+        # The engineering log quotes the credential-shaped inputs of every review, past the
+        # five-per-format quota the scanner discloses as incomplete.
         "docs/engineering-log.md",
         # Hundreds of synthetic credentials with their expected outcomes: past the quota by design.
         "tests/unit/test_credential_oracle.py",

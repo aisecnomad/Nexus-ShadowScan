@@ -220,3 +220,101 @@ def test_a_credential_callee_named_inside_a_comment_still_reads_the_call_after_i
     source = f'x = build  # wraps AzureKeyCredential\n# more\n("{SYNTHETIC}")'
     safe = sanitize_text(source)
     assert SYNTHETIC not in safe and REDACTED in safe
+
+
+# The step bound cannot tell a long argument list from one that never closes.
+# Prose naming a credential type ('`ClientSession(`' in markdown, a comment that
+# quotes 'credential (') reached it and withheld every excerpt of the file.
+_PROSE = "Prose (with an aside) and ordinary words follow here.\n" * 400
+
+
+@pytest.mark.parametrize(
+    "opening",
+    [
+        "Match `ClientSession(` and `Server(` here; a stray ` tick.\n",
+        "# The rule read the operator as the credential ('bearer\n# [REDACTED]> S'), then.\n",
+        "    # 'builder().apiKey(', '\\n    .apiKey(', 'client?.token('. The leading\n",
+    ],
+)
+def test_an_unclosed_credential_named_call_in_prose_is_read_to_its_end(opening):
+    # Read to its end, the call is unclosed: a leading literal of a credential
+    # constructor ('bearer) is still withheld, the prose after it is not.
+    source = opening + _PROSE
+    safe = sanitize_text(source)
+    assert safe.count("\n") == source.count("\n")
+    assert safe.endswith(_PROSE)
+
+
+def test_a_long_credential_constructor_still_withholds_its_literal():
+    source = 'HTTPBasicAuth("user", ' + "a, " * 5000 + f'"{SYNTHETIC}")\nprint("visible")\n'
+    safe = sanitize_text(source)
+    assert SYNTHETIC not in safe and REDACTED in safe
+    assert safe.splitlines()[1] == 'print("visible")'
+    unclosed = sanitize_text(source.replace('")\nprint', '"\nprint'))
+    assert SYNTHETIC not in unclosed and REDACTED in unclosed
+
+
+def test_a_long_call_pairing_a_credential_key_still_withholds_its_value():
+    source = 'os.environ.setdefault("OPENAI_API_KEY", (' + "a + " * 4000 + f'"{SYNTHETIC}"))\n'
+    safe = redaction._redact_credential_calls(source)
+    assert SYNTHETIC not in safe and REDACTED in safe
+
+
+def test_reading_past_the_step_bound_shares_one_budget_and_fails_closed(monkeypatch):
+    # Every credential call past the step bound draws on one budget per text,
+    # linear in its length; once it is spent the call fails closed as before.
+    monkeypatch.setattr(redaction, "_MAX_CALL_STEPS", 64)
+    monkeypatch.setattr(redaction, "_CALL_EXTENSION_PER_CHAR", 2)
+    tail = "plain line of 'text'\n" * 2000
+    assert redaction._redact_credential_calls("#getToken(\n" + tail).endswith(tail)
+    with pytest.raises(SanitizationLimitError, match="credential call length limit"):
+        redaction._redact_credential_calls("#getToken(\n" * 3 + tail)
+
+
+def test_reading_past_the_step_bound_stays_linear(monkeypatch):
+    # Credential-named and ordinary callees cost the same up to the step bound;
+    # the credential ones then read on only within the text's extension budget.
+    tail = "plain line of text here\n" * 40_000
+    ticks = 0
+    tick = redaction._CallLexer.tick
+
+    def counted(self: redaction._CallLexer) -> None:
+        nonlocal ticks
+        ticks += 1
+        tick(self)
+
+    monkeypatch.setattr(redaction._CallLexer, "tick", counted)
+
+    def work(source):
+        nonlocal ticks
+        ticks = 0
+        try:
+            redaction._redact_credential_calls(source)
+        except SanitizationLimitError:
+            pass  # the budget ran out: the call fails closed
+        return ticks
+
+    source = "'x'\n" + "#getToken(\n" * 200 + tail
+    extra = work(source) - work(source.replace("getToken", "getThing"))
+    assert 0 < extra <= redaction._CALL_EXTENSION_PER_CHAR * len(source) + 64
+
+
+def test_a_completed_call_that_never_closes_keeps_the_unclosed_call_rules():
+    # Read to its end, the call is still open. It is redacted exactly as the
+    # same call shorter than the step bound, whether its literal past the bound
+    # is terminated or runs to the end of its line.
+    def call(arguments: int, value: str) -> str:
+        return 'HTTPBasicAuth("user", ' + "a, " * arguments + value + '\nafter = "trailing"\n'
+
+    for value in (f'"{SYNTHETIC}",', f'"{SYNTHETIC}'):
+        long_safe = sanitize_text(call(5000, value))
+        short_safe = sanitize_text(call(50, value))
+        assert SYNTHETIC not in long_safe and REDACTED in long_safe
+        assert long_safe.endswith(short_safe[-100:])
+
+
+def test_nesting_found_while_completing_a_call_still_fails_closed():
+    # The completed reading keeps the nesting bound of the first one.
+    source = 'HTTPBasicAuth("user", ' + "a, " * 5000 + "(" * 40 + f'"{SYNTHETIC}"' + ")" * 41 + "\n"
+    with pytest.raises(SanitizationLimitError, match="credential call nesting limit"):
+        redaction._redact_credential_calls(source)
