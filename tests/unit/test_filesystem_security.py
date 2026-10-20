@@ -330,7 +330,12 @@ def test_in_root_link_to_unscanned_target_marks_incomplete(tmp_path, run_connect
     assert findings == []
     assert ctx.stats.incomplete
     diagnostics = ctx.stats.errors if strict else ctx.stats.warnings
-    assert any("symbolic link agent.py" in issue and "unscanned" in issue for issue in diagnostics)
+    # The diagnostic says what the target was found to be, never "unavailable".
+    found = {
+        "broken-target": "whose target does not exist",
+        "unsupported-target": "which is walked at its own path",
+    }.get(kind, "which the walk does not scan")
+    assert any("symbolic link agent.py" in issue and found in issue for issue in diagnostics), diagnostics
 
 
 def test_in_root_link_to_excluded_source_exits_three_by_default(tmp_path):

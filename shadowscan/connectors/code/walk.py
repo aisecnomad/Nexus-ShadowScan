@@ -698,6 +698,26 @@ def _is_coding_agent_doc(name: str) -> bool:
     return name.lower() in _CODING_AGENT_DOC_NAMES
 
 
+def _echo_name(name: str) -> str:
+    """``_report_name`` with control characters escaped, for a path a diagnostic quotes.
+
+    A hostile name could otherwise break a report line or a terminal.
+    """
+    name = _report_name(name)
+    if name.isprintable():
+        return name
+    return "".join(c if c.isprintable() else repr(c)[1:-1] for c in name)
+
+
+def _link_lookup_failed(link: Path) -> bool:
+    """Whether looking up the target of ``link`` fails (``EACCES``, say) rather than resolving outside."""
+    try:
+        link.resolve(strict=True)
+    except (OSError, ValueError, RuntimeError):
+        return True
+    return False
+
+
 def _resolved_link_target(link: Path, resolved_root: Path) -> Path | None:
     """Resolve only to classify a link; never open it through the link path."""
     try:
@@ -1187,6 +1207,69 @@ class TreeWalker:
             return True
         return False
 
+    def _file_scanned_at_real_path(self, target: Path, root: Path) -> bool:
+        """Whether ``target``, a resolved link target below ``root``, is a regular file the walk reads there.
+
+        Every directory above it must be one the walk enters, and the file must
+        be neither excluded nor outside the selected paths nor a name the walk
+        never reads. ``_link_target_is_scanned`` and the link diagnostic share
+        this test, so a message never claims coverage the walk did not give.
+        """
+        parts = target.relative_to(root).parts
+        for depth, name in enumerate(parts[:-1], start=1):
+            if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
+                return False
+        target_rel = PurePosixPath(*parts).as_posix()
+        return (
+            target.is_file()
+            and not self._excluded_file(target_rel)
+            and self.included(target_rel)
+            and not _never_read_by_name(target.name)
+        )
+
+    def _directory_scanned_at_real_path(self, target: Path, root: Path) -> bool:
+        """Whether ``target``, a directory below ``root``, is one the walk enters and selects.
+
+        Every directory on its path must be one the walk enters (not excluded,
+        by default or by ``exclude``) and it must lie within the selected
+        paths. ``_alias_of_scanned_directory`` builds on this test.
+        """
+        if not target.is_dir():
+            return False
+        parts = target.relative_to(root).parts
+        for depth, name in enumerate(parts, start=1):
+            if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
+                return False
+        return self.included(PurePosixPath(*parts).as_posix() if parts else "")
+
+    def _unscanned_link_message(self, rel: str, link: Path, target: Path | None, root: Path) -> str:
+        """The diagnostic of a link the walk does not follow, stating what its target was found to be.
+
+        ``target`` is the link's resolved target when it lies below ``root``
+        (``_resolved_link_target``), else None. Only such an in-tree target is
+        named, relative to the root and escaped (``_echo_name``): a path
+        outside the tree is never echoed, since it would disclose the
+        operator's filesystem or carry hostile text. A lookup that fails for
+        any reason but absence or a loop (``EACCES``) is reported as
+        unresolvable, never as outside the tree. Whether the target is walked
+        at its own path uses the very tests the walk applies.
+        """
+        prefix = f"code.filesystem: skipped symbolic link {rel}"
+        if target is None:
+            kind = _link_target_kind(link)
+            if kind == "missing":
+                return f"{prefix} whose target does not exist or forms a link loop"
+            if kind == "other" and _link_lookup_failed(link):
+                return f"{prefix} whose target cannot be resolved"
+            return f"{prefix} whose target is outside the scanned tree"
+        shown = _echo_name(target.relative_to(root).as_posix() or ".")
+        scanned = self._file_scanned_at_real_path(target, root) or self._directory_scanned_at_real_path(
+            target, root
+        )
+        if scanned:
+            return f"{prefix} to {shown}, which is walked at its own path but not assessed as the link path"
+        return f"{prefix} to {shown}, which the walk does not scan (excluded or outside the selected paths)"
+
     def _link_target_is_scanned(
         self, rel: str, target: Path, root: Path, walk: _WalkCounters | None = None
     ) -> bool:
@@ -1218,18 +1301,9 @@ class TreeWalker:
             # The walker would skip this name silently even as a regular
             # file, whatever it points at: the alias hides nothing.
             return True
-        parts = relative.parts
-        for depth, name in enumerate(parts[:-1], start=1):
-            if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
-                return False
         # An include walk never reaches a target outside the selected paths,
         # however equivalent the alias is.
-        if (
-            not target.is_file()
-            or self._excluded_file(target_rel)
-            or not self.included(target_rel)
-            or _never_read_by_name(target.name)
-        ):
+        if not self._file_scanned_at_real_path(target, root):
             return False
         # Coding-agent instruction aliases (CLAUDE.md -> AGENTS.md) are the
         # same document family. The real file is scanned and the alias hides no
@@ -1574,7 +1648,7 @@ class TreeWalker:
             # Never followed; scoped like any other lockfile that was not inventoried.
             self.lockfile_gap(rel, "symbolic link is not followed")
             return True
-        message = f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
+        message = self._unscanned_link_message(rel, link, target, resolved_root)
         alias = target is not None and self._alias_of_scanned_directory(rel, target, resolved_root)
         agent = self._agent_configuration_link(rel, link, target if alias else None)
         if not agent and self._walk_declared(root, rel, walk):
@@ -2038,7 +2112,12 @@ class TreeWalker:
         """
         if agent:
             noted, blinding = self._configuration_link_notes, True
-            message = f"{message}; it is named like agent configuration; coverage incomplete"
+            where = (
+                "at the link path its files are agent configuration (named like agent configuration)"
+                if alias
+                else "it is named like agent configuration"
+            )
+            message = f"{message}; {where}; coverage incomplete"
         elif _link_names_one_file(link):
             noted, blinding = self._symlink_warnings, False
             message = f"{message}; coverage gap"
@@ -2201,15 +2280,9 @@ class TreeWalker:
         what the walk discounts as test code there (``src/lib -> ../tests``),
         which would weaken the evidence the alias path would carry.
         """
-        if not target.is_dir():
+        if not self._directory_scanned_at_real_path(target, resolved_root):
             return False
-        parts = target.relative_to(resolved_root).parts
-        for depth, name in enumerate(parts, start=1):
-            if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
-                return False
-        target_rel = PurePosixPath(*parts).as_posix() if parts else "."
-        if not self.included(target_rel if parts else ""):
-            return False
+        target_rel = target.relative_to(resolved_root).as_posix()
         return not (
             _is_test_path(f"{target_rel}/{_ANY_FILE_NAME}") and not _is_test_path(f"{rel}/{_ANY_FILE_NAME}")
         )

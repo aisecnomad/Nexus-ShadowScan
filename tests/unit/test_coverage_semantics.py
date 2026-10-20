@@ -1179,3 +1179,74 @@ def test_include_tests_keeps_a_binary_test_fixture_a_gap(tmp_path, run_connector
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, include_tests=True)
     assert ctx.stats.incomplete
     assert ctx.stats.coverage is not None and ctx.stats.coverage["blinding_gaps"] == 1
+
+
+# ------------------------------------------------------------ link diagnostics
+# A link the walk does not follow is described by what its target was found to
+# be. In-tree aliases whose own path is agent configuration (AutoGPT's
+# .agents/skills -> ../.claude/skills, a lowercase agents.md) stay blinding, but
+# are no longer reported as "unavailable" targets, nor an outside path echoed.
+def _link_text(ctx) -> str:
+    details = [str(value) for gap in (ctx.stats.coverage or {}).get("details", []) for value in gap.values()]
+    return "\n".join([*ctx.stats.errors, *ctx.stats.warnings, *details])
+
+
+def test_in_tree_agent_configuration_links_name_their_scanned_target(tmp_path, run_connector):
+    skill = "---\nname: open-pr\ndescription: Open a pull request.\n---\nRun the tests first.\n"
+    extra = {".claude/skills/open-pr/SKILL.md": skill, "pkg/pyproject.toml": "[project]\nname = 'pkg'\n"}
+    repo = _tree(tmp_path / "repo", {**extra, "pkg/README.md": "# pkg\n"})
+    (repo / ".agents").mkdir()
+    (repo / ".agents" / "skills").symlink_to("../.claude/skills")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "agents.md").symlink_to("../pkg/README.md")
+    _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
+    assert ctx.stats.incomplete
+    assert ctx.stats.coverage["blinding_gaps"] == 2
+    assert ctx.stats.incomplete_reasons == {"unresolved-link": 2}
+    text = _link_text(ctx)
+    assert "unavailable" not in text
+    assert (
+        "skipped symbolic link .agents/skills to .claude/skills, which is walked at its own path but not assessed as "
+        "the link path; at the link path its files are agent configuration (named like agent configuration)"
+    ) in text
+    assert "skipped symbolic link docs/agents.md to pkg/README.md, which is walked at its own path" in text
+
+
+def test_dangling_and_outside_links_say_which_without_echoing_outside_paths(tmp_path, run_connector):
+    repo = _tree(tmp_path / "repo")
+    (repo / ".mcp.json").symlink_to(repo / "missing.json")
+    (repo / ".cursor").symlink_to(".cursor")  # a loop resolves to nothing, like a dangling link
+    (tmp_path / "private-layout").mkdir()
+    (tmp_path / "private-layout" / "CLAUDE.md").write_text(INSTRUCTIONS)
+    (repo / "CLAUDE.md").symlink_to(tmp_path / "private-layout" / "CLAUDE.md")
+    _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
+    text = _link_text(ctx)
+    assert "skipped symbolic link .mcp.json whose target does not exist or forms a link loop" in text
+    assert "skipped symbolic link .cursor whose target does not exist or forms a link loop" in text
+    assert "skipped symbolic link CLAUDE.md whose target is outside the scanned tree" in text
+    assert "private-layout" not in text
+
+
+def test_link_message_claims_real_path_coverage_only_when_the_walk_gives_it(tmp_path, run_connector):
+    # The message and _link_target_is_scanned share one predicate
+    # (_file_scanned_at_real_path): a target the walk excludes is never said to
+    # be scanned, and a quoted target name cannot carry control characters.
+    repo = _tree(
+        tmp_path / "repo", {"lib/c.yaml": "a: 1\n", "vendor/c.yaml": "a: 1\n", "lib/e\x1b.yaml": "a: 1\n"}
+    )
+    for link, target in [
+        ("conf.yaml", "lib/c.yaml"),
+        ("vconf.yaml", "vendor/c.yaml"),
+        ("esc.yaml", "lib/e\x1b.yaml"),
+    ]:
+        (repo / link).symlink_to(target)
+    _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, exclude=["vendor"])
+    text = _link_text(ctx)
+    assert (
+        "conf.yaml to lib/c.yaml, which is walked at its own path but not assessed as the link path" in text
+    )
+    assert (
+        "vconf.yaml to vendor/c.yaml, which the walk does not scan (excluded or outside the selected paths)"
+        in text
+    )
+    assert "esc.yaml to lib/e\\x1b.yaml, which is walked" in text and "\x1b" not in text
