@@ -13,6 +13,26 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Explicit discovery-benchmark baseline (October 20)
+
+- `.github/workflows/benchmark.yml` took its regression baseline as the
+  results directory under the companion's
+  `benchmarks/shadow-ai-discovery/results/` that sorted last. Any later
+  directory there (another tool's run, a re-score or an independent
+  submission) would have become the baseline as soon as the
+  `benchmark-suite` pin moved to include it, and a directory without
+  `metrics.json` or `runs.json` would have broken the gate. The job now names
+  its baseline in `BASELINE_RUN` (`2026-10-09`), fails with an error when that
+  directory lacks either file, and prints a notice when a later directory
+  exists but is not used.
+- Behaviour is unchanged at the current pin, where `2026-10-09` is the newest
+  directory. The shell logic was exercised against a copy of the companion's
+  results tree for the pinned case, a newer directory and a missing baseline;
+  the workflow itself was not dispatched.
+- Moving the baseline is now a reviewed one-line change that says why. The
+  committed `2026-10-09` run is in-sample for ShadowScan; the gate measures
+  regression, not accuracy.
+
 ### Native eBPF metadata and service-specific Google endpoints (October 20)
 
 - A native Tetragon, Tracee or Hubble record's top-level `hostname` is now

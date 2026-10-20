@@ -6,8 +6,11 @@ name: Discovery benchmark
 # recall drops, a control or near-miss repository that the committed baseline
 # left clean is flagged, or a repository scanned completely in the baseline is
 # now incomplete (exit 3). A dispatched subset of repositories is compared with
-# the same repositories of the baseline. Checkouts are read-only inputs;
-# nothing in them is executed.
+# the same repositories of the baseline. The baseline is the committed run that
+# BASELINE_RUN names, never whichever results directory sorts last, so a later
+# directory in the companion (another tool's run, a re-score, an independent
+# submission) cannot become the baseline unnoticed. Checkouts are read-only
+# inputs; nothing in them is executed.
 on:
   schedule:
     - cron: "23 6 * * 3"  # Wednesday 06:23 UTC
@@ -28,6 +31,10 @@ jobs:
   shadowscan:
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    env:
+      # The companion's benchmarks/shadow-ai-discovery/results/<run>/ the gate
+      # compares against. Move it only in a reviewed change that says why.
+      BASELINE_RUN: "2026-10-09"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -79,7 +86,18 @@ jobs:
           python -m tools.discovery_benchmark report \
             --corpus benchmarks/shadow-ai-discovery/corpus.json --metrics "$RUNNER_TEMP/run/metrics.json" \
             --out "$RUNNER_TEMP/run/REPORT.md"
-          baseline="$(ls -d benchmarks/shadow-ai-discovery/results/*/ | sort | tail -1)"
+          results="benchmarks/shadow-ai-discovery/results"
+          baseline="${results}/${BASELINE_RUN}/"
+          for file in metrics.json runs.json; do
+            if [ ! -f "${baseline}${file}" ]; then
+              echo "::error::baseline ${baseline}${file} is missing; BASELINE_RUN must name a committed results directory"
+              exit 1
+            fi
+          done
+          newest="$(ls -d "${results}"/*/ | sort | tail -1)"
+          if [ "$newest" != "$baseline" ]; then
+            echo "::notice::baseline stays ${baseline}; ${newest} sorts later and is not used as the baseline"
+          fi
           echo "baseline: ${baseline}metrics.json"
           python -m tools.discovery_benchmark compare \
             --corpus benchmarks/shadow-ai-discovery/corpus.json --baseline "${baseline}metrics.json" \
