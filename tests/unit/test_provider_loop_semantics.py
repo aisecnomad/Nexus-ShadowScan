@@ -647,7 +647,7 @@ def test_dispatch_limits_are_raised_only_for_the_selected_dispatcher(
     [("import litellm\n", False), ("from openai import OpenAI\n", True)],
     ids=["litellm-only", "openai"],
 )
-def test_only_loop_request_sdks_queue_nested_dispatch_consumers(
+def test_only_provider_sdks_queue_nested_dispatch_consumers(
     tmp_path, run_connector, monkeypatch, sdk_import, queued
 ):
     from shadowscan.connectors.code import file_scan
@@ -661,12 +661,3 @@ def test_only_loop_request_sdks_queue_nested_dispatch_consumers(
     assert bool(errors) is queued, ctx.stats.errors
     assert ctx.stats.incomplete is queued, ctx.stats.errors
 
-
-def test_nested_consumer_predicate_tracks_loop_requests():
-    from shadowscan.connectors.code import provider_evidence
-
-    # The queue exists only for requests provider_tool_loop_lines understands.
-    assert {"provider.openai", "provider.anthropic"} == provider_evidence.LOOP_REQUEST_SIGNATURES
-    assert {signature for signature, _ in provider_evidence._LOOP_REQUESTS.values()} == (
-        provider_evidence.LOOP_REQUEST_SIGNATURES
-    )

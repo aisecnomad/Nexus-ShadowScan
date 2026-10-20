@@ -59,10 +59,6 @@ _LOOP_REQUESTS: dict[str, tuple[str, frozenset[str]]] = {
     ),
 }
 
-# Signatures whose import-bound requests reach provider_tool_loop_lines, the
-# only reader of cross-file dispatch resolution for a nested Python consumer.
-LOOP_REQUEST_SIGNATURES = frozenset(signature for signature, _ in _LOOP_REQUESTS.values())
-
 _JAVASCRIPT_OPENAI_CONSTRUCTORS = frozenset(
     {
         "default",
