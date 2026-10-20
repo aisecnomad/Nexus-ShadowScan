@@ -2,8 +2,8 @@
 
 Two measures are held to ``tools/complexity_baseline.json``:
 
-* the McCabe complexity that ruff reports as ``C901`` for every function in ``shadowscan/``, ``tools/`` and
-  ``benchmarks/`` above ``MAX_FUNCTION_COMPLEXITY``. Ruff counts the body of a nested function into the
+* the McCabe complexity that ruff reports as ``C901`` for every function in ``shadowscan/`` and ``tools/``
+  above ``MAX_FUNCTION_COMPLEXITY``. Ruff counts the body of a nested function into the
   function around it, and so does this gate; ``noqa`` comments do not hide a function from it.
 * the physical line count of every module of the ``shadowscan`` package above ``MAX_MODULE_LINES``. The
   benchmark and tooling directories hold corpus and fixture modules that grow with their data, so only their
@@ -37,10 +37,9 @@ from shadowscan.utils.safe_json import strict_json_loads
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = "tools/complexity_baseline.json"
-# What `make lint` checks, less tests/: the shipped package and the tooling around it. Ruff's own
-# exclusions in pyproject.toml still apply, so the sample repositories under
-# benchmarks/shadowbench/estate/artifacts do not count.
-SOURCE_ROOTS = ("shadowscan", "tools", "benchmarks")
+# What `make lint` checks, less tests/: the shipped package and the tooling around it.
+# The companion wrapper supplies its moved harness roots separately.
+SOURCE_ROOTS = ("shadowscan", "tools")
 MODULE_ROOTS = ("shadowscan",)
 MAX_FUNCTION_COMPLEXITY = 15
 MAX_MODULE_LINES = 2000
@@ -148,8 +147,11 @@ def _finding(row: Any, root: Path) -> tuple[str, int, int]:
     return _relative(row["filename"], root), location["row"], int(match.group(1))
 
 
-def measure_functions(root: Path) -> dict[str, int]:
+def measure_functions(root: Path, *, source_roots: Sequence[str] | None = None) -> dict[str, int]:
     """Complexity of every function above the limit, keyed ``path::qualified.name``."""
+    roots = SOURCE_ROOTS if source_roots is None else source_roots
+    if not roots:
+        raise MeasurementError("at least one source root must be measured")
     output = _run_ruff(
         root,
         "check",
@@ -162,7 +164,7 @@ def measure_functions(root: Path) -> dict[str, int]:
         f"lint.mccabe.max-complexity = {MAX_FUNCTION_COMPLEXITY}",
         "--output-format",
         "json",
-        *SOURCE_ROOTS,
+        *roots,
     )
     try:
         rows = json.loads(output)

@@ -7,6 +7,23 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## Candidate usability and release-evidence changes
+
+The source branch adds [staged-file hooks and readiness checks](operations/code-precommit.md)
+and an [offline terminal report browser](operations/terminal-triage.md). A quick
+scan covers changed index blobs only. Do not use it to certify a whole repository
+or resolve baseline findings. Readiness success is not scan success. Ordinary
+scans retain their existing coverage policy and fail-closed parser/redaction
+bounds; incomplete reports now include static remediation hints.
+
+The [candidate public API contract](api/compatibility.md) defines the proposed
+1.0 boundary; release status remains alpha. [Connector maintenance snapshots](operations/connector-inventory.md)
+record declarations and documentation, not live tenant acceptance. The
+[publishing runbook](operations/publishing.md) describes protected attachment of
+verified release evidence to an existing draft release. No version tag or
+release is created by this change.
+
+
 ## Migration notes and change history
 
 Per-change migration and behavior notes for unreleased changes live in

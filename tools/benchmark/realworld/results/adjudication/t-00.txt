@@ -1,1 +1,0 @@
-[{"card": "A013", "ai": "no", "app": "no", "agent": "no"}, {"card": "A048", "ai": "no", "app": "no", "agent": "no"}]

@@ -25,7 +25,7 @@ field precision, recall or calibration; see the held-out procedure below.
 
 ## Real-world repository benchmark against other tools
 
-`benchmarks/shadow-ai-discovery/` is a separate, code-surface benchmark on
+The companion's `benchmarks/shadow-ai-discovery/` is a separate, code-surface benchmark on
 pinned public repositories that compares ShadowScan's `code.filesystem`
 connector with other open-source discovery tools under one tool-neutral fact
 taxonomy. Its ground truth is session-labeled evidence with file pointers, not
@@ -54,8 +54,9 @@ completeness information.
 ## ShadowBench: nine surfaces against other tools
 
 `benchmarks/shadowbench/` extends that comparison to every discovery surface
-in two tracks, each with its own harness under `tools/shadowbench/`
-(`python -m tools.shadowbench`). The *cases* track generates platform-native
+in two tracks, each with its own harness under the companion's `tools/shadowbench/`.
+See the [pinned companion setup](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md)
+before running its commands. The *cases* track generates platform-native
 inputs at a recorded seed from written rubrics: identity, gateway, low-code,
 SaaS and cloud exports, developer home directories, network logs, process
 tables, loopback mock services and inert live processes. Each input has
@@ -70,7 +71,7 @@ adapter. They check behaviour on known inputs; they do not measure field
 precision or recall and are not a verdict on any vendor's product. Both
 scorers fail closed: a run that errored, timed out, was incomplete or is
 missing never earns a true negative. See
-[`benchmarks/shadowbench/README.md`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/README.md)
+[`benchmarks/shadowbench/README.md`](https://github.com/aisecnomad/Nexus-ShadowBench/blob/main/benchmarks/shadowbench/README.md)
 for how the tracks differ, and each track's README and newest `REPORT.md` for
 the method, the limits and the measured numbers.
 

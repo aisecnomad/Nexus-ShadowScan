@@ -35,6 +35,23 @@ The configuration is trusted because an operator authors it. It can therefore
 grant capability deliberately, and each such grant is explicit and narrow
 rather than implied.
 
+```mermaid
+flowchart LR
+    U[Untrusted repositories, exports, API responses] --> B[Bounded parsers and confined readers]
+    C[Trusted operator configuration] --> E[Scanner engine]
+    B --> E
+    E --> R[Sanitization and coverage accounting]
+    R --> O[Sensitive reports and cache]
+    E --> H[Origin-bound HTTPS client]
+    H --> N[Remote provider APIs]
+    P[Explicitly allowlisted plugin] --> E
+    C --> P
+```
+
+The process boundary around a plugin controls its lifecycle, not its access to
+operator resources. A report remains sensitive after sanitization. Cloud SDKs
+have separate transports; use network-level egress controls where required.
+
 ## Threats and controls
 
 Grouped by boundary, in STRIDE terms where the category is meaningful.

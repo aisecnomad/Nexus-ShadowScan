@@ -37,16 +37,16 @@ leaves out.
 
 ## Benchmarks
 
-Comparative and real-world benchmarks. Each one answers a different question;
-[benchmarks/README.md](../benchmarks/README.md) compares them and states what
-none of them can show.
+Comparative and real-world benchmark harnesses moved to the optional, pinned
+[Nexus ShadowBench companion](../benchmarks/README.md). Run its commands from
+the companion checkout; the main scanner's regression corpora remain local.
 
 | Package | Question it answers | Entry point |
 |---|---|---|
-| [`shadowbench/`](shadowbench/README.md) | All nine surfaces: generated per-surface cases with decoys, and one authored organization scored entity by entity | `python -m tools.shadowbench` |
-| [`discovery_benchmark/`](discovery_benchmark/README.md) | Code surface: which facts do discovery tools find in 87 pinned public repositories; `benchmark.yml` reruns ShadowScan on it weekly as a regression gate | `python -m tools.discovery_benchmark` |
-| [`benchmark/`](benchmark/README.md) | Seeded, generated head-to-head cases on repository, endpoint and network inputs, plus the sampled real-world cohort under [`benchmark/realworld/`](benchmark/realworld/README.md) | `python -m tools.benchmark.run` |
-| [`benchmark_realworld/`](benchmark_realworld/README.md) | Public repositories read as a working tree and as `$HOME`, labeled under a written protocol | `python -m tools.benchmark_realworld.run` |
+| [ShadowBench](https://github.com/aisecnomad/Nexus-ShadowBench/tree/main/tools/shadowbench) | All nine surfaces: generated cases and one authored organization | Companion README |
+| [Discovery](https://github.com/aisecnomad/Nexus-ShadowBench/tree/main/tools/discovery_benchmark) | Facts found in 87 pinned public repositories; the weekly workflow uses the companion pin | Companion README |
+| [Synthetic and sampled](https://github.com/aisecnomad/Nexus-ShadowBench/tree/main/tools/benchmark) | Generated repository, endpoint and network inputs, plus sampled real-world repositories | Historical source-checkout instructions |
+| [Repository and home views](https://github.com/aisecnomad/Nexus-ShadowBench/tree/main/tools/benchmark_realworld) | Public repositories read as a working tree and as `$HOME` | Historical source-checkout instructions |
 
 ## Release, governance and acceptance
 

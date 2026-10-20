@@ -1,6 +1,8 @@
 # API Reference
 
-Auto-generated reference for the ShadowScan Python API.
+Reference for the ShadowScan Python API. Start with the
+[candidate public contract and 1.0 gates](compatibility.md); internal-module
+reference pages do not imply stability guarantees.
 
 These pages are built from source docstrings using
 [mkdocstrings](https://mkdocstrings.github.io/).

@@ -1,0 +1,10 @@
+- id: shadowscan-staged
+  name: ShadowScan staged files
+  description: Inspect exact changed Git index blobs; incomplete scans block the commit.
+  entry: shadowscan code --quick --fail-on high --max-coverage-gap 0
+  language: python
+  pass_filenames: false
+  always_run: true
+  require_serial: true
+  stages: [pre-commit]
+  minimum_pre_commit_version: "3.2.0"

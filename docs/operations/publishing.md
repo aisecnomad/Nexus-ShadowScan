@@ -31,11 +31,13 @@ or replace independent human review.
 | `publication-input` | Reassembles the attested bytes and checks for exactly one wheel and one sdist of the same version. | none |
 | `publication-gate` | Runs only when `publish` is `testpypi` or `pypi`. Requires one wheel and one sdist whose digests match, a public release version (no `.dev`, `.post` or local part), and, for `pypi`, the tag `v<version>` on the reviewed commit. | `contents: read` |
 | `publish` | Waits for approval in the protected environment named by `publish`. Checks out nothing, verifies the digests, and uploads only that wheel and sdist with [`pypa/gh-action-pypi-publish`](https://github.com/pypa/gh-action-pypi-publish), which checks their metadata and adds PEP 740 attestations. | `id-token` only |
+| `release-assets` | Optional, after successful `pypi` publication and another protected `pypi` approval. Verifies the original bundles against the exact source SHA and release workflow, checks the existing tag/release, and attaches the candidate and bundles without replacing mismatched assets. Never creates a release or tag. | `contents: write` only |
 
 With the default `publish: none`, the workflow builds and attests a review
 bundle and uploads nothing. `tests/test_repository_policy.py` fails CI if any
 of these gates is removed, or if any other workflow, job or command uploads a
-package.
+package. `attach_github_release` defaults to `false`. It is effective only
+with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
 
 ## One-time setup
 
@@ -129,6 +131,14 @@ package.
    `ruleset_readback`, and `publish: pypi`, then approve the `pypi`
    deployment. The gate rejects the
    run unless `v<version>` points at `expected_commit`.
+
+   To attach evidence automatically, first create a **draft GitHub release**
+   for that existing tag, with the version's release notes. Set
+   `-f attach_github_release=true` on this production dispatch. After the
+   index upload succeeds, approve the separate `release-assets` job in the
+   protected `pypi` environment. This attaches to your existing draft; it
+   does not publish it. A draft supports attachment before GitHub makes an
+   immutable release final. Existing mutable releases are also supported.
 6. **Verify what was published.** Both files must be on the index, and each
    must match its attestation. Download them into a hash-locked environment,
    so that preparing the sdist's metadata uses the locked backend rather than
@@ -171,22 +181,72 @@ package.
    commit with that backend; treat it as a release incident. Release 0.1.2
    predates the sdist: it was a wheel built with `pip wheel` from a
    `git archive`, and was attested as `aisecnomad/Project-Nexus` before the rename.
-7. **Optionally, create the GitHub release by hand** from the tag, using the
-   version's `RELEASE_NOTES.md` section. The workflow never creates one. Attach
-   the signed evidence to it, so that the release carries its own signatures
-   rather than only a pointer to the attestation store: the wheel, the sdist,
-   `SHA256SUMS` from `release-candidate-<SHA>`, and `provenance.sigstore.json`
-   and `sbom.sigstore.json` from `release-attestations-<SHA>`. The provenance
-   bundle covers every file in the candidate, `SHA256SUMS` included. The
-   `.sigstore.json` suffix is what release-signature checks, such as OpenSSF
-   Scorecard's Signed-Releases, look for among a release's assets. Anyone can
-   then check a downloaded file without the attestation store, against the
-   bundle from the same release:
+7. **Optionally, publish the GitHub release by hand** after checking the
+   index and its fresh-install smoke test. If step 5 attached the evidence to
+   your draft, verify the job's asset digest receipt and publish that draft.
+   The workflow never creates or publishes a GitHub release.
+
+   The attachment job executes the standard-library helper
+   `tools/release/assets.py` from the reviewed source. It verifies the
+   original Sigstore bundles with GitHub CLI, constraining the repository,
+   `release.yml`, `refs/heads/main`, source SHA, signer SHA and hosted-runner
+   identity. It checks the candidate's recorded run, checksums and tag, then
+   uploads all checksummed candidate files (including the wheel, sdist,
+   runtime SBOM and dependency locks), `SHA256SUMS`,
+   `provenance.sigstore.json` and `sbom.sigstore.json`.
+   It reads back GitHub's SHA-256 asset digests. A retry skips matching assets;
+   a conflicting or unverifiable asset fails, without `--clobber`.
+   Partial upload failures must be investigated before retrying the failed
+   job. Do not rerun the successful PyPI upload just to retry attachments.
+
+   For manual attachment, download `release-publication-input-<SHA>` from the
+   exact production run. A verification-only check is:
+
+   ```bash
+   python -m tools.release.assets --directory publication-input \
+     --repository aisecnomad/Nexus-ShadowScan --commit "$commit" --run-id "$run_id"
+   ```
+
+   Set `commit` and `run_id` to the reviewed SHA and successful production
+   run first. Only a maintainer adds `--upload` to attach the verified files
+   to an existing release; the default command performs no mutation.
+
+   The provenance bundle covers every candidate file, `SHA256SUMS` included.
+   Anyone can verify a downloaded file against the original bundle from the
+   same release:
 
    ```bash
    gh attestation verify "nexusshadowscan-$version-py3-none-any.whl" \
-     --repo aisecnomad/Nexus-ShadowScan --bundle provenance.sigstore.json
+     --repo aisecnomad/Nexus-ShadowScan --bundle provenance.sigstore.json \
+     --signer-workflow aisecnomad/Nexus-ShadowScan/.github/workflows/release.yml \
+     --source-ref refs/heads/main --source-digest "$commit" --signer-digest "$commit" \
+     --deny-self-hosted-runners
    ```
+
+   For the SBOM bundle, add `--predicate-type https://cyclonedx.org/bom` and
+   use `--bundle sbom.sigstore.json`. Verification identifies build provenance;
+   it does not prove independent review or tenant acceptance.
+
+   As checked on October 20, 2026, the upstream OpenSSF Scorecard
+   [signature probe](https://github.com/ossf/scorecard/blob/main/probes/releasesAreSigned/impl.go)
+   recognizes `.sigstore.json` assets by filename, without verifying their
+   signatures. Our helper verifies the original bundles cryptographically;
+   their filenames qualify for Scorecard's signature category, worth 8 per
+   release under its current
+   [evaluator](https://github.com/ossf/scorecard/blob/main/checks/evaluation/signed_releases.go).
+   Its separate
+   [provenance probe](https://github.com/ossf/scorecard/blob/main/probes/releasesHaveProvenance/impl.go)
+   recognizes `.intoto.jsonl` filenames for the 10-point category. Preserve
+   the original Sigstore format; do not rename bundles to satisfy that check.
+
+   The probes inspect the first five release entries and skip entries without
+   assets. The evaluator rounds down the average of the resulting per-release
+   scores, including zero for releases with neither recognized asset type.
+   Attaching these verified bundles therefore does not guarantee a
+   Signed-Releases score of 10. The
+   [aggregate score](https://github.com/ossf/scorecard#aggregate-score)
+   also weights other checks by risk; an overall score above 8.5 requires an
+   observed Scorecard result and is not promised by this workflow.
 8. **Open the next candidate.** Bump the version (for example to `0.1.3`) and
    add a new unreleased section to the changelog and release notes.
 

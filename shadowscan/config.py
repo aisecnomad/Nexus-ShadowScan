@@ -159,7 +159,7 @@ _BOOLEAN_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
     "cloud.gcp": frozenset({"agent_registry", "allow_instance_credentials", "gemini_enterprise"}),
     "cloud.oci": frozenset({"allow_instance_credentials"}),
     "code.filesystem": frozenset(
-        {"default_excludes", "include_tests", "scan_secrets", "strict_coverage", "use_git"}
+        {"default_excludes", "include_tests", "scan_secrets", "staged", "strict_coverage", "use_git"}
     ),
     "code.github": frozenset(
         {
