@@ -231,8 +231,13 @@ def check_glob(glob: str, context: str) -> None:
         i += 1
 
 
-def validate_signature_shape(value: Any, context: str) -> dict[str, Any]:
-    """Validate types before construction; never coerce strings/bools to numbers."""
+def validate_signature_shape(value: Any, context: str, *, check_patterns: bool = True) -> dict[str, Any]:
+    """Validate types before construction; never coerce strings/bools to numbers.
+
+    ``check_patterns`` false skips the empty-match check, which compiles every
+    pattern. Only built-in packs, which ``shadowscan.signatures.validate``
+    checks in full before release, are loaded that way.
+    """
     d = require_mapping(value, context)
     _unknown(d, SIGNATURE_STRINGS | SIGNATURE_LISTS | {"agent_indicator", "signals"}, context)
     for required in ("id", "category", "signals"):
@@ -260,11 +265,11 @@ def validate_signature_shape(value: Any, context: str) -> dict[str, Any]:
     # matcher lets them attach different weights or capabilities to the same
     # text, so uniqueness is only enforced inside each signal.
     for i, signal in enumerate(require_list(d["signals"], f"{context}.signals", nonempty=True)):
-        validate_signal_shape(signal, f"{context}.signals[{i}]")
+        validate_signal_shape(signal, f"{context}.signals[{i}]", check_patterns=check_patterns)
     return d
 
 
-def validate_signal_shape(value: Any, context: str) -> dict[str, Any]:
+def validate_signal_shape(value: Any, context: str, *, check_patterns: bool = True) -> dict[str, Any]:
     d = require_mapping(value, context)
     kind = d.get("type")
     if not isinstance(kind, str) or kind not in SIGNAL_FIELDS:
@@ -277,7 +282,7 @@ def validate_signal_shape(value: Any, context: str) -> dict[str, Any]:
                 _vocabulary(items, LANGUAGES, f"{context}.{key}", "language")
             elif key == "capabilities":
                 _vocabulary(items, CAPABILITIES, f"{context}.{key}", "capability")
-            elif key == "patterns":
+            elif key == "patterns" and check_patterns:
                 for i, pattern in enumerate(items):
                     if matches_empty_string(pattern):
                         raise ValueError(
@@ -286,7 +291,7 @@ def validate_signal_shape(value: Any, context: str) -> dict[str, Any]:
             elif key == "globs":
                 for i, glob in enumerate(items):
                     check_glob(glob, f"{context}.{key}[{i}]")
-            elif key == "values" and kind == "domain":
+            elif key == "values" and kind == "domain" and check_patterns:
                 for i, domain in enumerate(items):
                     if domain.startswith("re:") and matches_empty_string(domain[3:], regex.IGNORECASE):
                         raise ValueError(

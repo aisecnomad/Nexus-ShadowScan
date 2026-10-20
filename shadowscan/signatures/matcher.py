@@ -23,6 +23,7 @@ from typing import Any, NamedTuple
 
 import regex
 
+from shadowscan.signatures.budget import _SCAN_BUDGET, _ScanBudget, ready
 from shadowscan.signatures.loader import Signal, Signature, load_signatures, normalise_package_name
 from shadowscan.utils.placeholders import possessive_phrase
 from shadowscan.utils.redaction import sanitize_text
@@ -50,54 +51,6 @@ DEFAULT_SCAN_BUDGET_SECONDS = 2.0
 WALL_BUDGET_FACTOR = 4.0
 
 
-class _ScanBudget:
-    """The execution budget of one input: a CPU allowance and an absolute wall-clock cap."""
-
-    __slots__ = (
-        "cpu_deadline",
-        "cpu_seconds",
-        "cpu_started",
-        "wall_deadline",
-        "wall_seconds",
-        "wall_started",
-    )
-
-    def __init__(self, cpu_seconds: float, wall_seconds: float, outer: _ScanBudget | None) -> None:
-        self.cpu_seconds, self.wall_seconds = cpu_seconds, wall_seconds
-        self.cpu_started, self.wall_started = time.thread_time(), time.monotonic()
-        self.cpu_deadline = self.cpu_started + cpu_seconds
-        self.wall_deadline = self.wall_started + wall_seconds
-        if outer is not None:
-            # A nested budget never outlives the one it runs under; the
-            # diagnostic then describes the budget that actually ended it.
-            if outer.cpu_deadline < self.cpu_deadline:
-                self.cpu_deadline, self.cpu_seconds, self.cpu_started = (
-                    outer.cpu_deadline,
-                    outer.cpu_seconds,
-                    outer.cpu_started,
-                )
-            if outer.wall_deadline < self.wall_deadline:
-                self.wall_deadline, self.wall_seconds, self.wall_started = (
-                    outer.wall_deadline,
-                    outer.wall_seconds,
-                    outer.wall_started,
-                )
-
-    def remaining(self) -> float:
-        """Seconds left: the smaller of the CPU allowance and the wall cap."""
-        return min(self.cpu_deadline - time.thread_time(), self.wall_deadline - time.monotonic())
-
-    def exhausted(self) -> str:
-        """Describe the spent budget for a diagnostic (static text, nothing from the input)."""
-        cpu = time.thread_time() - self.cpu_started
-        wall = time.monotonic() - self.wall_started
-        return (
-            f"signature matching exceeded the input execution budget (cpu {cpu:.2f}s of "
-            f"{self.cpu_seconds:.2f}s, wall {wall:.2f}s of {self.wall_seconds:.2f}s)"
-        )
-
-
-_SCAN_BUDGET: ContextVar[_ScanBudget | None] = ContextVar("signature_scan_budget", default=None)
 # A briefly busy worker can exhaust several regex wall-clock attempts before
 # this thread has used its own 100 ms CPU allowance. Keep retries finite and
 # inside the original per-pattern CPU and per-input wall deadlines.
@@ -232,6 +185,7 @@ def _finditer(
     excluded: Callable[[int], bool] | None = None,
     selected: Callable[[Any], bool] | None = None,
 ) -> list[Any]:
+    rx = ready(rx)
     if selected is not None:
         return _judged_finditer(rx, text, context, limit, excluded, selected)
 
@@ -281,6 +235,7 @@ def _judged_finditer(
     executions and is charged to the input's execution budget, which still
     ends the input, and marks it incomplete, when spent.
     """
+    rx = ready(rx)
     allowance = _remaining_timeout()
     spent = 0.0
     found: list[Any] = []
@@ -308,6 +263,7 @@ def _judged_finditer(
 
 
 def _search(rx: Any, text: str, context: str) -> Any:
+    rx = ready(rx)
     return _run_regex(lambda timeout: rx.search(text, timeout=timeout, concurrent=False), context)
 
 
@@ -2974,12 +2930,18 @@ _default_index: SignatureIndex | None = None
 def get_index(
     extra_dirs: list[str] | None = None, reload: bool = False, *, allow_override: bool = False
 ) -> SignatureIndex:
-    """Return the process-wide signature index (built lazily)."""
+    """Return the process-wide signature index (built lazily).
+
+    Built-in patterns compile on first use (``budget.DeferredPattern``); organization packs in
+    ``extra_dirs`` are compiled and checked as they load.
+    """
     global _default_index
     with _index_lock:
         if _default_index is None or reload or extra_dirs:
             dirs: list[str | os.PathLike[str]] | None = list(extra_dirs) if extra_dirs else None
-            idx = SignatureIndex(load_signatures(extra_dirs=dirs, allow_override=allow_override))
+            idx = SignatureIndex(
+                load_signatures(extra_dirs=dirs, allow_override=allow_override, defer_builtin=True)
+            )
             if not extra_dirs:
                 _default_index = idx
             return idx

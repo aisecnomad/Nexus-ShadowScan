@@ -17,6 +17,7 @@ import regex
 import yaml
 
 from shadowscan.errors import SetupError, SetupPathError, yaml_error_position
+from shadowscan.signatures.budget import DeferredPattern
 from shadowscan.signatures.schema import require_list, validate_signature_shape
 from shadowscan.utils.files import SKIPPED_LINK, policy_files, read_policy_text
 from shadowscan.utils.redaction import sanitize_text
@@ -128,6 +129,15 @@ class Signal:
                     except regex.error as exc:
                         raise ValueError(f"invalid domain regex {value!r}: {exc}") from exc
 
+    def defer(self) -> None:
+        """Compile each pattern on its first use instead (``budget.DeferredPattern``).
+
+        Only for the built-in packs, which ``shadowscan.signatures.validate``
+        compiles and checks in full before they ship. ``re:`` domain values are
+        compiled by :class:`SignatureIndex` as before.
+        """
+        self.bounded_compiled = [DeferredPattern(p, regex.MULTILINE | regex.VERSION0) for p in self.patterns]
+
 
 @dataclass(slots=True)
 class Signature:
@@ -145,7 +155,8 @@ class Signature:
     signals: list[Signal] = field(default_factory=list)
     source: str | None = None  # file it came from
 
-    def validate(self) -> None:
+    def validate(self, *, defer: bool = False) -> None:
+        """Check the signature and compile its signals; a built-in pack may ``defer`` (``Signal.defer``)."""
         if not re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)*", self.id):
             raise ValueError(f"{self.source}: invalid signature id {self.id!r}")
         if self.category not in VALID_CATEGORIES:
@@ -166,7 +177,10 @@ class Signature:
                 raise ValueError(f"{self.source}: {self.id}: {s.type} signal needs values")
             if s.type in {"env", "client_id"} and not (s.names or s.patterns):
                 raise ValueError(f"{self.source}: {self.id}: {s.type} signal needs names or patterns")
-            s.compile()
+            if defer:
+                s.defer()
+            else:
+                s.compile()
 
 
 def _signal_from_dict(d: dict[str, Any]) -> Signal:
@@ -189,8 +203,9 @@ def _signal_from_dict(d: dict[str, Any]) -> Signal:
     )
 
 
-def signature_from_dict(d: dict[str, Any], source: str | None = None) -> Signature:
-    validate_signature_shape(d, source or "signature")
+def signature_from_dict(d: dict[str, Any], source: str | None = None, *, defer: bool = False) -> Signature:
+    """Build and validate one signature; ``defer`` is for built-in packs only (``Signal.defer``)."""
+    validate_signature_shape(d, source or "signature", check_patterns=not defer)
     sig = Signature(
         id=str(d["id"]),
         name=str(d.get("name", d["id"])),
@@ -206,7 +221,7 @@ def signature_from_dict(d: dict[str, Any], source: str | None = None) -> Signatu
         signals=[_signal_from_dict(s) for s in d.get("signals", []) or []],
         source=source,
     )
-    sig.validate()
+    sig.validate(defer=defer)
     return sig
 
 
@@ -288,11 +303,13 @@ if getattr(yaml, "__with_libyaml__", False):
     _BuiltinPackLoader = _CUniqueKeyLoader
 
 
-def load_signature_file(path: Path, *, builtin: bool = False) -> list[Signature]:
+def load_signature_file(path: Path, *, builtin: bool = False, defer: bool = False) -> list[Signature]:
     """Load one pack file; every pack problem is a :class:`SignaturePackError` naming ``path``.
 
     ``builtin`` says the file is one of the installed package's own packs, which
     may be parsed by libyaml; any other pack is parsed by the bounded loader.
+    ``defer`` leaves pattern compilation, and the empty-match check that compiles, to first use;
+    only the built-in packs, validated in full before release, are loaded that way.
     """
     loader = _BuiltinPackLoader if builtin else _UniqueKeyLoader
     try:
@@ -315,12 +332,12 @@ def load_signature_file(path: Path, *, builtin: bool = False) -> list[Signature]
                 if set(doc) != {"signatures"}:
                     raise SignaturePackError(f"{context}: only the 'signatures' key is allowed on a pack")
                 for item in require_list(doc["signatures"], context, nonempty=True):
-                    out.append(signature_from_dict(item, source=context))
+                    out.append(signature_from_dict(item, source=context, defer=defer))
             elif isinstance(doc, dict):
-                out.append(signature_from_dict(doc, source=context))
+                out.append(signature_from_dict(doc, source=context, defer=defer))
             elif isinstance(doc, list):
                 for item in require_list(doc, context, nonempty=True):
-                    out.append(signature_from_dict(item, source=context))
+                    out.append(signature_from_dict(item, source=context, defer=defer))
             else:
                 raise SignaturePackError(
                     f"{context}: expected a signature, signature list, or signatures pack"
@@ -388,13 +405,16 @@ def load_signatures(
     *,
     allow_override: bool = False,
     libyaml_builtin: bool = True,
+    defer_builtin: bool = False,
 ) -> list[Signature]:
     """Load built-in signatures plus any extra packs.
 
     Built-in IDs are reserved unless ``allow_override`` is explicitly enabled.
     Later organization packs may replace IDs from earlier organization packs.
     ``libyaml_builtin`` false parses the built-in packs with the bounded loader
-    too, as the pack validator does.
+    too, as the pack validator does. ``defer_builtin`` compiles the built-in
+    patterns on first use (``Signal.defer``); extra packs are always compiled
+    and checked here, and so is everything ``shadowscan.signatures.validate`` loads.
     """
     if not isinstance(allow_override, bool):
         raise ValueError("allow_override must be a boolean")
@@ -407,7 +427,9 @@ def load_signatures(
         pack_ids: set[str] = set()
         builtin = include_builtin and number == 0
         for f in _pack_files(d, custom=not builtin):
-            for sig in load_signature_file(f, builtin=builtin and libyaml_builtin):
+            for sig in load_signature_file(
+                f, builtin=builtin and libyaml_builtin, defer=defer_builtin and builtin
+            ):
                 if sig.id in pack_ids:
                     raise SignaturePackError(f"{f}: duplicate signature id {sig.id!r} in {d}")
                 if sig.id in reserved and not allow_override:
