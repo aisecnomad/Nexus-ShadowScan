@@ -7,7 +7,8 @@ name: Release candidate evidence
 # nothing and uploads the exact attested wheel and sdist through PyPI trusted
 # publishing; no package-index token is stored anywhere. A pypi upload also
 # requires the maintainer's tag v<version> on the reviewed commit. A GitHub
-# release stays a separate maintainer action.
+# release stays a separate maintainer action. An explicit opt-in attaches
+# verified evidence to an existing release after protected PyPI publication.
 on:
   workflow_dispatch:
     inputs:
@@ -40,6 +41,11 @@ on:
           - none
           - testpypi
           - pypi
+      attach_github_release:
+        description: Attach verified evidence to an existing GitHub release for this version (pypi only)
+        required: true
+        default: false
+        type: boolean
 
 permissions: {}
 concurrency:
@@ -234,8 +240,8 @@ jobs:
           mkdir attestations
           # Sigstore bundles. The .sigstore.json suffix is the one release-signature
           # checks, such as OpenSSF Scorecard's Signed-Releases, look for among the
-          # assets of a GitHub release; the maintainer attaches these two files to
-          # a release by hand (docs/operations/publishing.md). Nothing here does.
+          # assets of a GitHub release. The optional release-assets job verifies
+          # and attaches these original bundles; it never creates a release.
           cp "$PROVENANCE_BUNDLE" attestations/provenance.sigstore.json
           cp "$SBOM_BUNDLE" attestations/sbom.sigstore.json
       - id: upload
@@ -393,3 +399,34 @@ jobs:
         with:
           packages-dir: dist/
           repository-url: ${{ inputs.publish == 'testpypi' && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
+
+  release-assets:
+    needs: [publication-input, publish]
+    if: inputs.attach_github_release && inputs.publish == 'pypi' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Separate approval and token from package publishing; no OIDC permission.
+    # Only the stdlib verification helper from the reviewed source is executed.
+    environment:
+      name: pypi
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.publication-input.outputs.artifact_id }}
+          path: publication-input
+          digest-mismatch: error
+      - name: Verify and attach evidence to the existing release without overwriting
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python -m tools.release.assets --upload \
+            --directory publication-input --repository "$GITHUB_REPOSITORY" \
+            --commit "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID"

@@ -1,0 +1,42 @@
+name: Connector maintenance inventory
+
+on:
+  schedule:
+    - cron: '43 5 * * 3'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: connector-inventory
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Install the reviewed dependency lock
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
+      - name: Check documentation and snapshot built-in connector declarations
+        run: |
+          python -m tools.connector_inventory --check --output "$RUNNER_TEMP/connector-inventory.json"
+          git rev-parse HEAD > "$RUNNER_TEMP/connector-inventory-source.txt"
+      - name: Retain the inventory for review
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: connector-inventory-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/connector-inventory.json
+            ${{ runner.temp }}/connector-inventory-source.txt
+          if-no-files-found: error
+          retention-days: 90

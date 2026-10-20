@@ -181,7 +181,28 @@ def _incomplete_explanation(result: ScanResult) -> str:
         note += f"; {summary['declared_omissions']} declared omission(s) did not count"
     if summary["tolerated_gaps"]:
         note += f"; {summary['tolerated_gaps']} coverage gap(s) within budget did not count"
+    hints = _incomplete_remediation(reasons)
+    if hints:
+        note += f"; next steps: {hints}"
     return note
+
+
+def _incomplete_remediation(reasons: dict[str, int]) -> str:
+    """Give bounded, static advice for the largest reported gaps, without echoing source data."""
+    advice = {
+        "oversize-file": "review max_file_size or split large inputs",
+        "unresolved-link": "replace unresolved links with regular files inside the scan root",
+        "unparsed-input": "check input syntax and the expected export format",
+        "sanitization-limit": "split oversized inputs; keep redaction enabled",
+        "timeout": "narrow the scan roots or increase the bounded connector timeout",
+        "access-denied": "check read-only permissions and credential configuration",
+        "upstream-error": "check provider availability and retry failed sources",
+        "analysis-limit": "split complex source files or review the documented analysis limits",
+        "subset-scan": "run without --triage for full source analysis",
+        "unscanned-input": "inspect the report diagnostics and provide safely readable inputs",
+    }
+    ordered = sorted(reasons, key=lambda reason: (-reasons[reason], reason))
+    return "; ".join([advice[reason] for reason in ordered if reason in advice][:3])
 
 
 def _explain_incomplete(result: ScanResult) -> None:
@@ -719,6 +740,7 @@ from shadowscan.cli import (  # noqa: E402, F401
     _merge,
     _scan,
     _signatures,
+    _triage,
 )
 
 # Backward-compat re-exports: tests monkeypatch these via "shadowscan.cli.<name>".
@@ -730,6 +752,7 @@ from shadowscan.reporters.dashboard import render_dashboard as render_dashboard 
 # modules import this package, and an import back from them would be a cycle.
 _COMMAND_MODULES = {
     "code": "_scan",
+    "triage_command": "_triage",
     "controls_command": "_controls",
     "dashboard_command": "_dashboard",
     "diff": "_diff",

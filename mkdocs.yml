@@ -69,7 +69,11 @@ plugins:
 markdown_extensions:
   - admonition
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
@@ -94,6 +98,7 @@ nav:
       - Quick start: getting-started/quickstart.md
       - Configuration: getting-started/configuration.md
       - Command reference: reference/cli.md
+      - Product guide: reference/product-guide.md
   - Connectors:
       - Overview: connectors.md
       - Code: connectors/code.md
@@ -107,6 +112,7 @@ nav:
       - Network: connectors/network.md
       - Runtime processes: connectors/runtime.md
       - Configuration reference: connectors/reference.md
+      - Connector inventory bot: operations/connector-inventory.md
   - Concepts:
       - Architecture: architecture.md
       - Signatures: signatures.md
@@ -125,6 +131,8 @@ nav:
       - Operational controls: operations/operational-controls.md
       - Scheduled drift detection: operations/drift.md
       - Fleet dashboard: operations/dashboard.md
+      - Terminal triage: operations/terminal-triage.md
+      - Local pre-commit scans: operations/code-precommit.md
       - Control evidence report: operations/controls.md
       - AI bill of materials: operations/ai-bom.md
       - OCSF events: operations/ocsf.md
@@ -137,6 +145,7 @@ nav:
       - OpenSSF Best Practices evidence: operations/openssf-best-practices.md
       - Security alert triage (2026-10-18): operations/security-alert-triage.md
       - External reviewer packet: operations/reviewer-packet.md
+      - Hardening log (2026-09-24): history/consolidated-review-2026-09-24.md
   - Community: community.md
   - Development:
       - Contributing: contributing.md
@@ -157,6 +166,7 @@ nav:
           - "ADR-005: Code scanner module boundaries": adrs/005-code-scanner-module-boundaries.md
   - API Reference:
       - api/index.md
+      - Compatibility and 1.0: api/compatibility.md
       - Core:
           - Engine: api/engine.md
           - Models: api/models.md
@@ -191,6 +201,7 @@ nav:
   - Release notes: release-notes.md
   - Changelog: changelog.md
   - Engineering log: engineering-log.md
+  - Archived change detail: history/changelog-detail.md
 
 extra:
   social:

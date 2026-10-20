@@ -106,10 +106,14 @@ def test_a_function_at_the_limit_is_not_measured(project: Path) -> None:
     assert gate.measure_functions(project) == {}
 
 
-def test_the_tooling_and_the_benchmarks_are_measured_but_the_tests_are_not(project: Path) -> None:
+def test_main_roots_and_explicit_companion_roots_keep_tests_out(project: Path) -> None:
     for path in ("tools/helper.py", "benchmarks/score.py", "tests/test_big.py"):
         write(project, path, branchy("big", JUST_OVER))
-    assert gate.measure_functions(project) == {"tools/helper.py::big": OVER, "benchmarks/score.py::big": OVER}
+    assert gate.measure_functions(project) == {"tools/helper.py::big": OVER}
+    assert gate.measure_functions(project, source_roots=("tools", "benchmarks")) == {
+        "tools/helper.py::big": OVER,
+        "benchmarks/score.py::big": OVER,
+    }
 
 
 def test_a_noqa_comment_does_not_hide_a_function(project: Path) -> None:

@@ -88,9 +88,8 @@ exclude = [
   "tests/fixtures",
   "examples",
   "archive",
-  # ShadowBench estate artifacts: authored sample repositories and exports
-  # that discovery tools are scored on, not project code.
-  "benchmarks/shadowbench/estate/artifacts",
+  # The pinned companion is linted and tested by its own required CI job.
+  "benchmark-suite",
 ]
 
 [tool.ruff.lint]
@@ -120,10 +119,6 @@ ignore = ["SIM108", "SIM102", "SIM103", "C408", "SIM105", "UP042", "S101"]
 # point of the test, and the harnesses run the CLI as a subprocess by design.
 "tests/**" = ["E501", "S"]
 "tools/**" = ["S"]
-"benchmarks/**" = ["S"]
-# Benchmark case templates embed source files from other languages verbatim.
-"tools/benchmark/*_cases.py" = ["E501"]
-"benchmarks/*/corpus.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -141,7 +136,7 @@ indent-style = "space"
 [tool.mypy]
 python_version = "3.11"
 # ShadowBench estate artifacts are inputs under test, not project code.
-exclude = ["benchmarks/shadowbench/estate/artifacts/"]
+exclude = ["benchmark-suite/"]
 warn_unused_ignores = true
 warn_return_any = true
 warn_unreachable = true

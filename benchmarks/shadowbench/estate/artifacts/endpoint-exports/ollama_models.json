@@ -1,8 +1,0 @@
-{
-  "endpoint": "0.0.0.0:11434",
-  "version": "0.6.8",
-  "models": [
-    {"name": "freight-eta-tuner-b3x7:latest", "size": 4920000000},
-    {"name": "llama3.1:8b", "size": 4920753328}
-  ]
-}

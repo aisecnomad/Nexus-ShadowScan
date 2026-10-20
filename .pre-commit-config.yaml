@@ -2,6 +2,7 @@
 # Install the hash-locked toolchain and hooks: make install-hooks (or
 # pre-commit install after make install)
 # Run manually: pre-commit run --all-files
+exclude: ^benchmark-suite/
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # v6.0.0
@@ -58,7 +59,7 @@ repos:
     rev: 2834ec6639549dd6796205c8f011dedcd587288b # v2.4.0
     hooks:
       - id: mypy
-        files: ^(shadowscan|tools|benchmarks)/
+        files: ^(shadowscan|tools)/
         # The estate track's sample repositories are inputs under test, not
         # project code. pre-commit passes files explicitly, which mypy's own
         # `exclude` setting does not filter, so the hook excludes them too.

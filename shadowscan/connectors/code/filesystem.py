@@ -653,6 +653,12 @@ class FilesystemConnector(BaseConnector):
             "other file contents are not read; parent directory names are listed; such a scan always "
             "runs in full, without the incremental cache (endpoint scans use it; default: everything)"
         ),
+        "staged": (
+            "scan only changed Git index blobs, never unstaged working-tree edits; at most 100 changed "
+            "files, 1 MiB each and 8 MiB combined Git output; links, submodules, conflicts and unread "
+            "objects fail closed; requires a local repository root and Git 2.45+; the report cannot "
+            "establish a repository inventory or resolve baseline findings (default false)"
+        ),
         "default_excludes": (
             "skip the built-in directory names (VCS metadata, caches, virtualenvs, dependency trees, IDE "
             "state, and build-output or vendored names such as bin, build, dist, vendor) at any depth "
@@ -867,6 +873,13 @@ class FilesystemConnector(BaseConnector):
                 raise ConnectorError("code.filesystem: invalid split root identity")
             self._root_ids[Path(path).expanduser().resolve()] = split_root_id
         self.diff_base: str | None = ctx.get("diff_base")
+        self.staged = config_boolean(ctx.get("staged", False), "staged")
+        if self.staged and (
+            self.diff_base is not None or self.triage or self.include_paths or ctx.input_path
+        ):
+            raise ConnectorError(
+                "code.filesystem: staged conflicts with diff_base, triage, include and input"
+            )
         if self.diff_base is not None:
             from shadowscan.utils.git import validate_diff_base
 
@@ -954,12 +967,39 @@ class FilesystemConnector(BaseConnector):
             if not root.exists():
                 self.ctx.error(f"code.filesystem: path not found: {root}")
                 continue
-            yield from self.scan_tree(root)
+            if self.staged:
+                yield from self._scan_staged(root)
+            else:
+                yield from self.scan_tree(root)
+
+    def _scan_staged(self, root: Path) -> Iterator[Finding]:
+        from shadowscan.utils.staged import StagedScanError, staged_snapshot
+
+        try:
+            with staged_snapshot(root, self.ctx) as snapshot:
+                self.ctx.warn(
+                    f"code.filesystem: staged scope: {snapshot.files} changed file(s), "
+                    f"{snapshot.deleted} deletion(s); exact index blobs only. Unchanged files, "
+                    "unstaged edits and cross-file context were not scanned; "
+                    "this is not a repository inventory",
+                    incomplete=False,
+                )
+                for finding in self.scan_tree(snapshot.root, label=self._scan_label(root)):
+                    finding.add_tag("staged-scan")
+                    finding.metadata["scan_root"] = str(root)
+                    finding.metadata["staged_scan"] = {
+                        "files": snapshot.files,
+                        "deleted": snapshot.deleted,
+                        "selection_sha256": snapshot.selection_sha256,
+                    }
+                    yield finding
+        except StagedScanError as exc:
+            self.ctx.error(f"code.filesystem: {exc}", reason="unscanned-input")
 
     # ------------------------------------------------------------------ scan
-    def scan_tree(self, root: Path) -> Iterator[Finding]:
+    def scan_tree(self, root: Path, *, label: str | None = None) -> Iterator[Finding]:
         root = root.absolute()
-        scan = _ScanState(root, self._scan_label(root))
+        scan = _ScanState(root, label or self._scan_label(root))
         previous_scan = self.ownership.scan
         self.ownership.scan = scan
         # Ownership caches belong to this opened tree, not a pathname that a
@@ -1104,6 +1144,9 @@ class FilesystemConnector(BaseConnector):
         engine's own ceiling. A larger tree needs an explicit deadline; one
         that overruns this one is still incomplete.
         """
+        if config.get("staged"):
+            # A bounded index snapshot does not enumerate the working tree.
+            return None
         try:
             roots = [Path(p) for p in cls.scanned_local_paths(config)]
             extra = _validated_names(config.get("exclude"), "exclude")

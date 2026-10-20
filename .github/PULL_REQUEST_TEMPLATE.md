@@ -41,7 +41,7 @@ audit, validator, secrets and self-scan gates below in one command.
 - [ ] Offline fixtures added (no live credentials in tests)
 - [ ] Connector handles API failures and marks coverage incomplete (exit 3)
 - [ ] New connector registered in `shadowscan/connectors/__init__.py`
-- [ ] `docs/connectors/reference.md` and the README detection matrix regenerated (`make connector-reference`, `make readme-matrix`) and least-privilege scopes documented in the connector guide
+- [ ] `docs/connectors/reference.md` and the product-guide detection matrix regenerated (`make connector-reference`, `make readme-matrix`) and least-privilege scopes documented in the connector guide
 - [ ] `shadowscan connectors` listing verified
 
 ### Required for signature changes

@@ -18,6 +18,7 @@ from tools.readme_visuals import (
     ASSETS,
     BANNER,
     BENCHMARK,
+    BENCHMARK_EVIDENCE,
     BENCHMARK_RUN,
     CONNECTORS,
     DATA_FLOW,
@@ -98,7 +99,7 @@ def test_images_carry_no_version_count_or_repository_slug(render: Callable[[], s
 
 
 def test_readme_and_architecture_page_reference_the_generated_images() -> None:
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    readme = (ROOT / "docs/reference/product-guide.md").read_text(encoding="utf-8")
     raw = "https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/"
     for path in (BANNER, DATA_FLOW, BENCHMARK):
         assert f"{raw}{path.name}" in readme
@@ -114,8 +115,8 @@ def test_docs_assets_holds_only_the_generated_images() -> None:
 
 def test_benchmark_chart_shows_every_tool_of_the_committed_run_with_its_caveats() -> None:
     """The chart's figures come only from a committed results file, and it says what they are not."""
-    with (BENCHMARK_RUN / "metrics.json").open(encoding="utf-8") as handle:
-        tools = json.load(handle)["tools"]
+    with BENCHMARK_EVIDENCE.open(encoding="utf-8") as handle:
+        tools = json.load(handle)["cases_tools"]
     rows = benchmark_rows()
     assert {name for name, *_ in rows} == set(tools)
     text = _text(render_benchmark())

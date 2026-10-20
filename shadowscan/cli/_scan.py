@@ -150,6 +150,14 @@ def _code_options(
 )
 @click.option("--no-secrets", is_flag=True, help="skip credential detection")
 @click.option(
+    "--quick",
+    is_flag=True,
+    help="scan changed staged Git blobs only (default PATH: .); no unstaged edits or whole-repository claim",
+)
+@click.option(
+    "--preflight", is_flag=True, help="check local root access and quick-mode inputs without running a scan"
+)
+@click.option(
     "--strict-coverage",
     is_flag=True,
     help="strict accounting: every coverage gap is an error (exit 3), none budgeted, discounted or declared",
@@ -194,6 +202,8 @@ def code(
     exclude: tuple[str, ...],
     no_default_excludes: bool,
     no_secrets: bool,
+    quick: bool,
+    preflight: bool,
     strict_coverage: bool,
     include_tests: bool,
     triage: bool,
@@ -204,6 +214,8 @@ def code(
     """Scan local directories and/or remote repositories for agent code, MCP, coding agents, IaC and
     secrets."""
     specs: list[ConnectorSpec] = []
+    if quick:
+        paths = _quick_paths(paths, bool(github_org or github_repo or gitlab_group or diff_base or triage))
     common = _code_options(
         exclude,
         no_default_excludes,
@@ -214,6 +226,12 @@ def code(
         profile,
         opts.max_coverage_gap,
     )
+    if quick:
+        common["staged"] = True
+    if preflight:
+        _code_preflight(
+            paths, common, opts, remote=bool(github_org or github_repo or gitlab_group), mode=mode
+        )
     if diff_base and not paths:
         raise click.UsageError("--diff-base applies only to local PATHS")
     if mode and not (github_org or github_repo or gitlab_group):
@@ -241,6 +259,24 @@ def code(
     if not specs:
         raise click.UsageError("give at least one PATH, --github-org/--github-repo or --gitlab-group")
     _cli._run_scan(opts.config(specs), opts)
+
+
+def _code_preflight(
+    paths: tuple[str, ...], common: dict[str, Any], opts: ScanOptions, *, remote: bool, mode: str | None
+) -> None:
+    if remote or mode:
+        raise click.UsageError("--preflight supports local PATHS only")
+    from shadowscan.cli._code_preflight import code_preflight
+
+    code_preflight(paths or (".",), common, opts)
+
+
+def _quick_paths(paths: tuple[str, ...], conflict: bool) -> tuple[str, ...]:
+    if conflict:
+        raise click.UsageError(
+            "--quick requires local Git roots and conflicts with remote, diff-base and triage"
+        )
+    return paths or (".",)
 
 
 # ------------------------------------------------------------------- gateway

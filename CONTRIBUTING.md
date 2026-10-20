@@ -47,7 +47,7 @@ cloud and development toolchain. Fork the repository on GitHub if you need a
 branch you can push; clone your fork in that case. In a local checkout:
 
 ```bash
-git clone https://github.com/aisecnomad/Nexus-ShadowScan.git
+git clone --filter=blob:none https://github.com/aisecnomad/Nexus-ShadowScan.git
 cd Nexus-ShadowScan
 python -m venv .venv
 source .venv/bin/activate
@@ -69,13 +69,18 @@ Run `make help` for a quick reference of all development commands.
 | [`shadowscan/`](shadowscan/) | The scanner package: CLI (`cli/`), engine, finding model, risk and autonomy scoring, inventory reconciliation, reporters and redaction. [docs/architecture.md](docs/architecture.md#package-layout) describes each module's responsibility. |
 | [`shadowscan/connectors/`](shadowscan/connectors/) | One subpackage per discovery surface (`code`, `identity`, `gateway`, `lowcode`, `saas`, `cloud`, `endpoint`, `network`, `runtime`); each connector implements `collect()` and `analyze()`. |
 | [`shadowscan/signatures/data/`](shadowscan/signatures/data/), [`shadowscan/mappings/data/`](shadowscan/mappings/data/) | YAML signature packs and the threat and control mapping catalogs. |
-| [`tests/`](tests/) | The pytest suite. Unit tests sit in [`tests/unit/`](tests/unit/), named after the module they exercise; offline, sanitized fixtures sit under [`tests/fixtures/`](tests/fixtures/); `tests/test_repository_policy.py` and `tests/test_repository_consistency.py` are the `make policy` gates. Other top-level `tests/test_*.py` modules test repository tooling: release, governance, evaluation, canaries and benchmark entry points. Find a module's tests with `git grep -l shadowscan.connectors.identity.okta tests`. |
+| [`tests/`](tests/) | The scanner pytest suite. Unit tests sit in [`tests/unit/`](tests/unit/), named after the module they exercise; offline, sanitized fixtures sit under [`tests/fixtures/`](tests/fixtures/); `tests/test_repository_policy.py` and `tests/test_repository_consistency.py` are the `make policy` gates. Other top-level `tests/test_*.py` modules test repository tooling: release, governance, evaluation, canaries and companion pin verification. Find a module's tests with `git grep -l shadowscan.connectors.identity.okta tests`. |
 | [`docs/`](docs/) | The MkDocs site (`mkdocs.yml` holds the navigation): getting-started guides, connector guides under [`docs/connectors/`](docs/connectors/), concepts, operations runbooks, ADRs and the API reference. |
 | [`examples/`](examples/) | The offline demo configuration (`shadowscan.offline.yaml`), sample inventories, canary and eBPF fixtures, and consumer CI examples (GitHub Actions workflows and Kubernetes manifests). |
-| [`tools/`](tools/README.md) | Repository tooling that never ships: the secrets and per-connector coverage gates, the regression corpora, benchmark harnesses, the acceptance verifier, release, governance and container checks, and the AI review gate internals. |
-| [`benchmarks/`](benchmarks/README.md) | Benchmark corpora and recorded results, with each benchmark's harness and what it can and cannot show. |
+| [`tools/`](tools/README.md) | Repository tooling that never ships: the secrets and per-connector coverage gates, local regression corpora, companion pin and evidence checks, the acceptance verifier, release, governance and container checks, and the AI review gate internals. |
+| [`benchmarks/`](benchmarks/README.md) | Migration and verification instructions for Nexus ShadowBench; historical benchmark corpora, results, harnesses and their tests now live in the optional `benchmark-suite` companion submodule. |
 | [`archive/reviews/`](archive/reviews/README.md) | Dated, AI-assisted review records; per [AGENTS.md](AGENTS.md), not independent human review. |
 | [`.github/`](.github/) | Workflows ([inventory](.github/workflows/README.md)), issue forms, the pull request template, the label taxonomy (`labels.yml`), Dependabot configuration and the committed `main` ruleset. |
+
+For benchmark work, initialize the pinned companion with
+`git submodule update --init --depth 1 -- benchmark-suite`, then follow the
+[companion verification and test instructions](benchmarks/README.md).
+Ordinary scanner development and local regression evaluation need no submodule.
 
 Files at the repository root stay there because the build, the container image,
 Dependabot and the tests read them from there:
@@ -93,7 +98,7 @@ Dependabot and the tests read them from there:
 | `mkdocs.yml` | Documentation site configuration and navigation |
 | `Dockerfile`, `.dockerignore` | The worker image and its build-context allow-list |
 | `agent-card.yaml` | Sample Agent Capability Card used by the offline demo, the quick start and the image |
-| `CHANGELOG.md`, `docs/engineering-log.md`, `RELEASE_NOTES.md` | One line per change, the detailed engineering log, and the operator summary of what changes on upgrade |
+| `CHANGELOG.md`, `docs/engineering-log.md`, `RELEASE_NOTES.md` | One summary per release, the detailed engineering log, and the operator summary of what changes on upgrade |
 | `AGENTS.md` | Rules for coding agents working in this repository |
 | `CITATION.cff`, `NOTICE`, `LICENSE`, `CODEOWNERS` | Citation metadata, attribution, licence and review ownership |
 
@@ -165,9 +170,9 @@ exact supported Python matrix and dependency pins.
 
 | Gate | Command | Requirement |
 |------|---------|-------------|
-| Lint | `ruff check shadowscan tests tools benchmarks` | No errors |
-| Format | `ruff format --check shadowscan tests tools benchmarks` | No changes |
-| Types | `mypy shadowscan tools benchmarks` | No errors |
+| Lint | `ruff check shadowscan tests tools` | No errors |
+| Format | `ruff format --check shadowscan tests tools` | No changes |
+| Types | `mypy shadowscan tools` | No errors |
 | Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate, statements and branches |
 | Connectors | `make coverage-gate` (after tests) | ≥ 75% for every module under `shadowscan/connectors/`, statements and branches |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
@@ -183,9 +188,8 @@ exact supported Python matrix and dependency pins.
 CI measures coverage on one Linux job (Python 3.11) and runs the same full
 suite untraced on the others; `pyproject.toml` enables branch coverage.
 
-Ruff enforces a 110-column line length outside `tests/`,
-`tools/benchmark/*_cases.py` and `benchmarks/*/corpus.py`, flags loop
-variables captured by closures (B023), flags a broad `except` that does not
+Ruff enforces a 110-column line length outside `tests/` in the main repository,
+flags loop variables captured by closures (B023), flags a broad `except` that does not
 re-raise (BLE), and rejects `noqa` directives that suppress nothing (RUF100)
 or name no codes (PGH004). Suppress an intentional broad `except` with
 `# noqa: BLE001 - <reason>`; a repository test requires the reason. Mypy requires annotated definitions
@@ -194,7 +198,7 @@ or name no codes (PGH004). Suppress an intentional broad `except` with
 
 `make complexity` runs `python -m tools.complexity_gate`, which holds two measures to
 `tools/complexity_baseline.json`: every function above ruff's `C901` limit of 15 in
-`shadowscan/`, `tools/` and `benchmarks/`, and every `shadowscan` module above 2,000 lines.
+`shadowscan/` and `tools/`, and every `shadowscan` module above 2,000 lines.
 Each entry is keyed by file and qualified name (`path::Class.method`, a nested function as
 `outer.<locals>.inner`), so a function never inherits another's room. The gate keeps the
 functions and modules that are already too large from growing and stops a new one from
@@ -205,6 +209,13 @@ be spent again. A rise that is unavoidable is recorded with
 `python -m tools.complexity_gate --rebaseline` and explained in the pull request.
 [Testing](docs/testing.md#function-and-module-size) has the details.
 
+The required companion CI job separately runs `python -m tools.benchmark_complexity`
+from the main checkout after verifying the submodule pin. Its parent-side
+`tools/benchmark_complexity_baseline.json` retains the 28 moved harness ceilings
+without increasing them. New over-limit functions, growth and stale higher
+ceilings fail; `--update` only lowers the baseline. The companion remains optional
+for ordinary scanner development.
+
 The same gates as individual commands:
 
 ```bash
@@ -214,9 +225,9 @@ python -m shadowscan.mappings.validate
 python -m tools.ocsf_schema --check
 python -m tools.complexity_gate
 make secrets
-ruff check shadowscan tests tools benchmarks
-ruff format --check shadowscan tests tools benchmarks
-mypy shadowscan tools benchmarks
+ruff check shadowscan tests tools
+ruff format --check shadowscan tests tools
+mypy shadowscan tools
 make audit
 python -m pytest -q --cov=shadowscan --cov-fail-under=80
 make coverage-gate
@@ -313,7 +324,7 @@ contract. In brief:
    test fails when it is stale. Document required API scopes and the offline
    export format in the connector guide under `docs/connectors/`, and add the
    connector's summary row to [docs/connectors.md](docs/connectors.md). Run
-   `make readme-matrix` too: the README detection matrix lists the identity,
+   `make readme-matrix` too: the product-guide detection matrix lists the identity,
    gateway, low-code, SaaS and network connectors, and a test fails when it is
    stale. Run `make readme-visuals` as well: the connector diagram under
    `docs/assets/` names every built-in connector, and a test fails when it is
@@ -331,7 +342,7 @@ Signatures are YAML. Add a pack directory with `--signatures` or the
 ```bash
 python -m shadowscan.signatures.validate
 make evaluate
-make readme-matrix   # the README detection matrix is generated from the built-in packs
+make readme-matrix   # the product-guide detection matrix is generated from the built-in packs
 ```
 
 See [docs/signatures.md](docs/signatures.md) for the schema and authoring guide.

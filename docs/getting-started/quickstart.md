@@ -10,8 +10,9 @@ shadowscan code .
 
 Scanning the ShadowScan checkout itself this way reports an incomplete scan
 (exit 3): some redaction rules and tests intentionally exceed the sanitizer's
-limits, and some committed benchmark corpora and results exceed the default
-`max_file_size`. The scanner fails closed rather than skip them silently.
+limits. An uninitialized benchmark companion is also an unresolved source;
+when initialized, some of its corpora and results exceed the default
+`max_file_size`. The scanner records these coverage gaps.
 Scan one of your own projects, or start with the offline demo below. In a
 ShadowScan checkout, `make self-scan` scans it with
 `examples/shadowscan.self-scan.yaml`, which excludes those paths, each with a

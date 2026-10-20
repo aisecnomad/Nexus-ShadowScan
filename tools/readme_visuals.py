@@ -37,7 +37,8 @@ DATA_FLOW = ASSETS / "architecture-data-flow.svg"
 CONNECTORS = ASSETS / "architecture-detailed.svg"
 BENCHMARK = ASSETS / "benchmarks-shadowbench-cases.svg"
 # The committed ShadowBench cases run the chart is drawn from; move it to a newer run on purpose.
-BENCHMARK_RUN = ROOT / "benchmarks" / "shadowbench" / "cases" / "results" / "2026-10-11"
+BENCHMARK_EVIDENCE = ROOT / "tools" / "benchmark_evidence.json"
+BENCHMARK_RUN = Path("2026-10-11")
 
 SANS = "-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif"
 MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
@@ -439,8 +440,8 @@ def render_connectors() -> str:
 
 def benchmark_rows() -> list[tuple[str, str, float, float, tuple[float, float]]]:
     """(tool, coverage, estate recall, in-scope recall, its interval), best estate recall first."""
-    with (BENCHMARK_RUN / "metrics.json").open(encoding="utf-8") as handle:
-        tools = json.load(handle)["tools"]
+    with BENCHMARK_EVIDENCE.open(encoding="utf-8") as handle:
+        tools = json.load(handle)["cases_tools"]
     rows = []
     for name, tool in tools.items():
         low, high = tool["in_scope"]["recall_ci"]
