@@ -162,9 +162,12 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   `metadata.related_truncation` explaining omitted pairwise expansion. Earlier,
   such groups lost their links. Pairwise `related` lists are not exhaustive:
   consumers that reconstruct cross-surface relationships must read both.
-  Group tokens are salted with the member's exact-scope partition, so they
-  join only within one verified scope, and filtering a report recomputes
-  member counts and drops a token fewer than two retained findings share.
+  Large-group tokens include the member's exact-scope partition. Capped
+  exact pairs can retain compatible partial scopes, with each two-member
+  token bound to both endpoints and their combined scope; those pairs do
+  not combine conflicting scopes into a larger group. Filtering a report
+  recomputes member counts and drops a token fewer than two retained
+  findings share.
 - Code scans can classify supported Python provider tool loops and locally
   imported AI SDK executable tools as agents, so findings that were SDK usage
   can become agents. Kubernetes image attribution requires a parsed,
@@ -267,7 +270,8 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
 
 ### Security and safety
 
-- The runtime lock moves aiohttp (pulled in by oci) to 3.14.4, which fixes
+- The runtime lock pins aiohttp (pulled in by oci) to 3.14.5, retaining the
+  fixes introduced in 3.14.4 for
   GHSA-2g87-pp6c-29x5 (unbounded memory or CPU on crafted requests),
   GHSA-494j-54xm-rwp3 (a Secure cookie sent over plain HTTP) and
   GHSA-5wr8-gcqf-gqf3 (keepalive timeout not applied before the first bytes).
