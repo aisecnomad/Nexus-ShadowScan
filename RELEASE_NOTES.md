@@ -8,12 +8,24 @@ records each in detail, and the
 [deployment and migration guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md)
 has the full upgrade steps.
 
-## Unreleased
+## 0.1.3 — 2026-10-20
 
-Changes on `main` since 0.1.2, for operators. They are not published or
-tagged; pin a reviewed commit SHA to use them. Details:
-[CHANGELOG.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md)
-and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md).
+The first release since the repository was renamed to
+`aisecnomad/Nexus-ShadowScan`, and the first built as a source distribution
+and a wheel from it. It carries every change on `main` since 0.1.2:
+budgeted coverage gaps, capability interactions in risk scores, agent
+registry and A2A Agent Card sources, drift classes, the fleet dashboard,
+threat and control references, and the detection, redaction and hardening
+work the sections below describe. These notes prepare the release; confirm
+publication on [PyPI](https://pypi.org/project/NexusShadowScan/0.1.3/) and
+the [GitHub release](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.3)
+before installing this version from the production index. No independent
+human review is recorded in this release preparation. Publication and
+artifact attestations do not establish deployment acceptance. Details:
+[CHANGELOG.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md),
+the [migration notes](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production-migrations.md)
+and the
+[candidate change history](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/history/production-change-history.md).
 
 ### Before you upgrade
 
@@ -88,8 +100,8 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   exports with registry records from earlier builds replay as incomplete.
 - `shadowscan merge` refuses (exit 1) a report with another finding identity
   schema, a non-boolean `inventory_present`, or a reused finding id. It also
-  refuses a report written before `inventory_present` existed (the 0.1.x
-  releases) when that report records registration: rescan such hosts before
+  refuses a report written before `inventory_present` existed (earlier releases
+  through 0.1.2) when that report records registration: rescan such hosts before
   merging. Fleet reports now carry `collection_scope.fleet.schema`
   `shadowscan.fleet-merge/v2` with per-source times, inventory presence and
   connector status; consumers that pin `v1` must accept `v2`.
@@ -142,6 +154,16 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   sample configurations, or a large repository keeps exiting 3 at 120 seconds.
 
 ### What changes in scan results
+
+- Large correlation groups disclose tokens and counts only within their own
+  verified scope partition. Report filtering recomputes the counts from retained
+  findings and removes a token when fewer than two members remain.
+- A duplicate-key YAML defect still reports a parse failure and withholds
+  structural Kubernetes attribution, while preserving the generic image and
+  environment inventory. Resource-limit failures still fail the whole file.
+- An ordinary documentation URL alone no longer marks an MCP tool description
+  as `tool-poisoning`; it stays as zero-weight contextual evidence. Other
+  instruction indicators and model-provider API hosts retain their detection.
 
 - New commands: `shadowscan endpoint` scans a workstation profile's AI client
   configuration; `shadowscan merge` combines JSON reports from several machines
@@ -283,7 +305,7 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   download with `gh attestation verify --bundle` as the
   [publishing runbook](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/operations/publishing.md)
   shows; a script that downloaded the old names needs the new ones.
-- The next release uploads a source distribution beside the universal
+- This release uploads a source distribution beside the universal
   `py3-none-any` wheel. The release workflow builds the wheel from that sdist
   with `python -m build`, checks that both carry the same metadata and package
   files, attests both and publishes both through PyPI trusted publishing. 0.1.2
