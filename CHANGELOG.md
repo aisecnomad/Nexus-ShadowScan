@@ -17,6 +17,7 @@ Notion bots, gateway routes, Kubernetes serving images, n8n HTTP model calls
 and ServiceNow flow names were adjusted), so a later ShadowScan run on that
 estate is in-sample.
 
+- Correlation disclosures are scope-partition-salted and prune-consistent, a manifest integrity defect keeps the generic image inventory, and a bare URL is no longer MCP tool poisoning (October 20)
 - New cdxgen benchmark installations use a frozen npm dependency graph, a patched Undici override and disabled lifecycle scripts with a lock-digest receipt (October 18)
 - Local Python dispatcher proof retains import scope/order checks; JavaScript aliases substitute before parent-path normalization (October 18)
 - App-name attribution requires corroboration; provider tool loops, local executable JavaScript tools and structural Kubernetes image attribution corrected (October 18)

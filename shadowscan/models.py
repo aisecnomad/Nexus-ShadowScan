@@ -15,6 +15,8 @@ import hashlib
 import json
 import math
 import uuid
+from collections import Counter
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
 from enum import Enum
@@ -857,6 +859,18 @@ class ScanStats:
     name: str | None = None
 
 
+def merged_incomplete_reasons(parts: Iterable[ScanStats]) -> dict[str, int]:
+    """Merge per-part incomplete-reason counts into one count per category.
+
+    The one merge ``ScanResult.summary()`` and the engine's split-run
+    aggregation share, so the two cannot drift (#264).
+    """
+    reasons: Counter[str] = Counter()
+    for part in parts:
+        reasons.update(part.incomplete_reasons)
+    return dict(reasons)
+
+
 @dataclass(slots=True)
 class ScanResult:
     findings: list[Finding] = field(default_factory=list)
@@ -897,10 +911,7 @@ class ScanResult:
                 providers[p] = providers.get(p, 0) + 1
             if f.shadow:
                 shadow += 1
-        reasons: dict[str, int] = {}
-        for s in self.stats:
-            for reason, count in s.incomplete_reasons.items():
-                reasons[reason] = reasons.get(reason, 0) + count
+        reasons = merged_incomplete_reasons(self.stats)
         return {
             "complete": self.complete,
             "status": "complete" if self.complete else "incomplete",

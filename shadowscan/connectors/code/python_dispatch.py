@@ -489,6 +489,7 @@ class PythonDispatches:
         self._sources: dict[tuple[str, str], str | None] = {}
         self._limited: set[tuple[str, str]] = set()
         self._modules: dict[tuple[str, str], _Module | None] = {}
+        self._dispatch_results: dict[tuple[str, str], dict[str, bool]] = {}
         self._local_roots: dict[str, set[str]] = {}
         self._package_paths: set[tuple[str, str]] = set()
         self._file_paths: set[tuple[str, str]] = set()
@@ -505,7 +506,15 @@ class PythonDispatches:
         if path.is_absolute() or ".." in path.parts or not path.parts:
             return
         root = path.parts[0] if len(path.parts) > 1 else path.stem
-        self._local_roots.setdefault(str(project), set()).add(root)
+        roots = self._local_roots.setdefault(str(project), set())
+        if root not in roots:
+            roots.add(root)
+            # dispatches() reads local_roots late, so a newly observed local
+            # root can only add an import-shadowing veto; cached verdicts for
+            # this project no longer hold. Roots are never removed, so a stale
+            # False cannot occur.
+            for key in [k for k in self._dispatch_results if k[0] == str(project)]:
+                del self._dispatch_results[key]
         for length in range(1, len(path.parts)):
             self._package_paths.add((str(project), ".".join(path.parts[:length])))
         if path.suffix == ".py" and path.name != "__init__.py":
@@ -525,6 +534,9 @@ class PythonDispatches:
             self._sources[key] = None
             self._modules[key] = None
             self._limited.discard(key)
+            # A later colliding module makes the binding ambiguous, so results
+            # proven from the first copy no longer hold.
+            self._dispatch_results.pop(key, None)
             return
         self._sources[key] = None
         # Only possible helper sources occupy the bounded source inventory.
@@ -584,11 +596,19 @@ class PythonDispatches:
             if key not in self._sources and key not in self._limited and key not in self._file_paths:
                 return None
             parsed = self._load(key)
+            # Memoize per (module, symbol): every consumer asks the same
+            # question, and one dispatch proof re-walks the module's functions.
+            # Only settled verdicts are cached; a budget error is raised again.
+            cached = self._dispatch_results.get(key, {}).get(symbol)
+            if cached is not None:
+                return cached
             try:
-                return parsed is not None and parsed.dispatches(symbol)
+                verdict = parsed is not None and parsed.dispatches(symbol)
             except (RecursionError, MemoryError) as error:
                 self._limited.add(key)
                 raise DispatchLimitError("Python dispatch analysis budget exceeded") from error
+            self._dispatch_results.setdefault(key, {})[symbol] = verdict
+            return verdict
 
         return resolve
 

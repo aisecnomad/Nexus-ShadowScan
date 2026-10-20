@@ -331,6 +331,18 @@ def test_unread_directory_member_blocks_module_package_collision():
     assert not index.resolver(".")("tools", "run_tool")
 
 
+def test_colliding_module_invalidates_memoized_dispatch_proof():
+    """Dispatch verdicts are memoized per (module, symbol) (#268); a later
+    colliding module copy makes the binding ambiguous and must veto anyway."""
+    index = dispatch.PythonDispatches()
+    index.add(".", "tools.py", HTTP)
+    resolve = index.resolver(".")
+    assert resolve("tools", "dispatch")
+    assert resolve("tools", "dispatch")
+    index.add(".", "tools.py", HTTP)
+    assert not resolve("tools", "dispatch")
+
+
 def test_conditional_path_reassignment_cannot_supply_file_handler_proof():
     source = TABLE.replace(
         "    return path.read_text()", "    if flag:\n        path = unknown()\n    return path.read_text()"
