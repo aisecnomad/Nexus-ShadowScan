@@ -5,13 +5,13 @@ title: Engineering log
 # Engineering log
 
 The detailed record of every change, one dated entry per change, newest first.
-It was `CHANGELOG.md` until October 2026; that file now summarises each change
-in a line and points here, and `RELEASE_NOTES.md` says what changes on upgrade
+It was `CHANGELOG.md` until October 2026; that file now summarises each release
+and points here, and `RELEASE_NOTES.md` says what changes on upgrade
 for people who install and operate ShadowScan. Entries name the pull request
 they came from where one exists, and say what was deliberately not carried.
 Counts and figures quoted in an entry are those of its date.
 
-## Unreleased
+## 0.1.3 — 2026-10-20
 
 ### Local scan usability, companion benchmarks and release evidence (October 20)
 

@@ -109,7 +109,7 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
    ```bash
    python -m venv /tmp/nss && . /tmp/nss/bin/activate
    python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
-   python -m pip install --no-deps --index-url https://test.pypi.org/simple/ NexusShadowScan==0.1.2
+   python -m pip install --no-deps --index-url https://test.pypi.org/simple/ NexusShadowScan==0.1.3
    shadowscan --help && python -m shadowscan.signatures.validate && python -m shadowscan.mappings.validate
    ```
 
@@ -118,8 +118,8 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
    key. `--no-sign` overrides any local `tag.gpgSign` preference:
 
    ```bash
-   git tag --no-sign -a v0.1.2 -m "NexusShadowScan 0.1.2" <reviewed-40-character-sha>
-   git push origin refs/tags/v0.1.2
+   git tag --no-sign -a v0.1.3 -m "NexusShadowScan 0.1.3" <reviewed-40-character-sha>
+   git push origin refs/tags/v0.1.3
    ```
 
    A maintainer may instead sign the annotated tag with `git tag -s` when a
@@ -247,7 +247,7 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
    [aggregate score](https://github.com/ossf/scorecard#aggregate-score)
    also weights other checks by risk; an overall score above 8.5 requires an
    observed Scorecard result and is not promised by this workflow.
-8. **Open the next candidate.** Bump the version (for example to `0.1.3`) and
+8. **Open the next candidate.** Bump the version (for example to `0.1.4`) and
    add a new unreleased section to the changelog and release notes.
 
 ## Renaming the repository

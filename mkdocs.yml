@@ -125,7 +125,7 @@ nav:
       - Severity and enforcement: severity.md
   - Operations:
       - Production deployment: production.md
-      - Pending migration notes: production-migrations.md
+      - Migration notes for 0.1.3: production-migrations.md
       - Candidate change history: history/production-change-history.md
       - CI integration: operations/ci.md
       - Operational controls: operations/operational-controls.md

@@ -6,7 +6,7 @@ One summary per release. Detailed implementation history is maintained in the
 explain operator migrations. Earlier per-change entries are preserved in the
 [change-history archive](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/history/changelog-detail.md).
 
-## Unreleased
+## 0.1.3 — 2026-10-20
 
 Current source adds bounded staged-file hooks, readiness and remediation guidance,
 offline terminal triage, a candidate public API contract, a pinned benchmark
