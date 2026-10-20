@@ -25,6 +25,10 @@ reflect only retained findings. YAML integrity defects preserve generic image
 inventory while keeping scans incomplete, and ordinary reference URLs alone no
 longer flag MCP tool poisoning. Dispatch proof caching remains bounded and
 respects import shadowing; scan summaries share incomplete-reason aggregation.
+A diff-scoped scan under Git older than 2.45 names that requirement instead of
+asking whether the ref is valid, the example Falco rules emit the namespace and
+pod the eBPF reader needs, and the release and migration notes cover the
+attribution, correlation-group and dependency-floor changes.
 
 ## 0.1.2 — 2026-10-08
 
