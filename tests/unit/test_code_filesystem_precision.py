@@ -198,21 +198,25 @@ def test_instruction_doc_alias_in_same_project_is_covered(run_connector, tmp_pat
 
 
 @needs_symlinks
-def test_instruction_doc_alias_into_another_project_stays_a_gap(run_connector, tmp_path):
+def test_instruction_doc_alias_into_another_project_is_read_at_the_link_path(run_connector, tmp_path):
+    # Read again at pkg/CLAUDE.md, the alias is that project's instruction file.
     write(tmp_path, "AGENTS.md", "Repository instructions.\n")
     write(tmp_path, "pkg/pyproject.toml", "[project]\nname = 'pkg'\n")
     (tmp_path / "pkg" / "CLAUDE.md").symlink_to("../AGENTS.md")
-    _, stats = scan(run_connector, tmp_path)
-    assert stats.incomplete
+    findings, stats = scan(run_connector, tmp_path)
+    assert not stats.incomplete, (stats.errors, stats.warnings)
+    assert "pkg/CLAUDE.md" in {evidence.location for finding in findings for evidence in finding.evidence}
 
 
 @needs_symlinks
-def test_instruction_doc_alias_from_a_test_path_stays_a_gap(run_connector, tmp_path):
+def test_instruction_doc_alias_from_a_test_path_is_read_at_the_link_path(run_connector, tmp_path):
+    # Read again at tests/CLAUDE.md, the alias keeps that path's test classification.
     write(tmp_path, "AGENTS.md", "Repository instructions.\n")
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "CLAUDE.md").symlink_to("../AGENTS.md")
-    _, stats = scan(run_connector, tmp_path)
-    assert stats.incomplete
+    findings, stats = scan(run_connector, tmp_path)
+    assert not stats.incomplete, (stats.errors, stats.warnings)
+    assert "tests/CLAUDE.md" in {evidence.location for finding in findings for evidence in finding.evidence}
 
 
 @needs_symlinks

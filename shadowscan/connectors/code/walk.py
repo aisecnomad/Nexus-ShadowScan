@@ -1802,7 +1802,7 @@ class TreeWalker:
             agent
             and target is not None
             and not walk.in_alias
-            and self._readable_alias(target, resolved_root, alias)
+            and self._readable_alias(rel, target, resolved_root, alias)
         ):
             # Read at the link path once the walk ends (_alias_entries): no gap.
             walk.aliases.append((rel, target))
@@ -2477,15 +2477,19 @@ class TreeWalker:
             incomplete=False,
         )
 
-    def _readable_alias(self, target: Path, resolved_root: Path, alias: bool) -> bool:
+    def _readable_alias(self, rel: str, target: Path, resolved_root: Path, alias: bool) -> bool:
         """Whether a link's in-tree ``target`` is read at the link path (``_alias_entries``).
 
         It is when the walk reads it at its own path: a directory it scans
         whole (``alias``, from ``_alias_of_scanned_directory``) or a regular
         file it reads (``_file_scanned_at_real_path``). An excluded or
-        unselected target stays out of the scan at the link path too.
+        unselected target stays out of the scan at the link path too, and so
+        does a directory behind a link named like a configuration file
+        (``CLAUDE.md -> docs``): no client reads a directory as that file.
         """
-        return alias or (not target.is_dir() and self._file_scanned_at_real_path(target, resolved_root))
+        if target.is_dir():
+            return alias and not self._agent_configuration(rel)
+        return self._file_scanned_at_real_path(target, resolved_root)
 
     def _alias_of_scanned_directory(self, rel: str, target: Path, resolved_root: Path) -> bool:
         """Whether directory link ``rel`` names ``target``, a directory inside the root the walk scans whole.

@@ -48,7 +48,7 @@ that are never silent:
   path below the root, as any file is, and analyzed and reported under the
   link path, where a client reads it as configuration. Its files count
   toward `max_files`; a link below such an alias is judged as a link, not
-  read again. A link to an excluded or unselected target stays blinding.
+  read again. A link to an excluded or unselected target stays blinding, and so does a directory behind a link named like a configuration file (`CLAUDE.md -> docs`), which no client reads as that file.
   One that holds none
   (`web/public/.well-known` aliasing `static/well-known` without an MCP
   manifest or agent card) is an alias like any other, one entry. The `ci`
