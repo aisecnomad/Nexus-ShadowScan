@@ -1,8 +1,8 @@
 # Agent governance proposals
 
-Status: proposal, drafted 2026-10-10; all six items are now implemented,
-unreleased (each section's status line gives the details and what remains
-open). This page expands six roadmap ideas into scoped items. It is intent,
+Status: proposal, drafted 2026-10-10; all six items are implemented and
+released in 0.1.3 (each section's status line gives the details and what
+remains open). This page expands six roadmap ideas into scoped items. It is intent,
 not a contract, and nothing here is implemented unless an item says so. [ROADMAP.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/ROADMAP.md)
 carries the one-line summary of each item.
 
