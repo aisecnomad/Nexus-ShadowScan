@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "metadata": {
-    "name": "Project Nexus authored finding attribution regressions",
+    "name": "ShadowScan authored finding attribution regressions",
     "type": "synthetic",
     "provenance": "Handwritten short source samples for known kind, product, provider and capability checks. No credentials, live tenants, independent human labels, or field accuracy claims.",
     "known_gap_policy": {

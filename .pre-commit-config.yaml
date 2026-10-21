@@ -9,15 +9,13 @@ repos:
     hooks:
       # Fixtures reproduce foreign files byte for byte, the retained licence
       # texts are digest-bound to their upstream copies, archive/ holds
-      # retained review artifacts, and ShadowBench's corpora, artifacts and
-      # results are frozen by digest or written by its scorers; never rewrite
-      # them.
+      # retained review artifacts; never rewrite them.
       - id: trailing-whitespace
         # Two trailing spaces are a Markdown line break (.editorconfig keeps them).
         args: [--markdown-linebreak-ext=md]
-        exclude: ^(archive/|tests/fixtures/|tools/evaluation/independent_licenses/|benchmarks/shadowbench/[^/]+/(artifacts/|results/|corpus\.json$|FREEZE\.json$))
+        exclude: ^(archive/|tests/fixtures/|tools/evaluation/independent_licenses/)
       - id: end-of-file-fixer
-        exclude: ^(archive/|tests/fixtures/|tools/evaluation/independent_licenses/|benchmarks/shadowbench/[^/]+/(artifacts/|results/|corpus\.json$|FREEZE\.json$))
+        exclude: ^(archive/|tests/fixtures/|tools/evaluation/independent_licenses/)
       # mkdocs.yml uses Material's `!!python/name:` tags, which the safe loader
       # rejects; `mkdocs build --strict` in CI validates that file instead.
       # Signature packs are parsed by the signature-validate hook below (and by
@@ -36,8 +34,7 @@ repos:
         exclude: |
           (?x)^(
             shadowscan/utils/redaction_formats\.py|
-            tests/unit/test_(redaction_security|redaction_cli_and_formats|redaction_pass_order|redaction_performance|regex_linearity)\.py|
-            tests/unit/test_benchmark_realworld_review2\.py
+            tests/unit/test_(redaction_security|redaction_cli_and_formats|redaction_pass_order|redaction_performance|regex_linearity)\.py
           )$
       - id: no-commit-to-branch
         args: [--branch=main]
@@ -60,10 +57,6 @@ repos:
     hooks:
       - id: mypy
         files: ^(shadowscan|tools)/
-        # The estate track's sample repositories are inputs under test, not
-        # project code. pre-commit passes files explicitly, which mypy's own
-        # `exclude` setting does not filter, so the hook excludes them too.
-        exclude: ^benchmarks/shadowbench/estate/artifacts/
         # The hook runs in its own environment. click, PyJWT, rich and urllib3
         # ship their own types; without them those imports are Any, so a wrong
         # call passes the hook but fails CI and `type: ignore` comments read as
@@ -78,6 +71,15 @@ repos:
           - types-PyYAML==6.0.12.20260906
           - types-requests==2.33.0.20261006
         args: []
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: 57b21406f092110c18776e39b0bda50d37c945c8 # v2.4.3
+    hooks:
+      - id: codespell
+        # Skips and the accepted-word list live in pyproject.toml
+        # ([tool.codespell]); the exclude mirrors the skips because pre-commit
+        # passes files explicitly.
+        exclude: ^(archive/|benchmark-suite/|benchmarks/|docs/history/|tests/fixtures/|tools/evaluation/|.*\.(lock|json|svg|webp|png)$)
 
   - repo: local
     hooks:

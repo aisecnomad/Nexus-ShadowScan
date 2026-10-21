@@ -14,6 +14,14 @@ explain operator migrations. Earlier per-change entries are preserved in the
   credential-call lexer crosses inert text in runs, 1.66x faster with
   identical output.
 
+- The `benchmark-suite` companion pin moves to Nexus-ShadowBench `1ce0eee`
+  (documentation, an amendment ledger, a hardened code-surface fetch, certifi
+  2026.10.19 and a CI dependency audit); no benchmark evidence changed.
+
+- Repository hygiene: workflows run on a pinned `ubuntu-24.04` image, and
+  configuration left behind for benchmark paths that moved to the Nexus
+  ShadowBench companion is removed.
+
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the
   checkout so it exercises the installed wheel.

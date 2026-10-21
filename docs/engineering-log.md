@@ -44,6 +44,47 @@ Counts and figures quoted in an entry are those of its date.
   fix. The lexer also skips the run pattern at a character that cannot start
   a run, which brings delimiter-dense text back to main's cost.
 
+### Companion pin to Nexus-ShadowBench 1ce0eee (October 21)
+
+- `benchmark-suite` moves from `e027b98` to `1ce0eee`, which adds the
+  companion's documentation and standards, an append-only `AMENDMENTS.json`
+  ledger for migrated harness code (aisecnomad/Nexus-ShadowBench#2), a
+  code-surface `fetch` that delegates to the hardened cases fetcher, certifi
+  2026.10.19 with a CI `pip-audit` step, and errata for stale statements in
+  preserved files.
+- `tools/benchmark_evidence.json` was regenerated with
+  `tools.benchmark_suite.extract`. Only `companion_modules.tools.verify_migration`
+  changed (its SHA-256); the migration manifest digest and every metrics and
+  corpus digest are unchanged, so no published number moves.
+- The benchmark-section permalinks in `README.md` and the product guide name
+  the new pin, as the consistency test requires; the linked reports are
+  byte-identical at both commits. Checkouts the old companion `fetch` made
+  should be fetched again.
+
+### Repository hygiene after the companion move (October 21)
+
+- `.gitattributes`, `.editorconfig`, `.gitignore`, `.pre-commit-config.yaml`
+  and the repository consistency tests still named benchmark corpora, artifacts,
+  results and harnesses that moved to the pinned `benchmark-suite/` companion,
+  and two tests that no longer exist. No tracked file matched those entries; they
+  are removed. The former-name and Markdown checks now cover `benchmarks/README.md`,
+  the only remaining file there, which passes.
+- Every workflow job runs on `ubuntu-24.04` instead of `ubuntu-latest`, which
+  GitHub is moving to a newer Ubuntu release, so a runner image change is a
+  reviewed edit. The macOS test leg keeps `macos-latest` until its current image
+  is confirmed.
+- The evaluation corpora that `make evaluate` names in its reports no longer use
+  the former project name. No digest binds those names.
+- `GOVERNANCE.md` still said the 2026-10-10 bypass actors applied until removed;
+  it now cites the 2026-10-18 readback, which lists none, as
+  `docs/operations/merge-policy.md` already did.
+- Wording: `make test-fast` excludes the slow timed sweeps; the pull request
+  template matches CONTRIBUTING on when to write `Fixes #NNN`; the #284
+  adaptation names that pull request as closed, unmerged and unreviewed; ADR 005
+  records that its #107 precondition was satisfied by #123; and
+  `.github/dependabot.yml` says why the companion gitlink and the fixture
+  manifests are not tracked.
+
 ### Release readiness review (October 21)
 
 - `tools/release/assets.py` looked up the release with `releases/tags/{tag}`,
@@ -68,6 +109,43 @@ Counts and figures quoted in an entry are those of its date.
   TestPyPI and then PyPI on 2026-11-20 and that 0.1.2 remains the latest
   published release. The README is the PyPI project description, so its wording
   stays accurate on the 0.1.3 project page after publication.
+
+### Repository hygiene after the 0.1.3 candidate (October 21)
+
+- The publishing runbook gains step 8, "Record the publication": the list of
+  files that still describe 0.1.3 as prepared rather than published (README
+  and product-guide release state and PyPI Python-range note, the
+  installation guide, the connectors release-status table, the OpenSSF
+  criteria rows, the reviewer packet, roadmap, security policy, the dated
+  release headings and the consistency-test pins), to be updated in one
+  reviewed change on the day of the tag and upload. Opening the next
+  candidate becomes step 9. Neither PyPI nor TestPyPI serves 0.1.3 at the
+  time of this entry; nothing was tagged or uploaded.
+- `CONTRIBUTING.md` says why a branch is brought up to date locally with
+  `git merge --signoff`: GitHub's **Update branch** button and other web-flow
+  merges carry no trailer and fail the DCO check (the `CI gate` went red on
+  #286 for that reason on October 21), and the repository does not offer the
+  button. It also records that a clean merge of `main` keeps a pull request's
+  approvals while a conflict-resolving merge dismisses them, as observed while
+  #285, #283, #286 and #289 were merged in sequence.
+- `codespell` 2.4.3 runs as a pinned pre-commit hook with its skips and
+  accepted words in `pyproject.toml`. A sweep of the prose, comments and
+  shipped code found no misspelling; every hit was an identifier, a regex
+  stem, a file suffix or a deliberate foreign-language placeholder, and the
+  accepted-word list names each of them with its reason. The hook is not a
+  CI gate: adding it there would need the tool in the hash-locked CI set.
+- The consistency test that pins the in-sample benchmark disclosure read only
+  the newest changelog section, so opening the next candidate's `## Unreleased`
+  section (runbook step 9) would have failed it. It now reads from the newest
+  heading through the 0.1.3 section, where the disclosure stays.
+- Repository state, not tracked files: the labels `github_actions` (unused)
+  and `javascript` (one closed Dependabot pull request) were deleted because
+  `.github/labels.yml` does not declare them and the label workflow never
+  deletes. An inventory of the 255 remote branches found 112 whose pull
+  request merged, 90 whose pull request closed unmerged and 52 without a
+  pull request; their deletion, turning on deletion of merged branches, and
+  the non-provider-pattern and validity-check options of secret scanning are
+  maintainer actions and were not performed.
 
 ### Lock the sample Dockerfile's CLI dependency graph (October 20)
 
@@ -274,8 +352,8 @@ The proposal stays open; these tests do not claim live DNS acceptance.
 
 ### Repository scan completion and bounded processing (October 20)
 
-Adapted reviewed changes from
-[PR #284](https://github.com/aisecnomad/Nexus-ShadowScan/pull/284) onto the
+Adapted selected changes from the closed, unmerged
+[PR #284](https://github.com/aisecnomad/Nexus-ShadowScan/pull/284), which had no recorded review, onto the
 existing staged-scan and readiness workflows. The filesystem probe counts up to
 180,000 entries within its unchanged one-second bound and proposes at most
 1800 seconds at the 120-second default. The existing rate of 12,000 entries per
