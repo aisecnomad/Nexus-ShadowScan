@@ -387,3 +387,41 @@ def test_a_completed_call_fails_closed_when_either_reading_stops_at_a_bound():
     source = "'x'\n" + "#getToken(\n" * 200 + "plain line of text here\n" * 2000
     with pytest.raises(SanitizationLimitError, match="credential call nesting limit"):
         redaction._redact_credential_calls(source)
+
+
+# Both readings can misplace every argument start: a false marker hides a comma under
+# the comment reading (`this.#cfg,`, `shards // 2,`) while the real comment holds an
+# unbalanced bracket or a stray triple quote under the other. Neither reading then
+# places the credential at an argument start, so a call whose readings split it
+# differently withholds every string literal it holds.
+_FILL = "    0.1, 0.2,\n" * 1200
+
+
+@pytest.mark.parametrize(
+    "opening",
+    [
+        "const cred = new AzureKeyCredential(  // see the docs (portal\n  this.#cfg,\n",
+        "cred = make_credential(  # see the docs (vault\n    shards // 2,\n",
+        'cred = make_credential(  # the value is a """ literal\n    shards // 2,\n',
+        "const cred = new AzureKeyCredential(  // weights[0..n\n  this.#cfg,\n",
+        "const genAI = new GoogleGenerativeAI(  // see the docs (portal\n  this.#cfg,\n",
+    ],
+    ids=["js-bracket", "py-bracket", "py-triple-quote", "js-index", "sdk-position"],
+)
+def test_a_completed_call_both_of_whose_readings_misplace_its_arguments_withholds_its_literals(opening):
+    source = opening + f'    "{SYNTHETIC}",\n' + _FILL + ")\n"
+    try:
+        safe = sanitize_text(source)
+    except SanitizationLimitError:
+        return  # failing closed is safe too
+    assert SYNTHETIC not in safe and REDACTED in safe
+    assert safe.count("\n") == source.count("\n")
+
+
+def test_a_completed_call_whose_readings_agree_keeps_its_other_literals():
+    # Without a comment the readings agree, so only the credential's position is withheld.
+    source = (
+        'cred = make_credential(\n    "https://vault.example.invalid/",\n' + _FILL + f'    "{SYNTHETIC}")\n'
+    )
+    safe = sanitize_text(source)
+    assert SYNTHETIC not in safe and "https://vault.example.invalid/" in safe

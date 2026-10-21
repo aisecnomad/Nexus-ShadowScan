@@ -60,6 +60,8 @@ _MAX_CALL_STEPS = 8 * 1024
 # of it, so they stay linear in its length, also summed over the many values of
 # one structured file; a call past that budget still fails closed.
 _CALL_EXTENSION_PER_CHAR = 8
+# Where a string literal or a comment can start, for ``_CallLexer.string_literals``.
+_LITERAL_STOPS = re.compile(r"[\"'`#/]")
 _OPENERS = {")": "(", "]": "[", "}": "{"}
 # Runs of characters the lexer only steps over: none opens a string, comment or
 # bracket, closes one, or separates arguments (inside a string: none escapes,
@@ -336,6 +338,39 @@ class _CallLexer:
             self._extension = max(0, self._extension - (self.work - before))
         return readings
 
+    def string_literals(self, start: int, end: int) -> list[tuple[int, int]] | None:
+        """Every string literal from ``start`` to ``end``, under comment rules and with the markers as text.
+
+        For a call read past the step bound whose readings split it differently,
+        neither may place its credential at an argument start, so any literal in
+        it may be the credential. The scan draws on the extension budget; None
+        once that is spent, and the call fails closed.
+        """
+        before = self.work
+        found: set[tuple[int, int]] = set()
+        try:
+            for comments in (True, False):
+                position = start
+                while position < end:
+                    stop = _LITERAL_STOPS.search(self.text, position, end)
+                    at = end if stop is None else stop.start()
+                    self.tick(at - position + 1)
+                    if self.work - before > self._extension:
+                        return None
+                    if stop is None:
+                        break
+                    if self.text[at] in "\"'`":
+                        position = self.string_end(at)
+                        found.add((at, position))
+                    elif comments and (self.text[at] == "#" or self.text.startswith(("//", "/*"), at)):
+                        block = self.text.startswith("/*", at)
+                        position = self.block_end(at) if block else self.line_end(at)
+                    else:
+                        position = at + 1
+        finally:
+            self._extension = max(0, self._extension - (self.work - before))
+        return sorted(found)
+
 
 class _CallReadings:
     """Argument lists of one text, each lexed and judged once.
@@ -348,8 +383,10 @@ class _CallReadings:
         self.lexer = lexer
         self.lexed: dict[int, tuple[list[tuple[int, int]], str]] = {}
         self.judged: dict[int, tuple[bool, list[tuple[int, int]]]] = {}
-        # Calls read past the step bound: the readings kept (see ``complete``).
+        # Calls read past the step bound: the readings kept (see ``complete``), and every
+        # literal of one whose readings split it differently.
         self.completed: dict[int, list[tuple[list[tuple[int, int]], str]]] = {}
+        self.region_literals: dict[int, list[tuple[int, int]]] = {}
         self.read_literals: set[tuple[int, int, tuple[int, ...]]] = set()
 
     def read(self, start: int) -> tuple[list[tuple[int, int]], str]:
@@ -381,12 +418,19 @@ class _CallReadings:
         ``complete_arguments``) and its judged values are their union, so a
         value either reading pairs with a credential key is withheld.
 
+        When the readings split the call differently, neither need place its
+        credential at an argument start (a comment's comma read as a
+        separator under one rule, an unbalanced bracket in it under the
+        other), so every string literal of the call is withheld too
+        (``region_literals``, joining its values and literals).
+
         The extension is discarded, and the call keeps its first reading and
         fails closed, when a reading stops for length too (with the shared
         budget nearly spent it can stop before the step-bound reading did, and
         judging that shorter reading could miss the credential key the longer
-        one holds) or when the step-bound reading paired a credential key and
-        no reading of the extension does.
+        one holds), when the step-bound reading paired a credential key and
+        no reading of the extension does, or when the budget runs out before
+        the literals of a split call are read.
         """
         spans, state = self.read(start)
         if state != "length":
@@ -400,11 +444,22 @@ class _CallReadings:
                     for reading, reading_state in readings
                 ]
                 sensitive = any(reading_sensitive for reading_sensitive, _ in judged)
-                if sensitive or not self._judged(start)[0]:
+                region = self._region_literals(start, readings)
+                if region is not None and (sensitive or not self._judged(start)[0]):
                     kept = readings
-                    self.judged[start] = sensitive, [value for _, values in judged for value in values]
+                    self.region_literals[start] = region
+                    values = [value for _, reading_values in judged for value in reading_values]
+                    self.judged[start] = sensitive, [*values, *region]
             self.completed[start] = kept
         return self.completed[start]
+
+    def _region_literals(
+        self, start: int, readings: list[tuple[list[tuple[int, int]], str]]
+    ) -> list[tuple[int, int]] | None:
+        """No literals when the readings agree on the call's spans; else every literal of the call."""
+        if all(spans == readings[0][0] for spans, _ in readings[1:]):
+            return []
+        return self.lexer.string_literals(start, max(spans[-1][1] for spans, _ in readings))
 
     def judge(self, start: int) -> tuple[str, bool, list[tuple[int, int]]]:
         """Return the call's state, whether it pairs a credential key, and its values.
@@ -433,9 +488,14 @@ class _CallReadings:
             return []
         self.read_literals.add((start, level, known))
         return [
-            literal
-            for spans, reading_state in completed
-            for literal in _credential_literals(self.lexer, spans, reading_state == "closed", level, known)
+            *self.region_literals.get(start, ()),
+            *(
+                literal
+                for spans, reading_state in completed
+                for literal in _credential_literals(
+                    self.lexer, spans, reading_state == "closed", level, known
+                )
+            ),
         ]
 
 
