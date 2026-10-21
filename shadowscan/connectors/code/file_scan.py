@@ -51,7 +51,7 @@ from shadowscan.connectors.code.manifests import (
     manifest_comment_projection,
     parse_manifest,
 )
-from shadowscan.connectors.code.mcp_config import _parse_mcp_servers, json_readings_declare_mcp
+from shadowscan.connectors.code.mcp_config import _parse_mcp_servers, json_readings, json_readings_declare_mcp
 from shadowscan.connectors.code.mcp_tools import MCPToolLimitError, mcp_tool_names
 from shadowscan.connectors.code.model_artifacts import (
     ARTIFACT_SUFFIXES,
@@ -93,6 +93,7 @@ from shadowscan.connectors.code.scan_records import (
     _UndecodableFile,
 )
 from shadowscan.connectors.code.scan_records import _ENV_TEMPLATE_WORDS as _ENV_TEMPLATE_WORDS
+from shadowscan.connectors.code.semantic_config import AMBIGUOUS_DATA as _AMBIGUOUS_DATA
 from shadowscan.connectors.code.semantic_config import (
     agent_manifest_kind,
     is_agent_config_path,
@@ -596,28 +597,38 @@ class FileScanner:
             # structured context none of this file's excerpts can
             # safely be emitted.
             if isinstance(exc, JSONIntegrityError) and self._ambiguous_data_file(rel, text):
-                self.walker.budget_defects(rel, "ambiguous JSON data neither reading makes MCP configuration")
+                self.walker.budget_defects(
+                    rel, "ambiguous JSON data no reading makes configuration", kind="integrity"
+                )
             self._withhold_excerpts(rel, exc, "parsing")
             return None, False
 
     def _ambiguous_data_file(self, rel: str, text: str) -> bool:
-        """Whether JSON the integrity checks refused is a data file that neither reading makes configuration.
+        """Whether JSON the integrity checks refused is a data file that no reading makes configuration.
 
         A provider catalog or an editor grammar that repeats a key is read by
-        no client as configuration: both readings of the key (first value kept,
-        last value kept) are walked for an MCP server table
-        (``json_readings_declare_mcp``) and neither holds one. A manifest or
+        no client as configuration: every reading of the key (first value kept,
+        last value kept, repeated objects merged; ``json_readings``) is walked
+        for an MCP server table (``json_readings_declare_mcp``) and none holds
+        one, and none is a structured agent definition the configuration
+        detectors recognize (``structured_code_matches``: an exported n8n
+        workflow that repeats a harmless key is still an agent). A manifest or
         lockfile is never such a file (npm keeps a repeated ``dependencies``
         key's last value, which hides the first from a reader that keeps it),
         nor is agent configuration (``_agent_configuration``).
         """
         name = PurePosixPath(rel).name
-        return (
-            name.lower().endswith(".json")
-            and not is_manifest_name(name)
-            and name.lower() not in LOCKFILE_NAMES
-            and not self.walker._agent_configuration(rel)
-            and json_readings_declare_mcp(text) is False
+        if (
+            not name.lower().endswith(".json")
+            or is_manifest_name(name)
+            or name.lower() in LOCKFILE_NAMES
+            or self.walker._agent_configuration(rel)
+            or json_readings_declare_mcp(text) is not False
+        ):
+            return False
+        readings = json_readings(text) or []
+        return bool(readings) and not any(
+            structured_code_matches(self.index, rel, text, documents=[reading]) for reading in readings
         )
 
     @staticmethod
@@ -644,6 +655,7 @@ class FileScanner:
             rel,
             f"code.filesystem: {rel}: structured {stage} incomplete ({failure}); excerpts withheld",
             reason="unparsed-input" if integrity else "sanitization-limit",
+            defect="integrity" if integrity else None,
         )
 
     def _input_defect(self, rel: str, issue: str, *, full_weight: bool = False) -> None:
@@ -727,6 +739,7 @@ class FileScanner:
                     f"code.filesystem: {rel}: {issue}",
                     full_weight=full_weight,
                     reason="unparsed-input" if category == "other" else category,
+                    defect="integrity" if issue == _AMBIGUOUS_DATA else None,
                 )
 
     def _redacted_lines(self, file: _SourceFile) -> list[str]:

@@ -175,3 +175,57 @@ def test_a_repeated_key_in_a_manifest_or_agent_configuration_still_fails(tmp_pat
     _project(tmp_path, {rel: text})
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete
+
+
+# ------------------------------------------------------- review follow-ups
+
+
+def test_a_structured_agent_definition_with_a_repeated_key_still_fails(tmp_path, run_connector):
+    # An exported n8n workflow is agent configuration the structured detectors read; a
+    # harmless repeated key must not turn its unreadable definition into a budgeted gap.
+    nodes = [
+        {"id": "1", "name": "Agent", "type": "@n8n/n8n-nodes-langchain.agent", "parameters": {}},
+        {"id": "2", "name": "Shell", "type": "n8n-nodes-base.executeCommand", "parameters": {}},
+        {"id": "3", "name": "Model", "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi", "parameters": {}},
+    ]
+    workflow = json.dumps({"name": "ops", "nodes": nodes, "connections": {}})
+    _project(tmp_path, {"automation/ops.json": workflow[:-1] + ', "name": "ops2"}'})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+
+
+def test_a_table_only_a_merged_reading_holds_is_found():
+    # Go's decoder merges repeated objects: neither first-wins nor last-wins sees this table.
+    merged = '{"client": {"cfg": {}, "cfg": {"mcpServers": {"s": {"command": "x"}}}}, "client": {}}'
+    assert json_readings_declare_mcp(merged) is True
+
+
+def test_a_table_only_a_merged_reading_holds_still_fails_the_scan(tmp_path, run_connector):
+    merged = '{"client": {"cfg": {}, "cfg": {"mcpServers": {"s": {"command": "x"}}}}, "client": {}}'
+    _project(tmp_path, {"deploy/tools.json": merged})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("key", ["McpServers", "mcp-servers", "MCP_SERVERS"])
+def test_a_server_key_in_another_spelling_is_undecided(key):
+    assert json_readings_declare_mcp(json.dumps({key: {"s": {"command": "x"}}})) is None
+    assert json_readings_declare_mcp(json.dumps({"MCP": {"Servers": {}}})) is None
+
+
+def test_an_oversize_json_with_a_case_variant_server_key_stays_blinding(tmp_path, run_connector):
+    padded = json.dumps({"McpServers": {"s": {"command": "evil"}}, "pad": "v" * 6_000})
+    _project(tmp_path, {"deploy/tools.json": padded})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, max_file_size=4_000)
+    assert ctx.stats.incomplete
+    assert [kind for _, kind, _ in _gaps(ctx)] == ["blinding"]
+
+
+@pytest.mark.parametrize("server", ["default", "type", "title"])
+def test_a_server_named_like_a_schema_keyword_is_still_a_server(server):
+    document = {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {"mcpServers": {server: {"command": "npx", "args": ["-y", "x"]}}},
+    }
+    assert mcp_server_holders(document)[0]

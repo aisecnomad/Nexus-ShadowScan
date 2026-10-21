@@ -204,9 +204,38 @@ def _schema_object(node: dict[Any, Any]) -> bool:
     )
 
 
+# The JSON type each keyword's value takes in a schema (``_field_schema``). ``default``,
+# ``const`` and ``examples`` take any value, so they cannot tell a schema from a server.
+_KEYWORD_TYPES: dict[str, type | tuple[type, ...]] = {
+    "$ref": str, "$id": str, "$schema": str, "$comment": str, "title": str, "description": str,
+    "format": str, "type": (str, list), "anyOf": list, "oneOf": list, "allOf": list, "enum": list,
+    "required": list, "not": (dict, bool), "items": (dict, list, bool), "properties": dict,
+    "patternProperties": dict, "additionalProperties": (dict, bool), "nullable": bool,
+    "deprecated": bool, "readOnly": bool, "writeOnly": bool, "uniqueItems": bool, "minItems": int,
+    "maxItems": int, "minProperties": int, "maxProperties": int,
+}  # fmt: skip
+
+
 def _field_schema(value: Any) -> bool:
-    """Whether ``value``, a field of a schema's ``properties``, is a schema: a mapping of keywords only."""
-    return isinstance(value, dict) and bool(value) and _SCHEMA_KEYWORDS.issuperset(value)
+    """Whether ``value``, a field of a schema's ``properties``, is a schema rather than a server table.
+
+    It is a mapping of schema keywords only, each holding a value of the type
+    that keyword takes (``_KEYWORD_TYPES``), and at least one keyword that
+    takes a typed value. A server table whose servers are named like keywords
+    (``{"type": {"command": ...}}``, ``{"default": {...}}``) fails the test:
+    a server's record is a mapping where a keyword takes a string or a list.
+    """
+    if not isinstance(value, dict) or not value or not _SCHEMA_KEYWORDS.issuperset(value):
+        return False
+    typed = [key for key in value if key in _KEYWORD_TYPES]
+    return bool(typed) and all(_keyword_typed(value[key], _KEYWORD_TYPES[key]) for key in typed)
+
+
+def _keyword_typed(value: Any, expected: type | tuple[type, ...]) -> bool:
+    """Whether ``value`` is of the JSON type a schema keyword takes (a boolean is not an integer)."""
+    if expected is int:
+        return isinstance(value, int) and not isinstance(value, bool)
+    return isinstance(value, expected)
 
 
 def _holds_server_table(node: dict[Any, Any], listed: bool, *, fields: bool = False) -> bool:
@@ -287,24 +316,110 @@ def _first_wins(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return obj
 
 
-def json_readings_declare_mcp(text: str) -> bool | None:
-    """Whether either reading of ambiguous JSON holds an MCP server table; None when that is not known.
+class _Repeated(list[Any]):
+    """Every value a repeated key held where the values were not all objects (``_merged``)."""
 
-    Parsers disagree on a repeated key: most keep its last value, some its
-    first. Both readings are parsed and walked in full (``mcp_server_holders``
-    with ``exhaustive``: every caller bounds ``text`` by its size first), so a
-    duplicate cannot hide a table from one reading that the other holds, and
-    a deep API contract is decided rather than left undecided. None when
-    either reading does not parse.
+
+def _merge_into(kept: Any, value: Any) -> Any:
+    """``value`` merged into ``kept``, in place: objects key by key, anything else kept side by side."""
+    if isinstance(kept, dict) and isinstance(value, dict):
+        for key, item in value.items():
+            kept[key] = _merge_into(kept[key], item) if key in kept else item
+        return kept
+    if isinstance(kept, _Repeated):
+        kept.append(value)
+        return kept
+    return _Repeated([kept, value])
+
+
+def _merged(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """A JSON object in which a repeated key's objects are merged, as Go's decoder fills a struct.
+
+    Every value any reading could take stays in the document: a repeated
+    key whose values are not all objects keeps them all, side by side. Each
+    object is merged in place, and each value once, so the cost is linear
+    in the document.
     """
-    holds = False
-    for hook in (None, _first_wins):
+    obj: dict[str, Any] = {}
+    for key, value in pairs:
+        obj[key] = _merge_into(obj[key], value) if key in obj else value
+    return obj
+
+
+def json_readings(text: str) -> list[Any] | None:
+    """What ambiguous JSON reads as under each way parsers treat a repeated key; None if it does not parse.
+
+    Most parsers keep a repeated key's last value, some its first, and Go's
+    decoder merges repeated objects into one. ``text`` is bounded by its
+    caller's size limit.
+    """
+    documents = []
+    for hook in (None, _first_wins, _merged):
         try:
-            document = json.loads(text, object_pairs_hook=hook)
+            documents.append(json.loads(text, object_pairs_hook=hook))
         except (ValueError, RecursionError):
             return None
+    return documents
+
+
+# A server table key in any spelling a case-insensitive or lenient client may accept.
+_SERVER_KEY_VARIANT = re.compile(r"mcp[-_.]?servers", re.IGNORECASE)
+_EXACT_SERVER_KEYS = frozenset({"mcpServers", "mcp_servers"})
+
+
+def _variant_server_key(document: Any) -> bool:
+    """Whether ``document`` spells a server table key other than exactly (``McpServers``, ``MCP.Servers``).
+
+    A client that matches keys without regard to case (Go's and .NET's JSON
+    decoders) reads such a table, which the structural walk, matching keys
+    exactly, does not. Every container is visited once.
+    """
+    stack = [document]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(key, str) and key not in _EXACT_SERVER_KEYS and _variant_key(key, value):
+                    return True
+                if isinstance(value, dict | list):
+                    stack.append(value)
+        elif isinstance(node, list):
+            stack.extend(item for item in node if isinstance(item, dict | list))
+    return False
+
+
+def _variant_key(key: str, value: Any) -> bool:
+    """Whether ``key`` spells ``mcpServers``, or an ``mcp`` section holding ``servers``, in another case."""
+    if _SERVER_KEY_VARIANT.fullmatch(key):
+        return True
+    return (
+        key != "mcp"
+        and key.lower() == "mcp"
+        and isinstance(value, dict)
+        and any(isinstance(inner, str) and inner.lower() == "servers" for inner in value)
+    )
+
+
+def json_readings_declare_mcp(text: str) -> bool | None:
+    """Whether any reading of ambiguous JSON holds an MCP server table; None when that is not known.
+
+    Each reading (``json_readings``) is walked in full (``mcp_server_holders``
+    with ``exhaustive``: every caller bounds ``text`` by its size first), so a
+    duplicate cannot hide a table from one reading that another holds, and a
+    deep API contract is decided rather than left undecided. None when the
+    text does not parse, or names a server table key in a spelling the walk
+    does not match (``_variant_server_key``).
+    """
+    documents = json_readings(text)
+    if documents is None:
+        return None
+    holds = False
+    for document in documents:
         holders, _ = mcp_server_holders(document, first=True, exhaustive=True)
         holds = holds or bool(holders)
+    # The merged reading holds every key any reading has.
+    if not holds and _variant_server_key(documents[-1]):
+        return None
     return holds
 
 

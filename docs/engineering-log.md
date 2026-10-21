@@ -40,6 +40,18 @@ Counts and figures quoted in an entry are those of its date.
   (`mcp_server_holders(..., exhaustive=True)`); every caller bounds the text
   by size first and the walk visits each container once, so its cost is
   linear (0.08 s for the contract). A table at any depth is still found.
+- Review follow-ups. An independent review found four gaps in the first
+  version, each now a regression test: an exported n8n workflow with one
+  harmless repeated key lost its agent finding (a data file is now budgeted
+  only when the structured detectors find nothing in any reading); Go's
+  decoder merges repeated objects, so a table neither first-wins nor
+  last-wins sees was hidden (a third, merged reading is walked); an oversize
+  `McpServers` or `mcp-servers` key, which the byte check matched without
+  regard to case, became a budgeted gap (a variant spelling now leaves the
+  answer undecided, so the gap stays blinding); and a server named like a
+  schema keyword (`default`, `type`) under a schema's `properties` was taken
+  for a field description (a field schema's keywords must now hold values
+  of the types they take).
 
 ### Unparsed-input triage and unrendered template source (October 21)
 

@@ -740,6 +740,10 @@ _AGENTFORCE_ROOTS = (
 )
 
 
+# The limit a structured document the integrity checks refuse records (a repeated key, a NaN).
+AMBIGUOUS_DATA = "structured configuration contains ambiguous or non-finite data"
+
+
 def structured_code_matches(
     index: SignatureIndex,
     rel: str,
@@ -804,7 +808,7 @@ def structured_code_matches(
         else:
             return []
     except (JSONIntegrityError, YAMLIntegrityError):
-        limits.append("structured configuration contains ambiguous or non-finite data")
+        limits.append(AMBIGUOUS_DATA)
         return []
     except (RecursionError, YAMLResourceLimitError):
         limits.append("structured configuration exceeds parser limits")
