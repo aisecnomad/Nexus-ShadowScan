@@ -448,3 +448,14 @@ def test_a_credential_in_a_valid_image_value_is_still_read(tmp_path, run_connect
         assert secrets and secrets[0].resource.endswith("docs/plot.ipynb"), [f.title for f in findings]
     else:  # the value is kept whole, so the text outputs are over the limit: an oversize gap
         assert secrets or "docs/plot.ipynb" in gaps, (gaps, ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("rel", [".cursor/rules/setup.ipynb", ".clinerules/setup.ipynb"])
+def test_a_partly_parsed_notebook_that_is_agent_configuration_is_never_budgeted(tmp_path, run_connector, rel):
+    # Agent configuration is never budgeted, discounted or declared away, as a Python file beside it is.
+    notebook = _notebook(
+        _cell(AGENT_CELL), _cell("api_key = <YOUR API KEY>\nfrom anthropic import Anthropic\n")
+    )
+    _project(tmp_path, {rel: notebook})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)

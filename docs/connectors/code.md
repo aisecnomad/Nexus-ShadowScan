@@ -972,7 +972,8 @@ While other Python cells parsed and hold code (blank, comment-only,
 magic-only and foreign cells do not count), the notebook is one partial gap charged to the
 coverage budget at a whole entry (tutorial notebooks hold placeholders such as
 `api_key = <YOUR API KEY>` on purpose); a notebook none of whose cells parse,
-and every one under `strict_coverage`, leaves coverage incomplete. A string left open in one cell no longer masks the
+one that is agent configuration (in an agent definition directory such as `.cursor/rules/`), and
+every one under `strict_coverage`, leaves coverage incomplete. A string left open in one cell no longer masks the
 cells after it, and a cell that stops (`raise SystemExit`, `sys.exit()`,
 `exit()` or `quit()` to halt Run All) ends only its own statements: the later
 cells stay reachable.
