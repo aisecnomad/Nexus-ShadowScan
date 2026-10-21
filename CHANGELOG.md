@@ -8,6 +8,11 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## 0.1.3 — 2026-11-20
 
+- Local scans start faster: built-in signature patterns compile on first use,
+  outside each input's matching budget (credential patterns in the linear form
+  the matcher runs), and `import shadowscan.cli` no longer loads `requests`,
+  `urllib3` or `ssl` for a local `shadowscan code` run.
+
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the
   checkout so it exercises the installed wheel.

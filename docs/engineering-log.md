@@ -13,6 +13,25 @@ Counts and figures quoted in an entry are those of its date.
 
 ## 0.1.3 — 2026-11-20
 
+### Faster local start: deferred pattern compilation, no HTTP stack on import (October 21)
+
+- Every process compiled all ~1,600 built-in patterns with the bounded engine
+  (0.3-0.45 s of CPU on the measured runner, about half of a staged
+  pre-commit scan) before reading a file. Built-in packs, which
+  `python -m shadowscan.signatures.validate` compiles and checks in full
+  before release, now defer each pattern to its first use
+  (`signatures.budget.DeferredPattern`); the compile time is credited back to
+  the input whose matching first needs it, so no input's budget pays for it.
+  Organization packs are still compiled and checked when they load. A
+  credential pattern is deferred in the linear assignment form `compile`
+  runs (`Signal.bounded_patterns`); deferring the pack source instead made
+  `test_generic_credential_patterns_bound_hostile_identifier_work` time out.
+- `import shadowscan.cli` loaded `requests`, `urllib3`, `charset_normalizer`,
+  `http.client` and `ssl` (97 modules) through `config -> triage ->
+  utils.http`. The scope and policy helpers a local scan needs move to
+  `utils.http_scope`; `tests/unit/test_startup_imports.py` pins that a local
+  scan imports none of them.
+
 ### Release readiness review (October 21)
 
 - `tools/release/assets.py` looked up the release with `releases/tags/{tag}`,
