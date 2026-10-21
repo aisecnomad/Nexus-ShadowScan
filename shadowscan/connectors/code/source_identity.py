@@ -12,7 +12,7 @@ from collections import Counter
 from shadowscan.connectors.code.tool_attribution import ToolRegions, python_tool_regions
 from shadowscan.utils.text import python_source_lines
 
-DEFAULT_MAX_AST_NODES = 50_000
+DEFAULT_MAX_AST_NODES = 200_000
 MAX_BINDING_LENGTH = 256
 
 _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)

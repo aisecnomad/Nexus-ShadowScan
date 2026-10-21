@@ -124,11 +124,11 @@
   },
   "modules": {
     "shadowscan/connectors/cloud/aws.py": 3528,
-    "shadowscan/connectors/code/file_scan.py": 2264,
+    "shadowscan/connectors/code/file_scan.py": 2269,
     "shadowscan/connectors/code/source_semantics.py": 2784,
     "shadowscan/connectors/code/walk.py": 2686,
     "shadowscan/connectors/gateway/logs.py": 2112,
     "shadowscan/connectors/identity/entra.py": 2157,
-    "shadowscan/signatures/matcher.py": 2986
+    "shadowscan/signatures/matcher.py": 3032
   }
 }

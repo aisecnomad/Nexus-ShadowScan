@@ -137,7 +137,7 @@ def test_structural_budget_is_a_distinct_timeout(index):
         bound_source_matches(index, _huge_module(600), "python", [], max_ast_nodes=1_000)
     assert isinstance(caught.value, MatchTimeoutError)
     assert bound_source_matches(index, _huge_module(10), "python", []) != []
-    assert MAX_AST_NODES == 50_000
+    assert MAX_AST_NODES == 200_000
 
 
 def test_oversized_test_module_warns_and_keeps_lexical_evidence(tmp_path, index):

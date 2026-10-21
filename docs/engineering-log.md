@@ -13,6 +13,33 @@ Counts and figures quoted in an entry are those of its date.
 
 ## 0.1.3 — 2026-11-20
 
+### Analysis bounds sized for real modules; redaction's own allowance (October 21)
+
+- BerriAI/litellm's `proxy/proxy_server.py` (90,611 nodes), `router.py`
+  (74,983) and `llms/custom_httpx/llm_http_handler.py` (56,791) were past
+  the 50,000-node bound and kept lexical evidence only; one was past 512
+  bound source calls. Python syntax-tree bounds rise to 200,000 nodes
+  (`max_ast_nodes`, the MCP tool and source-identity walks alike) and bound
+  calls to 2,048: the three modules bind in 2-3.5 s of CPU and about 100 MB
+  each; 1,024 calls sufficed for all three. The provider tool-loop flow walk
+  allows four steps per accepted node (800,000; `test_common_request_processing.py`
+  needs 201,156, in 2.7 s), still checked against the CPU budget every 256 steps.
+- litellm's 940 KB `tests/unit/proxy/_experimental/mcp_server/test_mcp_server_manager.py`
+  finished detection inside its 8 s allowance and then spent about 6 s
+  redacting its excerpts, charged to the same allowance and checked as it
+  closed. Excerpt redaction runs once detection is done; it now runs under
+  an allowance of its own of the same size (`matcher.separate_budget`),
+  nested under the budgets that enclose the file's, and its time is given
+  back to the file's budget only (`_ScanBudget.extend`), never past an
+  enclosing scan-wide cap. A file costs at most twice its allowance. A
+  redaction that exhausts its own allowance withholds the file's excerpts
+  (a sanitization-limit gap, an error outside discounted test code), never
+  a finding.
+- Significant-Gravitas/AutoGPT's 66,573-byte `.claude/skills/pr-test/SKILL.md`
+  was past the skill audit's 64 KiB. The audit is linear in its lines (about
+  40 ms at 512 KiB) and the instruction-content inspector already reads the
+  same files to 512 KiB; the audit now does too.
+
 ### Release readiness review (October 21)
 
 - `tools/release/assets.py` looked up the release with `releases/tags/{tag}`,

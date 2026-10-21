@@ -8,6 +8,13 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## 0.1.3 — 2026-11-20
 
+- Large real modules are analyzed in full: the Python syntax-tree bound rises
+  from 50,000 to 200,000 nodes (`max_ast_nodes`), bound source calls from 512
+  to 2,048 and tool-loop flow steps to 800,000. Excerpt redaction runs under
+  an allowance of its own, so a file whose detection finished in its budget
+  no longer times out redacting its excerpts, and skill files are audited up
+  to 512 KiB.
+
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the
   checkout so it exercises the installed wheel.

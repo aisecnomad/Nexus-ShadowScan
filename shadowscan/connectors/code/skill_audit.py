@@ -15,7 +15,9 @@ import yaml
 
 from shadowscan.utils.safe_yaml import strict_bounded_safe_load
 
-MAX_TEXT_BYTES = 64 * 1024
+# The instruction-content inspector's bound (instruction_content.MAX_TEXT_BYTES): the audit
+# is linear in its lines, about 40 ms at this size. AutoGPT's pr-test/SKILL.md is 66,573 bytes.
+MAX_TEXT_BYTES = 512 * 1024
 MAX_LINE_CHARACTERS = 4096
 MAX_FRONTMATTER_BYTES = 8192
 MAX_INDICATORS_PER_RULE = 3
