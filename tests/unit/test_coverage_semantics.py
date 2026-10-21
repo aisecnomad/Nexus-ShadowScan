@@ -1291,3 +1291,34 @@ def test_link_message_claims_real_path_coverage_only_when_the_walk_gives_it(tmp_
         in text
     )
     assert "esc.yaml to lib/e\\x1b.yaml, which is walked" in text and "\x1b" not in text
+
+
+def test_an_agent_link_is_assigned_the_project_its_link_path_lies_in(tmp_path, run_connector):
+    # The walk's stack of project roots holds only its last branch when aliases are read;
+    # the link is in services/a, which is its own project, so its findings are that project's.
+    repo = _tree(
+        tmp_path / "repo",
+        {
+            "shared/AGENTS.md": "# Rules\nAlways run tests.\n",
+            "services/a/pyproject.toml": "[project]\nname = 'a'\n",
+            "zzz/pyproject.toml": "[project]\nname = 'z'\n",
+        },
+    )
+    (repo / "services" / "a" / "CLAUDE.md").symlink_to("../../shared/AGENTS.md")
+    findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
+    linked = [f for f in findings if "services/a/CLAUDE.md" in {e.location for e in f.evidence}]
+    assert linked and all(f.metadata.get("path") == "services/a" for f in linked), [f.title for f in linked]
+
+
+def test_a_file_link_inside_an_agent_alias_is_read_at_its_link_path(tmp_path, run_connector):
+    # AutoGPT's layout: a skill linked to another inside .claude/skills, all aliased as .agents/skills.
+    repo = _tree(tmp_path / "repo", {".claude/skills/x/SKILL.md": SKILL})
+    (repo / ".claude" / "skills" / "y").mkdir()
+    (repo / ".claude" / "skills" / "y" / "SKILL.md").symlink_to("../x/SKILL.md")
+    (repo / ".agents").mkdir()
+    (repo / ".agents" / "skills").symlink_to("../.claude/skills")
+    findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
+    locations = {e.location for f in findings for e in f.evidence}
+    assert {".claude/skills/y/SKILL.md", ".agents/skills/y/SKILL.md"} <= locations, locations

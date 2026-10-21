@@ -31,7 +31,12 @@ Counts and figures quoted in an entry are those of its date.
   same confined opens as every file, and its findings name the link path.
   Its files count toward `max_files` and the entry budget; a link below the
   alias is judged as a link and never read again, so a loop cannot multiply
-  the walk. A link to an excluded or unselected target, or outside the tree,
+  the walk; a file link below an alias is read at its own link path (a file
+  cannot loop). An aliased file belongs to the project its link path lies
+  in (`_project_root`): review found that the walk's stack of project roots
+  holds only its last branch by the time aliases are read, which reported
+  `services/a/CLAUDE.md` as the repository root's. A link to an excluded or
+  unselected target, or outside the tree,
   stays blinding, and so does a directory behind a link named like a
   configuration file (`CLAUDE.md -> docs`). The per-file loop of
   `_iter_entries` moves verbatim into `_file_entry` / `_regular_entry`, which

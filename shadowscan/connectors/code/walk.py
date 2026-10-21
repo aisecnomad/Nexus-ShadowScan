@@ -1570,16 +1570,20 @@ class TreeWalker:
         agent configuration. The link is never followed. Its target, resolved
         below the root (``_resolved_link_target``), is read by its real path,
         each component opened without following a link, as any file is, and
-        analyzed under the link path; its findings name that path. A link
-        below such an alias is judged as a link, not read again
-        (``in_alias``). Every file read counts toward ``max_files`` and the
-        walk's entry budget, as at its own path.
+        analyzed under the link path; its findings name that path, and its
+        project is the one the link path lies in (``_project_root``), as a
+        regular file there would be assigned. A file link below such an alias
+        is read at its own link path too; a directory link below one is judged
+        as a link, never read again (``in_alias``), so a loop cannot multiply
+        the walk. Every file read counts toward ``max_files`` and the walk's
+        entry budget, as at its own path.
         """
         walk.in_alias = True
         try:
             for rel, target in walk.aliases:
                 real = root / target.relative_to(resolved_root)
-                proj = _nearest_root(PurePosixPath(rel).parent.as_posix(), roots)
+                # The walk's stack of project roots holds only its last branch by now.
+                proj = _project_root(root, rel, walk.project_roots, budget=walk.budget)
                 if not real.is_dir():
                     try:
                         info = real.lstat()
@@ -1616,9 +1620,12 @@ class TreeWalker:
             if kept is None:
                 return False
             dirnames[:] = kept
-            here = _nearest_root(rel_dir, roots)
-            if rel_dir != rel and _marks_project(Path(dirpath), filenames):
+            # As the walk assigns projects (_iter_entries): the alias directory itself may be one.
+            here = _nearest_root(rel_dir, roots) if rel_dir != rel else proj
+            included_names = (name for name in filenames if self.included(f"{rel_dir}/{name}"))
+            if _marks_project(Path(dirpath), included_names):
                 roots.append(rel_dir)
+                self._note_declaring_root(Path(dirpath), rel_dir, here, filenames)
                 here = rel_dir
             for fn in sorted(filenames):
                 entry = self._file_entry(
@@ -1764,10 +1771,11 @@ class TreeWalker:
         message = self._unscanned_link_message(rel, link, target, resolved_root)
         alias = target is not None and self._alias_of_scanned_directory(rel, target, resolved_root)
         agent = self._agent_configuration_link(rel, link, target if alias else None)
+        # Below an alias only a file link is read at its link path: a directory link could loop.
         if (
             agent
             and target is not None
-            and not walk.in_alias
+            and not (walk.in_alias and target.is_dir())
             and self._readable_alias(rel, target, resolved_root, alias)
         ):
             # Read at the link path once the walk ends (_alias_entries): no gap.
