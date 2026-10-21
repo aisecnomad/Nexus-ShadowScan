@@ -8,6 +8,10 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## 0.1.3 — 2026-11-20
 
+- The `benchmark-suite` companion pin moves to Nexus-ShadowBench `1ce0eee`
+  (documentation, an amendment ledger, a hardened code-surface fetch, certifi
+  2026.10.19 and a CI dependency audit); no benchmark evidence changed.
+
 - Repository hygiene: workflows run on a pinned `ubuntu-24.04` image, and
   configuration left behind for benchmark paths that moved to the Nexus
   ShadowBench companion is removed.

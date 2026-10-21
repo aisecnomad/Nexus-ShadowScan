@@ -1220,7 +1220,7 @@
     },
     "tools.verify_migration": {
       "path": "tools/verify_migration.py",
-      "sha256": "3cfc521898e9499d1d34f152a64f1071b89d1e6799c28ee229e2fc01e64f20d5"
+      "sha256": "3c333ab22fc1c70ce9ddcab6f7afbf0666e65323557cd00ed2efce1be110714a"
     }
   },
   "estate": {
