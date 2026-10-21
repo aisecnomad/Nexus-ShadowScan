@@ -9,6 +9,7 @@ them discarded.
 
 from __future__ import annotations
 
+import os
 import time
 
 import pytest
@@ -260,6 +261,22 @@ class TestDeadlineExtension:
             FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET = original
         assert grew == pytest.approx(MAX_AUTO_TIMEOUT - DEFAULT_CONNECTOR_TIMEOUT)
 
+    def test_a_byte_padded_tree_is_clamped_at_the_ceiling(self, tmp_path, monkeypatch) -> None:
+        # A hostile tree of a few files padded to just under max_file_size asks
+        # for far more than the ceiling by bytes alone; the engine still clamps it.
+        for i in range(3):
+            (tmp_path / f"pad{i}.py").write_bytes(b"#" * 10_000)
+            (tmp_path / f"pad{i}.lock").write_bytes(b"#" * 10_000)
+        (tmp_path / "uv.lock").write_bytes(b"#" * 10_000)
+        monkeypatch.setattr(FilesystemConnector, "_SOURCE_BYTES_PER_DEFAULT_BUDGET", 10)
+        monkeypatch.setattr(FilesystemConnector, "_READ_BYTES_PER_DEFAULT_BUDGET", 10)
+        config = {"paths": [str(tmp_path)], "max_file_size": 10_000}
+        proposal = FilesystemConnector.estimate_timeout_seconds(config, DEFAULT_CONNECTOR_TIMEOUT)
+        assert proposal is not None and proposal > 100 * MAX_AUTO_TIMEOUT
+        spec = ConnectorSpec(name="code.filesystem", config=config)
+        grew = self._extend(ScanConfig(connectors=[]), spec, self._state(DEFAULT_CONNECTOR_TIMEOUT))
+        assert grew == pytest.approx(MAX_AUTO_TIMEOUT - DEFAULT_CONNECTOR_TIMEOUT)
+
     def test_an_estimate_that_raises_leaves_the_deadline_alone(self, tmp_path, monkeypatch) -> None:
         def boom(cls, config, default):
             raise RuntimeError("probe exploded")
@@ -382,3 +399,257 @@ class TestMessages:
 @pytest.mark.parametrize("ratio", [0.0, 0.02, 1.0])
 def test_scan_config_round_trips_the_gap_budget(ratio: float) -> None:
     assert ScanConfig(connectors=[], max_coverage_gap=ratio).max_coverage_gap == ratio
+
+
+class TestByteAwareEstimate:
+    """Bytes the reader analyses drive the deadline as well as entries.
+
+    Regression: the estimate counted entries only, so run-llama_llama_index
+    (13,499 entries, 480 MB of supported uv.lock files) got 270 s against a
+    measured need of 232-290 s and BerriAI_litellm (156 MB of source) 325 s,
+    and both exited 3 on a contended runner.
+    """
+
+    @staticmethod
+    def _estimate(root, **config) -> float | None:
+        return FilesystemConnector.estimate_timeout_seconds({"paths": [str(root)], **config}, 120.0)
+
+    @staticmethod
+    def _small_budgets(monkeypatch) -> None:
+        monkeypatch.setattr(FilesystemConnector, "_SOURCE_BYTES_PER_DEFAULT_BUDGET", 10_000)
+        monkeypatch.setattr(FilesystemConnector, "_READ_BYTES_PER_DEFAULT_BUDGET", 100_000)
+
+    def test_few_entries_with_many_source_bytes_are_extended(self, tmp_path, monkeypatch) -> None:
+        self._small_budgets(monkeypatch)
+        (tmp_path / "big.py").write_bytes(b"x = 1\n" * 5_000)  # 30,000 bytes: three source budgets
+        assert self._estimate(tmp_path) == pytest.approx(360.0)
+
+    def test_read_bytes_count_at_their_own_rate(self, tmp_path, monkeypatch) -> None:
+        self._small_budgets(monkeypatch)
+        (tmp_path / "data.json").write_bytes(b" " * 200_000)
+        (tmp_path / "mod.py").write_bytes(b" " * 10_000)
+        assert self._estimate(tmp_path, max_file_size=300_000) == pytest.approx(120.0 * (2 + 1))
+
+    def test_files_over_the_size_limit_add_no_bytes(self, tmp_path, monkeypatch) -> None:
+        self._small_budgets(monkeypatch)
+        (tmp_path / "big.py").write_bytes(b" " * 30_000)
+        assert self._estimate(tmp_path, max_file_size=20_000) is None
+        probe = FilesystemConnector._probe_tree([tmp_path], size_limit=20_000)
+        assert (probe.entries, probe.source_bytes, probe.read_bytes) == (2, 0, 0)
+
+    def test_a_notebook_counts_up_to_its_own_limit(self, tmp_path) -> None:
+        (tmp_path / "nb.ipynb").write_bytes(b" " * 30_000)
+        probe = FilesystemConnector._probe_tree([tmp_path], size_limit=10_000, notebook_limit=40_000)
+        # The code-cell share is source; outputs past max_file_size are read at the cheaper rate.
+        assert (probe.source_bytes, probe.read_bytes) == (10_000, 20_000)
+        over = FilesystemConnector._probe_tree([tmp_path], size_limit=10_000, notebook_limit=20_000)
+        assert (over.source_bytes, over.read_bytes) == (0, 0)
+
+    def test_a_symlinked_file_adds_an_entry_but_no_bytes(self, tmp_path) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "big.py").write_bytes(b" " * 5_000)
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "link.py").symlink_to(outside / "big.py")
+        probe = FilesystemConnector._probe_tree([tree])
+        assert (probe.entries, probe.source_bytes, probe.read_bytes) == (2, 0, 0)
+
+    def test_a_symlinked_directory_is_not_descended(self, tmp_path) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        for i in range(20):
+            (outside / f"m{i}.py").write_bytes(b" " * 1_000)
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "linked").symlink_to(outside, target_is_directory=True)
+        probe = FilesystemConnector._probe_tree([tree])
+        # The root and the link itself; nothing behind the link is listed or sized.
+        assert (probe.entries, probe.source_bytes, probe.read_bytes) == (2, 0, 0)
+
+    def test_the_probe_never_follows_a_link_or_opens_a_file(self, tmp_path, monkeypatch) -> None:
+        _tree(tmp_path, 3)
+        (tmp_path / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+        (tmp_path / "link.py").symlink_to(tmp_path / "src" / "mod0.py")
+        follows: list[bool] = []
+        real_scandir = os.scandir
+
+        class Entry:
+            def __init__(self, entry: os.DirEntry[str]) -> None:
+                self._entry = entry
+                self.name, self.path = entry.name, entry.path
+
+            def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+                follows.append(follow_symlinks)
+                return self._entry.is_dir(follow_symlinks=follow_symlinks)
+
+            def is_file(self, *, follow_symlinks: bool = True) -> bool:
+                follows.append(follow_symlinks)
+                return self._entry.is_file(follow_symlinks=follow_symlinks)
+
+            def stat(self, *, follow_symlinks: bool = True) -> os.stat_result:
+                follows.append(follow_symlinks)
+                return self._entry.stat(follow_symlinks=follow_symlinks)
+
+        class Listing:
+            def __init__(self, path: object) -> None:
+                self._it = real_scandir(path)  # type: ignore[call-overload]
+
+            def __enter__(self) -> object:
+                return (Entry(e) for e in self._it)
+
+            def __exit__(self, *exc: object) -> None:
+                self._it.close()
+
+        def no_open(*_args: object, **_kwargs: object) -> None:
+            pytest.fail("the probe opened a file")
+
+        monkeypatch.setattr("shadowscan.connectors.code.filesystem.os.scandir", Listing)
+        monkeypatch.setattr("builtins.open", no_open)
+        monkeypatch.setattr("os.open", no_open)
+        probe = FilesystemConnector._probe_tree([tmp_path])
+        monkeypatch.undo()
+        # The root, src/, three modules, uv.lock and the link.
+        assert probe.entries == 7
+        assert follows and not any(follows)
+
+    def test_pruned_directories_add_no_bytes(self, tmp_path, monkeypatch) -> None:
+        self._small_budgets(monkeypatch)
+        vendored = tmp_path / "node_modules" / "pkg"
+        vendored.mkdir(parents=True)
+        (vendored / "index.js").write_bytes(b" " * 50_000)
+        assert self._estimate(tmp_path) is None
+        assert self._estimate(tmp_path, default_excludes=False) is not None
+
+    def test_supported_lockfiles_count_and_other_never_read_files_do_not(self, tmp_path) -> None:
+        # Only the lockfiles the reader parses (lockfiles.LOCKFILE_NAMES) are read.
+        for name in ("uv.lock", "poetry.lock", "pnpm-lock.yaml", "Cargo.lock"):
+            (tmp_path / name).write_bytes(b" " * 1_000)
+        for name in ("yarn.lock", "Gemfile.lock", "bundle.min.js", "app.js.map", "x.pyc"):
+            (tmp_path / name).write_bytes(b" " * 7_000)
+        probe = FilesystemConnector._probe_tree([tmp_path])
+        assert probe.entries == 10
+        assert (probe.source_bytes, probe.read_bytes) == (0, 4_000)
+
+    def test_a_timed_out_probe_still_saturates_to_the_ceiling(self, tmp_path, monkeypatch) -> None:
+        (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+        monkeypatch.setattr(FilesystemConnector, "_PROBE_SECONDS", 0.0)
+        assert self._estimate(tmp_path) == MAX_AUTO_TIMEOUT
+        monkeypatch.undo()
+        monkeypatch.setattr(FilesystemConnector, "_PROBE_LIMIT", 1)
+        assert FilesystemConnector._probe_tree([tmp_path]).entries == 1
+
+    @pytest.mark.parametrize("source_bytes", [0, 1, 5_000, 100_000])
+    def test_bytes_never_lower_the_entry_proposal(self, tmp_path, monkeypatch, source_bytes) -> None:
+        self._small_budgets(monkeypatch)
+        monkeypatch.setattr(FilesystemConnector, "_ENTRIES_PER_DEFAULT_BUDGET", 10)
+        _tree(tmp_path, 38)  # the root, src/ and 38 files: four entry budgets
+        (tmp_path / "src" / "mod0.py").write_bytes(b" " * source_bytes)
+        proposal = self._estimate(tmp_path)
+        assert proposal is not None and proposal >= 120.0 * 4
+        source = FilesystemConnector._probe_tree([tmp_path]).source_bytes
+        assert proposal == pytest.approx(max(480.0, 120.0 * source / 10_000))
+
+    def test_an_invalid_size_option_proposes_nothing(self, tmp_path) -> None:
+        (tmp_path / "a.py").write_bytes(b" " * 100)
+        assert self._estimate(tmp_path, max_file_size=0) is None
+        assert self._estimate(tmp_path, max_notebook_size="big") is None
+
+
+class TestPostWalkReserve:
+    """Work after the walk fits in the margin the walk keeps back.
+
+    Regression: the walk stopped five percent before the deadline, but
+    re-export binding and finding emission (22 s on llama_index) outran that,
+    so the engine cut the connector and the report showed it skipped, with 0
+    objects examined and an arbitrary prefix of findings, instead of the
+    walk's "after N of M files" disclosure.
+    """
+
+    def test_the_reserve_grows_with_scanned_files_and_is_capped(self) -> None:
+        from shadowscan.connectors.code.walk import (
+            DEADLINE_MARGIN_FRACTION,
+            POST_WALK_RESERVE_FRACTION,
+            POST_WALK_SECONDS_PER_FILE,
+            deadline_margin,
+        )
+
+        assert deadline_margin(270.0) == pytest.approx(270.0 * DEADLINE_MARGIN_FRACTION)
+        assert deadline_margin(270.0, 9_000) == pytest.approx(9_000 * POST_WALK_SECONDS_PER_FILE)
+        assert deadline_margin(270.0, 10**9) == pytest.approx(270.0 * POST_WALK_RESERVE_FRACTION)
+        assert deadline_margin(270.0, 10) == deadline_margin(270.0)
+
+    def test_a_deadline_truncated_walk_keeps_its_accounting(self, tmp_path, monkeypatch) -> None:
+        import json
+
+        from shadowscan.connectors.code.file_scan import FileScanner
+        from shadowscan.connectors.code.project_findings import ProjectFindings
+
+        root = tmp_path / "repo"
+        root.mkdir()
+        (root / "requirements.txt").write_text("langchain\n", encoding="utf-8")
+        for i in range(2_000):
+            (root / f"m{i}.py").write_text(f"VALUE = {i}\n", encoding="utf-8")
+        scanned: list[str] = []
+
+        def slow_scan(self, scan, rel, path, proj_root) -> None:
+            self.ctx.examined()
+            scanned.append(rel)
+            time.sleep(0.01)
+
+        emit = ProjectFindings.emit_findings
+
+        def slow_emit(self, scan):
+            # Post-walk work past what the walk used to leave (the five-percent
+            # margin plus one file's 2 s matching budget: 2.5 s of 10 s) and
+            # inside what it now leaves (that budget plus a quarter: 4.5 s).
+            time.sleep(3.5)
+            yield from emit(self, scan)
+
+        # Reach the reserve's cap within the few hundred files a test can scan;
+        # a contended runner then cannot shrink the reserve by scanning fewer.
+        monkeypatch.setattr("shadowscan.connectors.code.walk.POST_WALK_SECONDS_PER_FILE", 0.05, raising=False)
+        monkeypatch.setattr(FileScanner, "scan_file", slow_scan)
+        monkeypatch.setattr(ProjectFindings, "emit_findings", slow_emit)
+
+        def hard_exit(code: int) -> None:
+            # The CLI leaves a worker the engine cut with os._exit: the failure this pins.
+            raise SystemExit(code)
+
+        monkeypatch.setattr("shadowscan.cli.os._exit", hard_exit)
+        out = tmp_path / "report.json"
+        result = CliRunner().invoke(
+            main,
+            ["code", str(root), "--connector-timeout-seconds", "10", "--format", "json", "-o", str(out)],
+        )
+        assert result.exit_code == 3, result.output
+        stats = json.loads(out.read_text(encoding="utf-8"))["stats"][0]
+        assert stats["skipped"] is False and stats["incomplete"] is True
+        assert 0 < stats["objects_examined"] < 2_001
+        assert any("connector deadline reached after" in e and " of 2001 files" in e for e in stats["errors"])
+
+    def test_emission_past_the_deadline_names_what_it_left_out(self, tmp_path, index, monkeypatch) -> None:
+        from shadowscan.connectors.base import ConnectorContext
+        from shadowscan.connectors.code.file_scan import FileScanner
+
+        root = tmp_path / "repo"
+        for package in ("a", "b", "c"):
+            (root / package).mkdir(parents=True)
+            (root / package / "requirements.txt").write_text("langchain\n", encoding="utf-8")
+        ctx = ConnectorContext(config={"path": str(root), "use_git": False}, index=index)
+
+        def spent(self, scan) -> None:
+            # Binding used up the time: emission starts inside the margin. The root
+            # and its three packages are four projects.
+            self.ctx.deadline = time.monotonic() + 5.0
+            scan.margin = 20.0
+
+        monkeypatch.setattr(FileScanner, "resolve_reexport_sources", spent)
+        findings = FilesystemConnector(ctx).run()
+        assert not any(f.resource_type == "project" for f in findings)
+        assert ctx.stats.incomplete and not ctx.stats.skipped
+        assert any(
+            "connector deadline reached during finding emission; 4 of 4 project findings not emitted" in e
+            for e in ctx.stats.errors
+        )
+        assert ctx.stats.incomplete_reasons.get("timeout") == 1

@@ -58,6 +58,11 @@ explain operator migrations. Earlier per-change entries are preserved in the
   an allowance of its own, so a file whose detection finished in its budget
   no longer times out redacting its excerpts, and skill files are audited up
   to 512 KiB.
+- The automatic `code.filesystem` deadline also scales with the bytes the
+  scan will analyse (one default per 12 MB of source, per 240 MB of other
+  read data such as supported lockfiles), not only with the entry count, and
+  the walk stops early enough to leave time for binding and finding emission.
+  Set an explicit deadline for untrusted repositories.
 
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the
