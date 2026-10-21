@@ -28,8 +28,8 @@ full dated log.
 - Unrendered template source is one partial gap charged to the coverage
   budget instead of an `unparsed-input` failure. That is a Python, TOML or
   JSON file that parses once its Jinja placeholders are filled in and its tag
-  lines dropped, or a file with Jinja syntax under a directory named with
-  Jinja syntax (`{{cookiecutter.package_name}}/`). Its rendering is
+  lines blanked, or a file other than Python source with Jinja syntax under a
+  directory named with Jinja syntax (`{{cookiecutter.package_name}}/`). Its rendering is
   analyzed, so its dependencies and imports stay evidence. Scans that exited
   3 only for such files may complete; `strict_coverage` keeps them
   incomplete, and agent configuration is never discounted.

@@ -10,8 +10,9 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 - Fewer false exit 3s from unparsed input: a Continue `uses:` block reference
   is an MCP server finding, an empty manifest or MCP configuration is a note,
-  and unrendered template source (a file under a `{{cookiecutter...}}`
-  directory, or one that parses once its Jinja placeholders are filled in) is
+  and unrendered template source (a file other than Python source under a
+  `{{cookiecutter...}}` directory, or one that parses once its Jinja
+  placeholders are filled in) is
   one partial gap charged to the coverage budget instead of failing the scan.
 
 - Release-evidence attachment now finds the maintainer's draft release, which
