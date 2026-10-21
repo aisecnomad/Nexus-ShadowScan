@@ -28,6 +28,9 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 certifi 2026.10.19 removes the `emSign ECC Root CA - G3` root, whose revoked
 intermediates had compromised keys (GHSA-6q48-6c7w-9gw2), from every lock.
+The worker image starts from the 2026-10-20 `chainguard/wolfi-base` digest, whose
+`ca-certificates-bundle` 20260909-r3 fixes CVE-2026-111943; the previous digest's
+r2 failed the container vulnerability gate on every pull request.
 
 The weekly discovery-benchmark gate compares against the companion results
 directory its workflow names (`BASELINE_RUN`, currently `2026-10-09`), so a
