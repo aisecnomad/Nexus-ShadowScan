@@ -29,7 +29,7 @@ Counts and figures quoted in an entry are those of its date.
   ceiling by a regression test. `docs/scanning.md` tells operators scanning
   untrusted repositories to set an explicit or job deadline.
 - When the deadline ends a walk, the walk now stops early enough to leave
-  time for re-export binding and finding emission (5 ms per scanned file, up
+  time for re-export binding and finding emission (5 ms per file read, up
   to a quarter of the window), so the report keeps its "after N of M files"
   accounting; emission that still runs into the deadline records how many
   project findings it did not emit instead of dropping them silently.
@@ -40,6 +40,12 @@ Counts and figures quoted in an entry are those of its date.
   `.mts` and `.cts` count as source, the documented margin names its 250 ms
   floor, and the emission diagnostic says it counts projects, whose project,
   agent and tool findings were left out.
+- A second review found that the post-walk reserve counted every examined
+  entry, never-read assets included. They sort first and reserve nothing,
+  so 6,000 one-byte images raised the margin to its cap (a quarter of the
+  window) before the first source file: with a 16 s deadline a tree main
+  completes exited 3 after 6,058 of 6,061 files with about 6 s left. Only
+  the files the walk reads count now (`test_the_post_walk_reserve_counts_only_files_the_walk_read`).
 
 ### Release readiness review (October 21)
 

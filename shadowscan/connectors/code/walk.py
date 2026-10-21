@@ -727,18 +727,19 @@ def scan_timeout_for_size(base: float, size: int) -> float:
     return min(base * (1 + steps), max(base, SCAN_TIMEOUT_CAP_SECONDS))
 
 
-def deadline_margin(remaining: float, scanned: int = 0) -> float:
+def deadline_margin(remaining: float, read: int = 0) -> float:
     """Return the safety margin kept before a connector deadline.
 
     Five percent of the budget that remained when the walk started, and at
     least 250 ms, covers the engine's own sanitization before it compares
     completion to the deadline. Re-export binding and finding emission grow
-    with the ``scanned`` files, so the margin also reserves
+    with the files the walk ``read`` (not the never-read images and oversize
+    files it only examined), so the margin also reserves
     ``POST_WALK_SECONDS_PER_FILE`` for each, up to ``POST_WALK_RESERVE_FRACTION``
     of ``remaining``: a result that arrives after the deadline loses the walk's
     accounting ("after N of M files") to the engine's cut.
     """
-    reserve = min(POST_WALK_SECONDS_PER_FILE * scanned, POST_WALK_RESERVE_FRACTION * remaining)
+    reserve = min(POST_WALK_SECONDS_PER_FILE * read, POST_WALK_RESERVE_FRACTION * remaining)
     return max(DEADLINE_MARGIN_MIN_SECONDS, DEADLINE_MARGIN_FRACTION * remaining, reserve)
 
 
@@ -1723,6 +1724,9 @@ class TreeWalker:
             entries = [entry for entry in entries if self._diff_included(entry[0], diff_files)]
         entries.sort(key=lambda entry: (_scan_priority(entry[0], entry[1].name), entry[3]))
         examined = 0
+        # Files the walk read: only they leave re-export binding and emission work after it.
+        # Never-read entries (images, oversize files) sort first and reserve nothing.
+        read = 0
         for index, (rel, path, proj_root, size) in enumerate(entries):
             analysis_size = (
                 min(size, self.model_metadata_bytes) if self.model_artifact_name(path.name) else size
@@ -1732,7 +1736,7 @@ class TreeWalker:
             reserve = self._reserved_budget(rel, path, size, budget)
             if deadline is not None:
                 remaining = deadline - time.monotonic()
-                margin = deadline_margin(window, examined)
+                margin = deadline_margin(window, read)
                 # The wall cap never runs into the connector deadline's margin.
                 wall_cap = max(budget, min(wall_cap, remaining - margin))
                 if remaining < reserve + margin:
@@ -1754,6 +1758,7 @@ class TreeWalker:
                     self._unread_settings.extend((root, name) for name, _, root, _ in entries[index:])
                     break
             examined += 1
+            read += reserve > 0
             self._content_mcp = None
             with (
                 isolated(

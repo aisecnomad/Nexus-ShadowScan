@@ -898,7 +898,8 @@ an untrusted repository, set `--connector-timeout-seconds` or
 
 When the deadline does end a walk, the walk stops early enough to leave time for
 the work that follows it (re-export binding and finding emission): five percent
-of its window, or 5 ms per file it scanned, whichever is larger (the per-file
+of its window, or 5 ms per file it read (images and other files it never
+opens do not count), whichever is larger (the per-file
 share capped at a quarter of the window), and never less than 250 ms. The report then says how far it got (`connector deadline
 reached after N of M files`), and the findings are a subset. If emission itself
 runs into the deadline, the connector records `connector deadline reached during
