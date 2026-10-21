@@ -83,7 +83,7 @@ class _ScanBudget:
     def extend_cpu(self, cpu: float) -> None:
         """Give this budget back CPU time spent on work that was not its input's.
 
-        Unlike ``credit``, which returns time that was no budget's work to every
+        Unlike ``credit``, which returns CPU time that was no budget's work to every
         enclosing budget, this returns CPU time that was still this scan's work
         (``matcher.separate_budget``) to this budget only. The CPU window moves, so
         a later diagnostic still measures only the input's work, never past an
