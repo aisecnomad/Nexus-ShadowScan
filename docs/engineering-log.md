@@ -73,6 +73,20 @@ Counts and figures quoted in an entry are those of its date.
   one (`--fail-on high` passed a docs-linked `.claude/skills`): credentials
   are reported at both paths again. An exclude below an aliased directory
   now holds at the link path too.
+- Review of the integration branch found three more gaps at link paths.
+  A diff-scoped scan filtered entries by the link path alone, but Git
+  records a link as its target string: a change to the target, or a new
+  directory link, put no file read at the link path in the diff, so the
+  scan completed where main fails it on the link. Every entry read at a
+  link path is now kept in diff mode. An alias left unread (the
+  `MAX_ALIAS_FILES` cap, a target that changed, a failed `lstat`) no longer
+  recorded its settings files as unread, so the approval gate read tighter
+  than main reports it; their paths (`posture.settings_paths_at`) are noted
+  now. And import provenance applied the link path's project to the
+  target's real path, probing an unrelated ancestor of the real file for
+  local modules, where a decoy module hid a provider import at the link
+  path; a file outside its link project on disk is judged from its own
+  directory now. Four regression tests fail on the earlier walk.
 
 ### Release readiness review (October 21)
 
