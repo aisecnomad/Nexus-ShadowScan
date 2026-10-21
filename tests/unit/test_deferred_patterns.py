@@ -82,8 +82,8 @@ def test_compiling_is_credited_to_the_input_budget(
     real_compile = regex.compile
 
     def slow_compile(pattern: str, flags: int = 0) -> regex.Pattern[str]:
-        # Spend CPU and wall time well past the budget below, as a slow machine compiling many
-        # patterns for one input would.
+        # Spend CPU time well past the budget below, as a slow machine compiling many
+        # patterns for one input would; the wall cap leaves room for it.
         stop = time.thread_time() + 0.2
         while time.thread_time() < stop:
             pass
@@ -91,7 +91,7 @@ def test_compiling_is_credited_to_the_input_budget(
 
     monkeypatch.setattr("shadowscan.signatures.matcher.regex.compile", slow_compile)
     rx = DeferredPattern(r"\bacme_agent\b", regex.MULTILINE | regex.VERSION0)
-    with index.scan_budget(seconds=0.05, wall_seconds=0.1):
+    with index.scan_budget(seconds=0.05, wall_seconds=0.5):
         assert _search(rx, "import acme_agent", "test") is not None
         assert rx._compiled is not None
     # The input's own work is still bounded: the budget was not lifted, only given back.
@@ -111,15 +111,15 @@ def test_nested_budgets_are_credited_together(index: SignatureIndex) -> None:
             windows = [
                 (b.cpu_started, b.cpu_deadline, b.wall_started, b.wall_deadline) for b in (inner, outer)
             ]
-            inner.credit(0.5, 0.25)
+            inner.credit(0.5)
             for budget, (cpu_started, cpu_deadline, wall_started, wall_deadline) in zip(
                 (inner, outer), windows, strict=True
             ):
-                # The window moves: the deadline and the start of what counts as the input's work.
+                # The CPU window moves: the deadline and the start of what counts as the input's work.
                 assert budget.cpu_started == pytest.approx(cpu_started + 0.5)
                 assert budget.cpu_deadline == pytest.approx(cpu_deadline + 0.5)
-                assert budget.wall_started == pytest.approx(wall_started + 0.25)
-                assert budget.wall_deadline == pytest.approx(wall_deadline + 0.25)
+                # The wall deadline carries the walker's clamp to the connector deadline: it never moves.
+                assert (budget.wall_started, budget.wall_deadline) == (wall_started, wall_deadline)
 
 
 def test_deferred_patterns_survive_pickle_and_copy_uncompiled() -> None:

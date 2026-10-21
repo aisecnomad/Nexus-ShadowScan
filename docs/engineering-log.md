@@ -31,6 +31,12 @@ Counts and figures quoted in an entry are those of its date.
   utils.http`. The scope and policy helpers a local scan needs move to
   `utils.http_scope`; `tests/unit/test_startup_imports.py` pins that a local
   scan imports none of them.
+- Review follow-ups: crediting a first compile back moved the input's wall
+  deadline too, which carries the walker's clamp to the connector deadline;
+  only CPU time is credited now (`_ScanBudget.credit(cpu)`), and the wall
+  cap, four times the allowance, leaves room for a compile. The Python
+  source-semantics pass now compiles a deferred pattern (`ready`) before
+  timing its search, as the matcher does.
 
 ### Release readiness review (October 21)
 

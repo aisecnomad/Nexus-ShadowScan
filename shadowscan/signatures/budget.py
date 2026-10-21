@@ -66,17 +66,18 @@ class _ScanBudget:
             f"{self.cpu_seconds:.2f}s, wall {wall:.2f}s of {self.wall_seconds:.2f}s)"
         )
 
-    def credit(self, cpu: float, wall: float) -> None:
-        """Give back time spent on work that is not the input's, here and in every enclosing budget.
+    def credit(self, cpu: float) -> None:
+        """Give back CPU time spent on work that is not the input's, here and in every enclosing budget.
 
-        The window moves, so a later diagnostic still measures only the input's work.
+        The CPU window moves, so a later diagnostic still measures only the input's
+        work. The wall deadline never moves: it holds the walker's clamp to the
+        connector deadline, which nothing may pass, and the wall cap is four
+        times the CPU allowance, room for the few milliseconds a compile takes.
         """
         budget: _ScanBudget | None = self
         while budget is not None:
             budget.cpu_started += cpu
             budget.cpu_deadline += cpu
-            budget.wall_started += wall
-            budget.wall_deadline += wall
             budget = budget.outer
 
 
@@ -94,10 +95,11 @@ class DeferredPattern:
     so deferring the shipped packs skips no check that they can fail. Organization packs are not
     deferred: they are still compiled and checked when they load.
 
-    Eager compilation happened before any input's budget started, so the time spent here is
+    Eager compilation happened before any input's budget started, so the CPU time spent here is
     credited back to the active budget (``_ScanBudget.credit``) and the input that first needs a
-    pattern has the same allowance as before. ``pattern`` is the source and compiles nothing;
-    every other public attribute is the compiled pattern's, compiled with ``Signal.compile``'s flags.
+    pattern has the same allowance as before; its wall deadline does not move. ``pattern`` is the
+    source and compiles nothing; every other public attribute is the compiled pattern's, compiled
+    with ``Signal.compile``'s flags.
     """
 
     __slots__ = ("_compiled", "_flags", "pattern")
@@ -115,12 +117,12 @@ class DeferredPattern:
         """The compiled pattern, compiling it now if no earlier use did."""
         compiled = self._compiled
         if compiled is None:
-            cpu, wall = time.thread_time(), time.monotonic()
+            cpu = time.thread_time()
             # Concurrent first uses may both compile; the programs are identical and either is kept.
             compiled = self._compiled = regex.compile(self.pattern, self._flags)
             budget = _SCAN_BUDGET.get()
             if budget is not None:
-                budget.credit(time.thread_time() - cpu, time.monotonic() - wall)
+                budget.credit(time.thread_time() - cpu)
         return compiled
 
     def __getattr__(self, name: str) -> Any:
