@@ -12,6 +12,10 @@ explain operator migrations. Earlier per-change entries are preserved in the
   configuration left behind for benchmark paths that moved to the Nexus
   ShadowBench companion is removed.
 
+- Release-evidence attachment now finds the maintainer's draft release, which
+  `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the
+  checkout so it exercises the installed wheel.
+
 - Preserve notebook import binding when a multiline string contains magic-like
   command text; keep string-span protection isolated to each code cell, and do
   not let quotes in shell or magic lines open Python strings.

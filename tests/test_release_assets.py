@@ -51,6 +51,7 @@ def github(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "tag": COMMIT,
         "verify_error": False,
         "release": {"id": 7, "tag_name": "v0.1.3", "draft": True, "assets": []},
+        "extra_releases": [],
     }
 
     def gh(*args: str) -> str:
@@ -71,10 +72,13 @@ def github(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             return "verified"
         if args == ("api", f"repos/{REPOSITORY}/commits/refs/tags/v0.1.3"):
             return json.dumps({"sha": state["tag"]})
-        if args in [
-            ("api", f"repos/{REPOSITORY}/releases/tags/v0.1.3"),
-            ("api", f"repos/{REPOSITORY}/releases/7"),
-        ]:
+        if args == ("api", "--paginate", f"repos/{REPOSITORY}/releases?per_page=100", "--jq", ".[] | @json"):
+            # GitHub serves drafts only in this listing; releases/tags/{tag} finds published ones.
+            listed = [{"id": 3, "tag_name": "v0.1.2", "draft": False, "assets": []}, *state["extra_releases"]]
+            if state["release"]:
+                listed.insert(0, state["release"])
+            return "".join(json.dumps(entry) + "\n" for entry in listed)
+        if args == ("api", f"repos/{REPOSITORY}/releases/7"):
             return json.dumps(state["release"])
         if args[:2] == ("release", "upload"):
             assert args[2] == "v0.1.3"
@@ -128,12 +132,16 @@ def test_verification_is_default_and_upload_is_explicit(candidate, github):
     assert len(writes(github)) == 1
 
 
-@pytest.mark.parametrize("problem", ["wrong-tag", "missing-release", "immutable", "conflict", "signature"])
+@pytest.mark.parametrize(
+    "problem", ["wrong-tag", "missing-release", "ambiguous-release", "immutable", "conflict", "signature"]
+)
 def test_remote_failure_never_uploads(candidate, github, problem):
     if problem == "wrong-tag":
         github["tag"] = "b" * 40
     elif problem == "missing-release":
         github["release"] = {}
+    elif problem == "ambiguous-release":
+        github["extra_releases"] = [{"id": 8, "tag_name": "v0.1.3", "draft": True, "assets": []}]
     elif problem == "immutable":
         github["release"]["immutable"] = True
     elif problem == "conflict":
@@ -180,8 +188,9 @@ def test_attachment_readback_failure_is_not_success(candidate, github, monkeypat
 
     def corrupt(*args):
         result = original(*args)
-        if args == ("api", f"repos/{REPOSITORY}/releases/7"):
-            return '{"assets":[]}'
+        # Only the read-back after the upload loses the attachments.
+        if args == ("api", f"repos/{REPOSITORY}/releases/7") and writes(github):
+            return json.dumps({**github["release"], "assets": []})
         return result
 
     monkeypatch.setattr(assets, "_gh", corrupt)
