@@ -96,6 +96,7 @@ nav:
   - Getting started:
       - Installation: getting-started/install.md
       - Quick start: getting-started/quickstart.md
+      - Incomplete scans: getting-started/incomplete-scans.md
       - Configuration: getting-started/configuration.md
       - Command reference: reference/cli.md
       - Product guide: reference/product-guide.md

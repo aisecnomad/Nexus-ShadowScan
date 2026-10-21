@@ -11,7 +11,7 @@ import regex
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.signatures import SignatureIndex, load_signatures
-from shadowscan.signatures.loader import VALID_CATEGORIES, VALID_SIGNAL_TYPES
+from shadowscan.signatures.loader import VALID_CATEGORIES, VALID_SIGNAL_TYPES, Signal
 from shadowscan.signatures.matcher import language_for_path
 
 
@@ -34,6 +34,63 @@ def test_all_signatures_load_and_validate():
             # The stdlib view is computed on demand and never drives matching.
             assert len(sig.compiled) == len(sig.patterns)
             assert all(isinstance(rx, re.Pattern) for rx in sig.compiled)
+
+
+def test_generic_credential_patterns_preserve_match_spans_and_order(index):
+    signature = index.get("heuristic.inline-credential")
+    assert signature is not None
+    signal = next(signal for signal in signature.signals if signal.type == "secret")
+    rng = random.Random(284)
+    value = "Q7n2H8m4K9p5R3t6V1w0X4y8Z2a7B5c9"
+    prefixes = ["", "X" * 4096, "9.a.", "éA.", "漢A-", "X.123.456.", "a.a.a."]
+    prefixes += ["".join(rng.choices("aAZ_09.-é漢Kſİı ", k=rng.randrange(80))) for _ in range(300)]
+    for original, compiled in zip(signal.patterns[:5], signal.bounded_compiled[:5], strict=True):
+        old = regex.compile(original, regex.MULTILINE | regex.VERSION0)
+        for keyword in ("API_KEY", "ACCESS_TOKEN", "CLIENT_SECRET", "PASSWORD", "CREDENTIAL"):
+            for prefix in prefixes:
+                text = prefix + keyword + f' = "{value}"\n'
+                # A truncated first candidate must not hide a later assignment
+                # inside the remainder of a long dotted reference.
+                text += "A_API_KEY = " + "N" * 300 + f'.B_API_KEY = "{value}"\n'
+                expected = [(match.span(), match.group()) for match in old.finditer(text)]
+                assert [(match.span(), match.group()) for match in compiled.finditer(text)] == expected
+
+
+@pytest.mark.parametrize("pattern_number", range(5))
+@pytest.mark.parametrize("separator", ["-", "."])
+def test_generic_credential_patterns_bound_hostile_identifier_work(index, pattern_number, separator):
+    signature = index.get("heuristic.inline-credential")
+    assert signature is not None
+    signal = next(signal for signal in signature.signals if signal.type == "secret")
+    # A fixed one-megabyte input exceeded the old pattern's two-second engine
+    # budget. This is a work bound, not a fragile millisecond timing assertion.
+    hostile = ("a" + separator) * 500_000 + ("API", "ACCESS", "CLIENT", "PASSWORD", "CREDENTIAL")[
+        pattern_number
+    ]
+    assert list(signal.bounded_compiled[pattern_number].finditer(hostile, timeout=2.0)) == []
+
+
+@pytest.mark.parametrize("variation", ["lookbehind", "lookahead", "alternation", "lazy", "non-secret"])
+def test_assignment_optimization_leaves_other_signal_grammars_unchanged(index, variation):
+    signature = index.get("heuristic.inline-credential")
+    assert signature is not None
+    source = next(signal for signal in signature.signals if signal.type == "secret")
+    pattern = source.patterns[0]
+    if variation == "lookbehind":
+        pattern = pattern.replace(r"(?i)\b", r"(?i)(?<!IGNORE_)\b", 1)
+    elif variation == "lookahead":
+        pattern += r"(?!suffix)"
+    elif variation == "alternation":
+        pattern = pattern.replace("API[_-]?KEY", "(?:API[_-]?KEY|TOKEN)")
+    elif variation == "lazy":
+        pattern = pattern.replace("[A-Z0-9_.-]*", "[A-Z0-9_.-]*?")
+    signal = Signal(type="code" if variation == "non-secret" else "secret", patterns=[pattern])
+    signal.compile()
+    assert signal.bounded_compiled[0].pattern == pattern
+    text = 'A_API_KEY = "Q7n2H8m4K9p5R3t6V1w0X4y8Z2a7B5c9"\n'
+    original = regex.compile(pattern, regex.MULTILINE | regex.VERSION0)
+    expected = [(match.span(), match.group()) for match in original.finditer(text)]
+    assert [(match.span(), match.group()) for match in signal.bounded_compiled[0].finditer(text)] == expected
 
 
 def test_required_frameworks_present(index: SignatureIndex):

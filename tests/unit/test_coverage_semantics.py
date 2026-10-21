@@ -383,6 +383,34 @@ def test_an_asset_beside_agent_rules_is_an_ordinary_gap(tmp_path, run_connector)
     assert ctx.stats.incomplete and ctx.stats.coverage["blinding_gaps"] == 1
 
 
+# Real headers of the web and audio assets a framework's directory-wide glob
+# (framework.autogpt's **/autogpt_platform/**) selected in the AutoGPT checkout,
+# where each was a blinding "undecodable" gap and the scan exited 3.
+MEDIA_ASSETS = {
+    "public/avatar.webp": b"RIFF\x0a\x01\x00\x00WEBPVP8 \x00\x00\x00\x00",
+    "public/hero.avif": b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00",
+    "public/favicon.ico": b"\x00\x00\x01\x00\x03\x00\x10\x10\x00\x00",
+    "public/notification.mp3": b"ID3\x04\x00\x00\x00\x00\x00#TSSE\x00\x00",
+    "eval_data/clip.ogg": b"OggS\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00",
+    "public/font.woff2": b"wOF2\x00\x01\x00\x00\x00\x00\x00\x00",
+}
+
+
+def test_media_assets_a_directory_wide_glob_selects_are_skipped_without_a_gap(tmp_path, run_connector):
+    _tree(tmp_path, {f"autogpt_platform/{rel}": data + b"\x00" * 64 for rel, data in MEDIA_ASSETS.items()})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert not (ctx.stats.coverage or {}).get("details")
+
+
+def test_unrecognised_binary_a_directory_wide_glob_selects_stays_a_gap(tmp_path, run_connector):
+    # Only a recognised artifact header is skipped: other undecodable bytes may hide a definition.
+    _tree(tmp_path, {"autogpt_platform/public/blob.webp": b"\x01\x02\x00\x03" * 64})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+    assert [gap["path"] for gap in ctx.stats.coverage["details"]] == ["autogpt_platform/public/blob.webp"]
+
+
 @pytest.mark.parametrize(
     ("rel", "target"),
     [

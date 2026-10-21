@@ -8,6 +8,10 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## Unreleased
 
+- Preserve notebook import binding when a multiline string contains magic-like
+  command text; keep string-span protection isolated to each code cell, and do
+  not let quotes in shell or magic lines open Python strings.
+
 certifi 2026.10.19 removes the `emSign ECC Root CA - G3` root, whose revoked
 intermediates had compromised keys (GHSA-6q48-6c7w-9gw2), from every lock.
 
@@ -47,6 +51,11 @@ longer flag MCP tool poisoning. Dispatch proof caching remains bounded and
 respects import shadowing; scan summaries share incomplete-reason aggregation. Report readers
 accept a newer scanner's slug-shaped coverage-gap reason instead of refusing
 the report; forged values stay refused and the write path stays strict.
+Automatic filesystem deadlines can reach the existing 30-minute ceiling;
+media recognition, notebook automagic handling and tool-cache exclusions reduce
+avoidable gaps while retaining coverage accounting and analysis limits.
+Credential matching avoids repeated work inside long failed identifiers while
+preserving long valid assignments and existing quotas.
 
 ## 0.1.2 — 2026-10-08
 

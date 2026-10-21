@@ -185,13 +185,33 @@ def test_read_text_binary_error_names_neither_file_nor_content(tmp_path):
         b"\xff\xd8\xff\xe0",
         b"GIF89a",
         b"%PDF-1.7",
+        b"OggS\x00\x02",
+        b"ID3\x04\x00",
+        b"fLaC\x00\x00\x00\x22",
+        b"\x1a\x45\xdf\xa3\x01",
+        b"\x00\x00\x01\x00\x03\x00",
+        b"\x00\x00\x02\x00\x01\x00",
+        b"II*\x00",
+        b"MM\x00*",
+        b"8BPS\x00\x01",
+        b"wOFF\x00\x01\x00\x00",
+        b"wOF2\x00\x01\x00\x00",
+        b"OTTO\x00\x0b",
+        b"\x00\x01\x00\x00\x00\x0f",
+        b"ttcf\x00\x01",
+        b"RIFF\x1a\x01\x00\x00WEBPVP8 ",
+        b"RIFF\x1a\x01\x00\x00WAVEfmt ",
+        b"RIFF\x1a\x01\x00\x00AVI LIST",
+        b"\x00\x00\x00\x1cftypavif",
+        b"\x00\x00\x00\x20ftypisom",
     ],
 )
-def test_read_text_skips_extensionless_compiled_artifacts_quietly(tmp_path, header):
-    (tmp_path / "tool").write_bytes(header + b"\x00" * 64)
+@pytest.mark.parametrize("name", ["tool", "tool.py", "tool.js", "AGENTS.md"])
+def test_binary_headers_skip_extensionless_artifacts_but_not_source(tmp_path, header, name):
+    (tmp_path / name).write_bytes(header + b"\x00" * 64)
     errors: list[str] = []
-    assert read_text(tmp_path / "tool", 1000, errors) is None
-    assert errors == []
+    assert read_text(tmp_path / name, 1000, errors) is None
+    assert errors == ([] if name == "tool" else [BINARY_CONTENT_ERROR])
 
 
 def test_read_text_extension_or_unknown_header_defeats_the_quiet_skip(tmp_path):
@@ -199,7 +219,10 @@ def test_read_text_extension_or_unknown_header_defeats_the_quiet_skip(tmp_path):
     # an unknown header proves nothing: both stay coverage gaps.
     (tmp_path / "tool.sh").write_bytes(b"\x7fELF" + b"\x00" * 64)
     (tmp_path / "blob").write_bytes(b"\x01\x02\x00\x03" * 16)
-    for name in ("tool.sh", "blob"):
+    # A RIFF container is recognised only by a known form at offset 8.
+    (tmp_path / "riff").write_bytes(b"RIFF\x1a\x01\x00\x00JUNK" + b"\x00" * 64)
+    (tmp_path / "tool.webp").write_bytes(b"\x7fELF" + b"\x00" * 64)
+    for name in ("tool.sh", "blob", "riff"):
         errors: list[str] = []
         assert read_text(tmp_path / name, 1000, errors) is None
         assert errors == [BINARY_CONTENT_ERROR], name
