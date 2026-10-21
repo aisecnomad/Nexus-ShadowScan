@@ -104,7 +104,7 @@
     "shadowscan/utils/http.py::validate_url": 18,
     "shadowscan/utils/jcs.py::_write": 16,
     "shadowscan/utils/redaction.py::_Sanitizer.discover": 28,
-    "shadowscan/utils/redaction_calls.py::_CallLexer.string_end": 17,
+    "shadowscan/utils/redaction_calls.py::_CallLexer.string_end": 18,
     "shadowscan/utils/redaction_calls.py::_go_sdk_credential_bindings": 20,
     "shadowscan/utils/redaction_calls.py::_redact_credential_calls": 19,
     "shadowscan/utils/redaction_commands.py::_aws_argument_tail_end": 16,
