@@ -8,6 +8,12 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## 0.1.3 — 2026-11-20
 
+- Prose and comments that name a credential-typed call without closing it
+  (`ClientSession(` in Markdown) no longer withhold a whole file's excerpts:
+  such a call is read to its end within a per-text work budget, and the
+  credential-call lexer crosses inert text in runs, 1.66x faster with
+  identical output.
+
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the
   checkout so it exercises the installed wheel.

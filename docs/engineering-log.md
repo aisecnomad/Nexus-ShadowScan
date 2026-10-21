@@ -13,6 +13,25 @@ Counts and figures quoted in an entry are those of its date.
 
 ## 0.1.3 — 2026-11-20
 
+### Unclosed credential calls and a faster call lexer (October 21)
+
+- The 8,192-step call bound could not tell an argument list that never
+  closes from one that is merely long. Prose and comments that name a
+  credential-typed call without closing it reached the bound, and every
+  excerpt of the file was withheld (a sanitization-limit gap). A call past
+  the bound that would fail closed is now read again to its end; all such
+  reads in one text share `_CALL_EXTENSION_PER_CHAR` work units per
+  character, so they stay linear in its length, and a call past that budget
+  still fails closed.
+- The lexer crosses runs of characters that cannot open or close a string,
+  comment or bracket in one step, charged their length. A run is matched no
+  further than the step after the bound and the shared work bound: an
+  earlier draft let a run cross a whole text, so 200 unclosed calls over a
+  960 KB tail each scanned to its end (quadratic), which
+  `test_reading_past_the_step_bound_stays_linear` caught. Over 4,500 corpus
+  and adversarial texts the output and exceptions are identical to the
+  per-character lexer, in 17.9 s against 29.7 s.
+
 ### Release readiness review (October 21)
 
 - `tools/release/assets.py` looked up the release with `releases/tags/{tag}`,
