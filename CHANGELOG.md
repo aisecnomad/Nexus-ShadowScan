@@ -72,6 +72,7 @@ explain operator migrations. Earlier per-change entries are preserved in the
   read data such as supported lockfiles), not only with the entry count, and
   the walk stops early enough to leave time for binding and finding emission.
   Set an explicit deadline for untrusted repositories.
+
 - An in-tree symbolic link that stands for agent configuration
   (`.agents/skills -> ../.claude/skills`, a lowercase `agents.md` linked to a
   README) is read at its link path instead of failing the scan: the link is

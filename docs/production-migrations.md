@@ -31,6 +31,8 @@ full dated log.
   walk within its bounds, and is never weaker than the byte check it
   refines.
 
+## October 20 unparsed-input triage (Unreleased)
+
 - A Continue `mcpServers` block reference (`{uses, with?, override?}`) is now
   an `mcp-server` finding instead of an input defect. The record gains
   `block_reference` (sanitized) and `launch_unidentified: true`; its `override`
