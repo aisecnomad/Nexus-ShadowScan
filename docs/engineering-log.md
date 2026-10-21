@@ -51,6 +51,17 @@ Counts and figures quoted in an entry are those of its date.
   completed. The directory rule and the content rule now explain only parse
   failures (`_discounted_gap(defect="parse")`, a registry scoped by kind),
   and the rendering is analyzed as above.
+- A second review found that a placeholder or tag span could cross string
+  delimiters and swallow structure: a root `package.json` whose
+  `dependencies` (with a JSON5 trailing comma) sat between `"{%` and `%}"`
+  on one line rendered as valid JSON without them, so a scan main reports
+  incomplete completed with no findings. A placeholder now holds a Jinja
+  expression without quotes, separators, brackets, `=`, `:`, `;` or `#`, and
+  a tag must be a whole line with no `%}` before its end. The same seven
+  corpus files are recognized as before. The directory rule also budgeted
+  any parse failure under `${env}/`, so a module of newer Python syntax
+  there completed; it now needs Jinja syntax in the directory name and in
+  the file's own text (`TreeWalker.note_template_syntax`).
 
 ### Release readiness review (October 21)
 

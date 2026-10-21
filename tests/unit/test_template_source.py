@@ -148,3 +148,54 @@ def test_a_templated_module_is_bound_from_its_rendering(tmp_path, run_connector)
     assert any(e.location == "templates/crew/crew.py:10" for f in agents for e in f.evidence), [
         (f.kind, f.title) for f in findings
     ]
+
+
+# ------------------------------------------------- spans that cross structure
+
+
+@pytest.mark.parametrize(
+    ("rel", "text"),
+    [
+        # A tag span from one string to another swallowed the dependencies (and a JSON5 comma).
+        ("package.json", '{"name": "{%", "dependencies": {"openai": "^4",}, "x": "%}"}'),
+        ("package.json", '{"name": "{{", "deps": ["openai",], "x": "}}"}'),
+        ("package.json", '{"name": "{% raw %}", "dependencies": {"openai": "^4",}, "x": "{% endraw %}"}'),
+        # So did a placeholder span.
+        ("package.json", '{"name": "{{ a", "dependencies": {"openai": "^4",}, "x": "b }}"}'),
+        ("pyproject.toml", '[project]\nname = "{{ a", dependencies = ["openai",], x = "b }}"\n'),
+        # A placeholder may not hide a statement.
+        ("app.py", "x = {{ 0; import openai }}\ndef f(:\n"),
+        # A tag must be a line of its own, with no other tag on it.
+        ("app.py", "{% if a %}import openai{% endif %}\ndef f(:\n"),
+    ],
+)
+def test_a_span_across_strings_or_structure_is_not_a_template(rel, text):
+    assert not unrendered_template(rel, text)
+
+
+def test_a_manifest_hidden_inside_a_tag_span_still_fails(tmp_path, run_connector):
+    manifest = '{"name": "{%", "dependencies": {"openai": "^4",}, "x": "%}"}\n'
+    _project(tmp_path, {"package.json": manifest})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("directory", ["deploy/${env}", "{{cookiecutter.slug}}"])
+def test_broken_source_without_template_syntax_under_a_template_directory_still_fails(
+    tmp_path, run_connector, directory
+):
+    # Newer Python syntax is broken source, not a template, wherever it lies.
+    _project(
+        tmp_path,
+        {f"{directory}/app.py": "type Point = tuple[float, float]\ndef f[T](x: T) -> T: return x\nx = (\n"},
+    )
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+
+
+def test_a_template_under_a_jinja_directory_is_still_budgeted(tmp_path, run_connector):
+    pyproject = '[project]\nname = "{{ cookiecutter.package_name }}"\n{%- if cookiecutter.core %}\nx = [\n{%- endif %}\n'
+    _project(tmp_path, {"{{cookiecutter.package_name}}/pyproject.toml": pyproject})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
+    assert _gaps(ctx) == [("{{cookiecutter.package_name}}/pyproject.toml", "partial", "unparsed-input")]
