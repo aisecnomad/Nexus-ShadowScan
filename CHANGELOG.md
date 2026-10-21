@@ -71,6 +71,15 @@ explain operator migrations. Earlier per-change entries are preserved in the
   read data such as supported lockfiles), not only with the entry count, and
   the walk stops early enough to leave time for binding and finding emission.
   Set an explicit deadline for untrusted repositories.
+- An in-tree symbolic link that stands for agent configuration
+  (`.agents/skills -> ../.claude/skills`, a lowercase `agents.md` linked to a
+  README) is read at its link path instead of failing the scan: the link is
+  never followed; its target is opened by its real path below the root and
+  reported under the link path. A link the walk does not follow is described
+  by what its target was found to be. Links out of the tree, to excluded
+  targets, inside their own target, or naming a file but pointing at a
+  directory still fail closed. A file read at its link path is judged by the
+  link's own name, and a credential in it is reported at both paths.
 
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the

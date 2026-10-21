@@ -19,12 +19,12 @@ import re
 import stat
 import time
 import tomllib
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Generator, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, BinaryIO, cast
 
 from shadowscan.connectors.base import ConnectorContext, ConnectorError, incomplete_reason
 from shadowscan.connectors.code.lockfiles import LOCKFILE_NAMES
@@ -238,6 +238,40 @@ class _WalkBudget:
             raise _WalkLimitError(f"max_entries ({self.maximum}) reached during directory enumeration")
 
 
+# Returned by an entry check when the walk must stop (``_file_entry``).
+_STOP = object()
+# Files one root's walk reads a second time at link paths (``_alias_entries``). Past it a
+# link that stands for agent configuration stays blinding, as it was before such links
+# were read: many links to one large directory cannot multiply the walk.
+MAX_ALIAS_FILES = 5_000
+
+
+def _object_identity(path: Path) -> tuple[int, int] | None:
+    """The device and inode of ``path``, a resolved link target, without following a final link."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return None
+    return info.st_dev, info.st_ino
+
+
+def _same_object(real: Path, target: Path, identity: tuple[int, int]) -> bool:
+    """Whether ``real`` (a link target by its path below the root) is still the object the link named.
+
+    Rechecked before the target is listed: a component swapped for a link since
+    the walk classified it would list names outside the tree.
+    """
+    try:
+        info = os.lstat(real)
+    except OSError:
+        return False
+    return (
+        not stat.S_ISLNK(info.st_mode)
+        and (info.st_dev, info.st_ino) == identity
+        and os.path.realpath(real) == str(target)
+    )
+
+
 @dataclass
 class _WalkCounters:
     """What one directory walk has examined so far, shared with its link checks."""
@@ -253,6 +287,11 @@ class _WalkCounters:
     project_roots: dict[str, str] = field(default_factory=dict)
     budget: _WalkBudget = field(default_factory=_WalkBudget)
     link_gaps: int = 0  # links whose target the walk does not scan (each a coverage gap)
+    # In-tree links that stand for agent configuration, read at the link path after the walk
+    # (``_alias_entries``): (link path, target below the root, the target's device and inode).
+    aliases: list[tuple[str, Path, tuple[int, int]]] = field(default_factory=list)
+    in_alias: bool = False  # the walk is reading an alias: a link below it is not read again
+    alias_files: int = 0  # files read at link paths (``MAX_ALIAS_FILES``)
 
 
 def _project_root(
@@ -726,6 +765,26 @@ def _is_coding_agent_doc(name: str) -> bool:
     return name.lower() in _CODING_AGENT_DOC_NAMES
 
 
+def _echo_name(name: str) -> str:
+    """``_report_name`` with control characters escaped, for a path a diagnostic quotes.
+
+    A hostile name could otherwise break a report line or a terminal.
+    """
+    name = _report_name(name)
+    if name.isprintable():
+        return name
+    return "".join(c if c.isprintable() else repr(c)[1:-1] for c in name)
+
+
+def _link_lookup_failed(link: Path) -> bool:
+    """Whether looking up the target of ``link`` fails (``EACCES``, say) rather than resolving outside."""
+    try:
+        link.resolve(strict=True)
+    except (OSError, ValueError, RuntimeError):
+        return True
+    return False
+
+
 def _resolved_link_target(link: Path, resolved_root: Path) -> Path | None:
     """Resolve only to classify a link; never open it through the link path."""
     try:
@@ -938,6 +997,10 @@ class TreeWalker:
         # Files of the current root's walk -> the project root it assigned them,
         # which decides whether the ci profile declares a gap there (``_declared_omission``).
         self._entry_projects: dict[str, str] = {}
+        # Files the current root's walk reads at a link path -> their real path (``_alias_entry``),
+        # and the path first charged a partial gap for each real file (``_ledger_gap``).
+        self._alias_real: dict[str, str] = {}
+        self._charged_gaps: dict[tuple[str, str, bool], str] = {}
         # Project roots of the current root's walk that are not deployable projects (a template's,
         # or one whose manifests do not parse) -> the root the ci profile judges paths in them by.
         self._declaring_roots: dict[str, str] = {}
@@ -1224,6 +1287,69 @@ class TreeWalker:
             return True
         return False
 
+    def _file_scanned_at_real_path(self, target: Path, root: Path) -> bool:
+        """Whether ``target``, a resolved link target below ``root``, is a regular file the walk reads there.
+
+        Every directory above it must be one the walk enters, and the file must
+        be neither excluded nor outside the selected paths nor a name the walk
+        never reads. ``_link_target_is_scanned`` and the link diagnostic share
+        this test, so a message never claims coverage the walk did not give.
+        """
+        parts = target.relative_to(root).parts
+        for depth, name in enumerate(parts[:-1], start=1):
+            if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
+                return False
+        target_rel = PurePosixPath(*parts).as_posix()
+        return (
+            target.is_file()
+            and not self._excluded_file(target_rel)
+            and self.included(target_rel)
+            and not _never_read_by_name(target.name)
+        )
+
+    def _directory_scanned_at_real_path(self, target: Path, root: Path) -> bool:
+        """Whether ``target``, a directory below ``root``, is one the walk enters and selects.
+
+        Every directory on its path must be one the walk enters (not excluded,
+        by default or by ``exclude``) and it must lie within the selected
+        paths. ``_alias_of_scanned_directory`` builds on this test.
+        """
+        if not target.is_dir():
+            return False
+        parts = target.relative_to(root).parts
+        for depth, name in enumerate(parts, start=1):
+            if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
+                return False
+        return self.included(PurePosixPath(*parts).as_posix() if parts else "")
+
+    def _unscanned_link_message(self, rel: str, link: Path, target: Path | None, root: Path) -> str:
+        """The diagnostic of a link the walk does not follow, stating what its target was found to be.
+
+        ``target`` is the link's resolved target when it lies below ``root``
+        (``_resolved_link_target``), else None. Only such an in-tree target is
+        named, relative to the root and escaped (``_echo_name``): a path
+        outside the tree is never echoed, since it would disclose the
+        operator's filesystem or carry hostile text. A lookup that fails for
+        any reason but absence or a loop (``EACCES``) is reported as
+        unresolvable, never as outside the tree. Whether the target is walked
+        at its own path uses the very tests the walk applies.
+        """
+        prefix = f"code.filesystem: skipped symbolic link {rel}"
+        if target is None:
+            kind = _link_target_kind(link)
+            if kind == "missing":
+                return f"{prefix} whose target does not exist or forms a link loop"
+            if kind == "other" and _link_lookup_failed(link):
+                return f"{prefix} whose target cannot be resolved"
+            return f"{prefix} whose target is outside the scanned tree"
+        shown = _echo_name(target.relative_to(root).as_posix() or ".")
+        scanned = self._file_scanned_at_real_path(target, root) or self._directory_scanned_at_real_path(
+            target, root
+        )
+        if scanned:
+            return f"{prefix} to {shown}, which is walked at its own path but not assessed as the link path"
+        return f"{prefix} to {shown}, which the walk does not scan (excluded or outside the selected paths)"
+
     def _link_target_is_scanned(
         self, rel: str, target: Path, root: Path, walk: _WalkCounters | None = None
     ) -> bool:
@@ -1255,18 +1381,9 @@ class TreeWalker:
             # The walker would skip this name silently even as a regular
             # file, whatever it points at: the alias hides nothing.
             return True
-        parts = relative.parts
-        for depth, name in enumerate(parts[:-1], start=1):
-            if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
-                return False
         # An include walk never reaches a target outside the selected paths,
         # however equivalent the alias is.
-        if (
-            not target.is_file()
-            or self._excluded_file(target_rel)
-            or not self.included(target_rel)
-            or _never_read_by_name(target.name)
-        ):
+        if not self._file_scanned_at_real_path(target, root):
             return False
         # Coding-agent instruction aliases (CLAUDE.md -> AGENTS.md) are the
         # same document family. The real file is scanned and the alias hides no
@@ -1444,47 +1561,195 @@ class TreeWalker:
                 self._note_declaring_root(Path(dirpath), rel_dir, proj, filenames)
                 proj = rel_dir
             for fn in sorted(filenames):
-                walk.budget.check()
-                _check_enumeration_time(walk)
                 shown = _report_name(fn)
                 rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
-                if self._excluded_file(rel) or not self.included(rel):
-                    continue
-                self._entry_projects[rel] = proj
-                p = Path(dirpath) / fn
-                if fn.lower() in LOCKFILE_NAMES:
-                    self._lockfile_governed[rel] = self._lockfile_manifest_beside(rel_dir, fn, filenames)
-                try:
-                    if p.is_symlink():
-                        gaps = walk.link_gaps
-                        if not self._skip_link(root, resolved_root, rel, p, walk):
-                            return
-                        if walk.link_gaps != gaps:
-                            self._unread_settings.append((proj, rel))
-                        continue
-                    info = p.stat()
-                except OSError as exc:
-                    if exc.errno in _IGNORED_STAT_ERRNOS:
-                        continue
-                    self.ctx.error(f"code.filesystem: could not inspect {rel}", reason="unscanned-input")
-                    continue
-                if not stat.S_ISREG(info.st_mode):
-                    if self._analyzed_name(rel, fn):
-                        self._skip_non_regular(walk, root, rel, _special_file_kind(info.st_mode))
-                        self._unread_settings.append((proj, rel))
-                    continue
-                if info.st_size > self.size_limit(fn) and self._skipped_oversize(rel, fn, info.st_size):
-                    if posture_client(rel) is not None:
-                        # Skipped without a coverage gap (a fixture, or a name in
-                        # oversize_skip_globs), but an unread settings file could still
-                        # loosen the approval gate its readable siblings set.
-                        self._unread_settings.append((proj, rel))
-                    continue
-                if _never_read_by_name(fn):
-                    continue
-                if not self._count_entry(walk, root):
+                entry = self._file_entry(root, resolved_root, rel, Path(dirpath) / fn, proj, filenames, walk)
+                if entry is _STOP:
                     return
-                yield rel, p, proj, info.st_size
+                if entry is not None:
+                    yield cast(tuple[str, Path, str, int], entry)
+        yield from self._alias_entries(root, resolved_root, walk, roots)
+
+    def _file_entry(
+        self,
+        root: Path,
+        resolved_root: Path,
+        rel: str,
+        p: Path,
+        proj: str,
+        filenames: list[str],
+        walk: _WalkCounters,
+    ) -> tuple[str, Path, str, int] | object | None:
+        """The entry to analyze for the file listed at ``rel`` (on disk at ``p``); None skips it.
+
+        ``_STOP`` means the walk must stop: ``max_files`` or the deadline was reached.
+        """
+        walk.budget.check()
+        _check_enumeration_time(walk)
+        fn = p.name
+        rel_dir = PurePosixPath(rel).parent.as_posix()
+        if self._excluded_file(rel) or not self.included(rel):
+            return None
+        self._entry_projects[rel] = proj
+        if fn.lower() in LOCKFILE_NAMES:
+            self._lockfile_governed[rel] = self._lockfile_manifest_beside(rel_dir, fn, filenames)
+        try:
+            if p.is_symlink():
+                gaps = walk.link_gaps
+                if not self._skip_link(root, resolved_root, rel, p, walk):
+                    return _STOP
+                if walk.link_gaps != gaps:
+                    self._unread_settings.append((proj, rel))
+                return None
+            info = p.stat()
+        except OSError as exc:
+            if exc.errno not in _IGNORED_STAT_ERRNOS:
+                self.ctx.error(f"code.filesystem: could not inspect {rel}", reason="unscanned-input")
+            return None
+        return self._regular_entry(root, rel, p, proj, info, walk)
+
+    def _regular_entry(
+        self, root: Path, rel: str, p: Path, proj: str, info: os.stat_result, walk: _WalkCounters
+    ) -> tuple[str, Path, str, int] | object | None:
+        """The entry to analyze for ``rel``, found at ``p`` with ``info``; None to skip it, or ``_STOP``."""
+        fn = PurePosixPath(rel).name
+        if not stat.S_ISREG(info.st_mode):
+            if self._analyzed_name(rel, fn):
+                self._skip_non_regular(walk, root, rel, _special_file_kind(info.st_mode))
+                self._unread_settings.append((proj, rel))
+            return None
+        if info.st_size > self.size_limit(fn) and self._skipped_oversize(rel, fn, info.st_size):
+            if posture_client(rel) is not None:
+                # Skipped without a coverage gap (a fixture, or a name in
+                # oversize_skip_globs), but an unread settings file could still
+                # loosen the approval gate its readable siblings set.
+                self._unread_settings.append((proj, rel))
+            return None
+        if _never_read_by_name(fn):
+            return None
+        if not self._count_entry(walk, root):
+            return _STOP
+        return rel, p, proj, info.st_size
+
+    def _alias_entries(
+        self, root: Path, resolved_root: Path, walk: _WalkCounters, roots: list[str]
+    ) -> Iterator[tuple[str, Path, str, int]]:
+        """Yield the files of in-tree links that stand for agent configuration, each at its link path.
+
+        AutoGPT links ``.agents/skills`` to ``../.claude/skills`` and
+        ``docs/.../agents.md`` to a README: their targets are walked at their
+        own paths, but a client reads them at the link path, where they are
+        agent configuration. The link is never followed. Its target, resolved
+        below the root (``_resolved_link_target``), is read by its real path,
+        each component opened without following a link, as any file is, and
+        analyzed under the link path; its findings name that path, and its
+        project is the one the link path lies in (``_project_root``), as a
+        regular file there would be assigned. A file link below such an alias
+        is read at its own link path too; a directory link below one is judged
+        as a link, never read again (``in_alias``), so a loop cannot multiply
+        the walk. Every file read counts toward ``max_files`` and the walk's
+        entry budget, as at its own path, and at most ``MAX_ALIAS_FILES`` are
+        read at link paths: past that, and for a target that is no longer the
+        object the link named, the link stays blinding.
+        """
+        walk.in_alias = True
+        try:
+            for rel, target, identity in walk.aliases:
+                real = root / target.relative_to(resolved_root)
+                if walk.alias_files >= MAX_ALIAS_FILES:
+                    self._unread_alias_gap(rel, f"{MAX_ALIAS_FILES:,} files already read at link paths")
+                    continue
+                if not _same_object(real, target, identity):
+                    self._unread_alias_gap(rel, "its target changed while the walk read the tree")
+                    continue
+                # The walk's stack of project roots holds only its last branch by now.
+                proj = _project_root(root, rel, walk.project_roots, budget=walk.budget)
+                if not real.is_dir():
+                    try:
+                        info = real.lstat()
+                    except OSError:
+                        self._gap(rel, f"code.filesystem: could not inspect {rel}", reason="unresolved-link")
+                        continue
+                    self._entry_projects[rel] = proj
+                    entry = self._regular_entry(root, rel, real, proj, info, walk)
+                    if entry is _STOP:
+                        return
+                    if entry is not None:
+                        yield self._alias_entry(root, cast(tuple[str, Path, str, int], entry), walk)
+                    continue
+                if not (yield from self._alias_directory_entries(root, resolved_root, rel, real, proj, walk)):
+                    return
+        finally:
+            walk.in_alias = False
+
+    def _alias_directory_entries(
+        self, root: Path, resolved_root: Path, rel: str, real: Path, proj: str, walk: _WalkCounters
+    ) -> Generator[tuple[str, Path, str, int], None, bool]:
+        """Yield the files below directory ``real`` at the link path ``rel``; False to stop the walk.
+
+        What an exclude leaves out at its real path stays out at the link path
+        too: the operator excluded that content, wherever a link shows it.
+        """
+
+        def walk_error(exc: OSError) -> None:
+            self._gap(
+                rel, f"code.filesystem: could not enumerate a directory under {rel}", reason="unresolved-link"
+            )
+
+        roots = [proj]
+        for dirpath, dirnames, filenames in _walk_directories(real, walk_error, budget=walk.budget):
+            below = os.path.relpath(dirpath, real).replace(os.sep, "/")
+            rel_dir = rel if below == "." else f"{rel}/{_report_name(below)}"
+            real_dir = _report_name(os.path.relpath(dirpath, root).replace(os.sep, "/"))
+            kept = self._walked_directories(root, resolved_root, dirpath, rel_dir, dirnames, walk)
+            if kept is None:
+                return False
+            dirnames[:] = [name for name in kept if not self._excluded(f"{real_dir}/{name}", name)]
+            # As the walk assigns projects (_iter_entries): the alias directory itself may be one.
+            here = _nearest_root(rel_dir, roots) if rel_dir != rel else proj
+            included_names = (name for name in filenames if self.included(f"{rel_dir}/{name}"))
+            if _marks_project(Path(dirpath), included_names):
+                roots.append(rel_dir)
+                self._note_declaring_root(Path(dirpath), rel_dir, here, filenames)
+                here = rel_dir
+            for fn in sorted(filenames):
+                if walk.alias_files >= MAX_ALIAS_FILES:
+                    self._unread_alias_gap(rel, f"{MAX_ALIAS_FILES:,} files already read at link paths")
+                    return True
+                if self._excluded_file(f"{real_dir}/{_report_name(fn)}"):
+                    continue
+                entry = self._file_entry(
+                    root,
+                    resolved_root,
+                    f"{rel_dir}/{_report_name(fn)}",
+                    Path(dirpath) / fn,
+                    here,
+                    filenames,
+                    walk,
+                )
+                if entry is _STOP:
+                    return False
+                if entry is not None:
+                    yield self._alias_entry(root, cast(tuple[str, Path, str, int], entry), walk)
+        return True
+
+    def _alias_entry(
+        self, root: Path, entry: tuple[str, Path, str, int], walk: _WalkCounters
+    ) -> tuple[str, Path, str, int]:
+        """Count an entry read at a link path and remember the real path it is read from."""
+        walk.alias_files += 1
+        self._alias_real[entry[0]] = _report_name(os.path.relpath(entry[1], root).replace(os.sep, "/"))
+        return entry
+
+    def _unread_alias_gap(self, rel: str, why: str) -> None:
+        """Record a link that stands for agent configuration and is not read at its link path."""
+        self._ledger_gap(
+            rel,
+            f"code.filesystem: skipped symbolic link {rel}: not read at the link path, {why}; at the link "
+            "path its files are agent configuration; coverage incomplete",
+            blinding=True,
+            reason="unresolved-link",
+        )
 
     def _walked_directories(
         self,
@@ -1611,9 +1876,20 @@ class TreeWalker:
             # Never followed; scoped like any other lockfile that was not inventoried.
             self.lockfile_gap(rel, "symbolic link is not followed")
             return True
-        message = f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
+        message = self._unscanned_link_message(rel, link, target, resolved_root)
         alias = target is not None and self._alias_of_scanned_directory(rel, target, resolved_root)
         agent = self._agent_configuration_link(rel, link, target if alias else None)
+        # Below an alias only a file link is read at its link path: a directory link could loop.
+        if (
+            agent
+            and target is not None
+            and not (walk.in_alias and target.is_dir())
+            and self._readable_alias(rel, link, target, resolved_root, alias)
+            and (identity := _object_identity(target)) is not None
+        ):
+            # Read at the link path once the walk ends (_alias_entries): no gap.
+            walk.aliases.append((rel, target, identity))
+            return True
         if not agent and self._walk_declared(root, rel, walk):
             # One representative note per root, like the gap below, and it
             # leaves that gap's own representative slot for an undeclared link.
@@ -1738,6 +2014,7 @@ class TreeWalker:
             self._unread_settings = []
             self._lockfile_governed = {}
             self._entry_projects = {}
+            self._alias_real, self._charged_gaps = {}, {}
             self._declaring_roots = {}
             entries.extend(self._iter_entries(scan.root))
         except _WalkLimitError as exc:
@@ -1988,16 +2265,25 @@ class TreeWalker:
         Every gap of this connector reaches the ledger here, so each is weighed
         by ``_gap_relevance`` rather than by ``CoverageGap.relevance``'s own
         segment list, which knows neither ``include_tests`` nor test file names.
+
+        A file read both at its real path and at a link path (``_alias_entries``)
+        is one file of the tree: a partial gap of the same weight at the other
+        path is reported but not charged a second time.
         """
+        relevance = self._gap_relevance(rel)
+        entries = 1
+        if not blinding:
+            key = (self._alias_real.get(rel, rel), relevance, full_weight)
+            entries = int(self._charged_gaps.setdefault(key, rel) == rel)
         self.ctx.coverage_gap(
             message,
             path=rel,
-            entries=1,
+            entries=entries,
             blinding=blinding,
             quiet=quiet,
             full_weight=full_weight,
             reason=reason,
-            relevance=self._gap_relevance(rel),
+            relevance=relevance,
         )
 
     def _gap_relevance(self, rel: str) -> str:
@@ -2077,7 +2363,12 @@ class TreeWalker:
         """
         if agent:
             noted, blinding = self._configuration_link_notes, True
-            message = f"{message}; it is named like agent configuration; coverage incomplete"
+            where = (
+                "at the link path its files are agent configuration (named like agent configuration)"
+                if alias
+                else "it is named like agent configuration"
+            )
+            message = f"{message}; {where}; coverage incomplete"
         elif _link_names_one_file(link):
             noted, blinding = self._symlink_warnings, False
             message = f"{message}; coverage gap"
@@ -2303,6 +2594,25 @@ class TreeWalker:
             incomplete=False,
         )
 
+    def _readable_alias(self, rel: str, link: Path, target: Path, resolved_root: Path, alias: bool) -> bool:
+        """Whether a link's in-tree ``target`` is read at the link path (``_alias_entries``).
+
+        It is when the walk reads it at its own path: a directory it scans
+        whole (``alias``, from ``_alias_of_scanned_directory``) or a regular
+        file it reads (``_file_scanned_at_real_path``). An excluded or
+        unselected target stays out of the scan at the link path too, and so
+        does a directory behind a link named like a configuration file
+        (``CLAUDE.md -> docs``): no client reads a directory as that file. So
+        does a directory that holds the link itself (``.agents/skills ->
+        ../../``): read at the link path, it would walk the tree again below it.
+        """
+        if target.is_dir():
+            here = Path(os.path.realpath(link.parent))
+            if here == target or target in here.parents:
+                return False
+            return alias and not self._agent_configuration(rel)
+        return self._file_scanned_at_real_path(target, resolved_root)
+
     def _alias_of_scanned_directory(self, rel: str, target: Path, resolved_root: Path) -> bool:
         """Whether directory link ``rel`` names ``target``, a directory inside the root the walk scans whole.
 
@@ -2314,15 +2624,9 @@ class TreeWalker:
         what the walk discounts as test code there (``src/lib -> ../tests``),
         which would weaken the evidence the alias path would carry.
         """
-        if not target.is_dir():
+        if not self._directory_scanned_at_real_path(target, resolved_root):
             return False
-        parts = target.relative_to(resolved_root).parts
-        for depth, name in enumerate(parts, start=1):
-            if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
-                return False
-        target_rel = PurePosixPath(*parts).as_posix() if parts else "."
-        if not self.included(target_rel if parts else ""):
-            return False
+        target_rel = target.relative_to(resolved_root).as_posix()
         return not (
             _is_test_path(f"{target_rel}/{_ANY_FILE_NAME}") and not _is_test_path(f"{rel}/{_ANY_FILE_NAME}")
         )
@@ -2449,10 +2753,11 @@ class TreeWalker:
         """
         if self._content_mcp is not None:
             return self._content_mcp
-        if not _guessed_mcp_name(rel, path.name):
+        name = PurePosixPath(rel).name  # a link read at its link path is judged by the link's name
+        if not _guessed_mcp_name(rel, name):
             return False
         on_disk = PurePosixPath(path.relative_to(scan.base).as_posix()) if scan.base else PurePosixPath(rel)
-        return self._file_may_declare_mcp(on_disk, scan.root_fd)
+        return self._file_may_declare_mcp(on_disk, scan.root_fd, name)
 
     def _oversize_gap(self, rel: str, name: str, on_disk: PurePosixPath, root_fd: int) -> None:
         """Record a file over ``max_file_size``: blinding when it hides agent configuration, else one entry.
@@ -2477,7 +2782,7 @@ class TreeWalker:
         """
         named = self._agent_configuration(rel, name)
         by_content = (
-            not named and _guessed_mcp_name(rel, name) and self._file_may_declare_mcp(on_disk, root_fd)
+            not named and _guessed_mcp_name(rel, name) and self._file_may_declare_mcp(on_disk, root_fd, name)
         )
         selected = named or by_content or (self.scan_secrets and _dotenv_name(name))
         if not selected and not self.scan_secrets and self._discounted_test_gap(rel):
@@ -2501,7 +2806,7 @@ class TreeWalker:
         )
 
     @staticmethod
-    def _file_may_declare_mcp(on_disk: PurePosixPath, root_fd: int) -> bool:
+    def _file_may_declare_mcp(on_disk: PurePosixPath, root_fd: int, name: str | None = None) -> bool:
         """Whether a file's bytes may name an MCP server table key (``_may_declare_mcp``), unanalyzed.
 
         The file is opened as the reader opens it, confined below the scan root,
@@ -2517,10 +2822,12 @@ class TreeWalker:
         key (``json_readings_declare_mcp``): an OpenAPI snapshot that describes
         an ``mcp_servers`` field holds no server table. One that does not
         parse as UTF-8 JSON keeps the byte check's answer.
+
+        ``name`` is the file's name where a client reads it (a link's own name).
         """
-        if on_disk.name.lower() == "server.json":
+        if (name or on_disk.name).lower() == "server.json":
             return True
-        structured = on_disk.name.lower().endswith(".json")
+        structured = (name or on_disk.name).lower().endswith(".json")
         try:
             with open_confined_file(on_disk, label="file", dir_fd=root_fd) as (fh, _):
                 window, read, kept = b"", 0, bytearray()

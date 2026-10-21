@@ -285,7 +285,15 @@ class FileScanner:
         self.cross_file = CrossFileSources(self)
 
     def scan_file(self, scan: _ScanState, rel: str, path: Path, proj_root: str) -> None:
-        """Run every analysis pass over one file of the walk."""
+        """Run every analysis pass over one file of the walk.
+
+        ``path`` is where the file is read; ``rel`` is where a client reads it,
+        and decides everything by name. They differ for an agent-configuration
+        link read at its link path (``TreeWalker._alias_entries``):
+        ``.vscode/settings.json`` linked to ``config/settings.json.example`` is
+        a settings file, whatever its target is called.
+        """
+        name, suffix = PurePosixPath(rel).name, PurePosixPath(rel).suffix.lower()
         proj = scan.projects.setdefault(proj_root, _Project(proj_root))
         scan.reexports.note_path(proj_root, rel)
         scan.python_dispatches.note_path(proj_root, rel)
@@ -295,7 +303,7 @@ class FileScanner:
         if lang:
             proj.languages.add(lang)
 
-        if self.walker.model_artifact_name(path.name):
+        if self.walker.model_artifact_name(name):
             on_disk = (
                 PurePosixPath(path.relative_to(scan.base).as_posix()) if scan.base else PurePosixPath(rel)
             )
@@ -351,19 +359,19 @@ class FileScanner:
                 finding.recompute_confidence()
                 scan.inventory_findings.append(finding)
             # Extensionless text can still be a source/configuration file.
-            if path.suffix.lower() in ARTIFACT_SUFFIXES or result is not None:
+            if suffix in ARTIFACT_SUFFIXES or result is not None:
                 return
 
         # 1. file-name signals (config files of agents / MCP / A2A ...)
         file_matches = self.index.match_file(rel)
-        by_name = _analyzed_by_name(path.name)
+        by_name = _analyzed_by_name(name)
         if not (by_name or file_matches):
             return
-        if self.triage and not file_matches and path.suffix.lower() in SOURCE_EXTENSIONS:
+        if self.triage and not file_matches and suffix in SOURCE_EXTENSIONS:
             # Triage never reads plain source files; the per-root warning
             # already discloses the skipped stages.
             return
-        credential_file = path.name.lower() in CREDENTIAL_FILE_NAMES
+        credential_file = name.lower() in CREDENTIAL_FILE_NAMES
         if credential_file:
             # Only the credential pass reads a tool credential file, but its name is evidence
             # in every mode: '.codex/.netrc' configures Codex as '.codex/config.toml' does.
@@ -380,7 +388,7 @@ class FileScanner:
             _note_unread_settings(proj, rel)
             return
         text, raw_notebook, cells, foreign = loaded
-        if credential_file or path.name.lower() in LOCKFILE_NAMES:
+        if credential_file or name.lower() in LOCKFILE_NAMES:
             read = _SourceFile(
                 rel=rel,
                 path=path,
@@ -396,7 +404,7 @@ class FileScanner:
                 self._scan_lockfile(scan, read)
             return
         nul_text = None
-        if "\x00" in text and path.suffix.lower() != ".ipynb":
+        if "\x00" in text and suffix != ".ipynb":
             # Bash drops NUL bytes from a script, so `api.open<NUL>ai.com` runs as api.openai.com: names
             # are matched without them. Node and PHP keep them, so a source file is also lexed as it was
             # read (``_match_source``). Lines do not move.
@@ -408,7 +416,7 @@ class FileScanner:
             proj=proj,
             text=text,
             nul_text=nul_text,
-            lang="python" if path.suffix.lower() == ".ipynb" else lang,
+            lang="python" if suffix == ".ipynb" else lang,
             file_matches=file_matches,
             raw_notebook=raw_notebook,
             cells=cells,
@@ -423,7 +431,7 @@ class FileScanner:
                 # own few literals are cheaper than the union.
                 file.literals = self.index.literal_scan(text, file.lang)
             self._record_file_matches(file)
-            if path.name == "SKILL.md":
+            if name == "SKILL.md":
                 audit = audit_skill_text(text)
                 proj.skill_audits[rel] = audit
                 if audit.incomplete:
@@ -494,7 +502,7 @@ class FileScanner:
         on_disk = PurePosixPath(path.relative_to(base).as_posix()) if base is not None else PurePosixPath(rel)
         text = read_text(
             on_disk,
-            self.walker.size_limit(path.name),
+            self.walker.size_limit(PurePosixPath(rel).name),
             read_errors,
             dir_fd=root_fd,
             analyzable_name=named,
@@ -512,7 +520,7 @@ class FileScanner:
             elif self.strict_coverage:
                 self.ctx.error(f"code.filesystem: {rel}: {issue}", reason=_read_issue_reason(issue))
             elif issue == "file exceeds max_file_size":
-                self.walker._oversize_gap(rel, path.name, on_disk, root_fd)
+                self.walker._oversize_gap(rel, PurePosixPath(rel).name, on_disk, root_fd)
             else:
                 self.walker._unreadable_gap(rel, issue)
         if text is None:
@@ -528,7 +536,7 @@ class FileScanner:
             return None
         if "{{" in text or "{%" in text:
             self.walker.note_template_syntax(rel)  # read by _template_source_gap
-        if path.suffix.lower() != ".ipynb":
+        if PurePosixPath(rel).suffix.lower() != ".ipynb":
             return text, None, (), ()
         return self._notebook_source(rel, text)
 
@@ -931,7 +939,7 @@ class FileScanner:
             code=code,
             limited=limited,
             placeholder=placeholder_reason,
-            env_file=not code and _env_values_file(file.path.name),
+            env_file=not code and _env_values_file(file.name),
         )
         for m in matches:
             if (m.signature_id, m.value) in skip_values:
@@ -2292,14 +2300,14 @@ class FileScanner:
         """
         message = f"code.filesystem: {rel}: {BINARY_CONTENT_ERROR}"
         analyzed = self.scan_secrets and not self.triage
-        if not analyzed and not _guessed_mcp_name(rel, path.name):
+        if not analyzed and not _guessed_mcp_name(rel, PurePosixPath(rel).name):
             self.walker._discounted_gap(
                 rel, f"{message}; not analyzed", reason="unparsed-input", charged_in_full=True
             )
             return
         errors: list[str] = []
         text = read_credential_text(
-            fixture.on_disk, self.walker.size_limit(path.name), errors, dir_fd=scan.root_fd
+            fixture.on_disk, self.walker.size_limit(PurePosixPath(rel).name), errors, dir_fd=scan.root_fd
         )
         if text is None:
             for issue in errors:
@@ -2318,7 +2326,7 @@ class FileScanner:
             # No structured context: none of a binary file's excerpts is emitted.
             file.excerpts = _ExcerptSource(rel, path, text, None)
             self._detect_secrets(scan, file)
-        declares, document = self._binary_declares_mcp(rel, path.name, text)
+        declares, document = self._binary_declares_mcp(rel, PurePosixPath(rel).name, text)
         if declares:
             servers = _parse_mcp_servers(rel, text, [], document)
             if servers:

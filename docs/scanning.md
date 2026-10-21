@@ -39,10 +39,28 @@ that are never silent:
   `.github/instructions`, `.github/agents`, `.cursor/rules/team`,
   `.well-known`): one generic dot-directory on its path does not make it so
   (`.github/actions/setup` holds no file `.github/copilot-instructions.md`
-  names). An alias of a scanned directory there stays blinding when a file it
-  holds would be configuration at the alias path (`.cursor` aliasing a
-  directory with `mcp.json` or `rules/`): under that path its files are
-  configuration, at their real path they are not. One that holds none
+  names). An alias of a scanned directory there, when a file it holds would
+  be configuration at the alias path (`.cursor` aliasing a directory with
+  `mcp.json` or `rules/`, AutoGPT's `.agents/skills -> ../.claude/skills`),
+  and a link to a scanned file whose own name makes it agent configuration
+  (a lowercase `agents.md` pointing at a README), are read a second time at
+  the link path: the link is not followed, its target is opened by its real
+  path below the root, as any file is, and analyzed and reported under the
+  link path, where a client reads it as configuration. Its files count
+  toward `max_files`, and at most 5,000 files a root are read at link paths.
+  Below such an alias, a file link is read at its own link path and a
+  directory link is judged as a link, not read again. A file read at its
+  link path is judged by the link's own name (`.vscode/settings.json` linked
+  to `settings.json.example` is a settings file), an exclude that leaves a
+  file out at its real path leaves it out at the link path too, a credential
+  found at both paths is reported at both (the real path may be
+  documentation, the link path is configuration), and a budgeted gap of such
+  a file is charged once. A link to an excluded or unselected target stays
+  blinding. So does a directory behind a link named like a configuration
+  file (`CLAUDE.md -> docs`), which no client reads as that file, and a link
+  inside its own target (`.agents/skills -> ../../`), which would walk the
+  tree again below it. So does a link past the 5,000-file cap, or one whose
+  target changed while the walk read the tree. One that holds none
   (`web/public/.well-known` aliasing `static/well-known` without an MCP
   manifest or agent card) is an alias like any other, one entry. The `ci`
   profile never declares a link that stands for configuration. So does a

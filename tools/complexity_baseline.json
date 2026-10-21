@@ -61,7 +61,6 @@
     "shadowscan/connectors/code/source_semantics.py::python_may_bind": 17,
     "shadowscan/connectors/code/tool_attribution.py::python_tool_regions": 127,
     "shadowscan/connectors/code/tool_attribution.py::python_tool_regions.<locals>.resolve": 21,
-    "shadowscan/connectors/code/walk.py::TreeWalker._iter_entries": 23,
     "shadowscan/connectors/common.py::apply_matches": 25,
     "shadowscan/connectors/endpoint/runtime.py::MCPInventoryConnector.analyze": 30,
     "shadowscan/connectors/endpoint/runtime.py::_records": 23,
@@ -124,9 +123,9 @@
   },
   "modules": {
     "shadowscan/connectors/cloud/aws.py": 3528,
-    "shadowscan/connectors/code/file_scan.py": 2445,
+    "shadowscan/connectors/code/file_scan.py": 2453,
     "shadowscan/connectors/code/source_semantics.py": 2784,
-    "shadowscan/connectors/code/walk.py": 2835,
+    "shadowscan/connectors/code/walk.py": 3142,
     "shadowscan/connectors/gateway/logs.py": 2112,
     "shadowscan/connectors/identity/entra.py": 2157,
     "shadowscan/signatures/matcher.py": 2984

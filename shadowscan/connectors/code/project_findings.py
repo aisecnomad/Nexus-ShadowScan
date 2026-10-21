@@ -168,6 +168,9 @@ class ProjectFindings:
                     models=scan.infra_models.get(rel, []),
                 )
         for rel, hits in scan.secret_hits.items():
+            # A file read again at a link path (an agent-configuration alias) reports its
+            # credentials at both paths: the real path may be documentation or test code,
+            # judged at lower weight, while the link path is configuration a client reads.
             with isolated(self.walker, rel, "credential analysis"):
                 f = self._secret_finding(
                     label,

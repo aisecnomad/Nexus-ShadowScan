@@ -383,6 +383,66 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   `.mts` and `.cts` count as source, the documented margin names its 250 ms
   floor, and the emission diagnostic says it counts projects, whose project,
   agent and tool findings were left out.
+### Agent-configuration links read at their link path (October 21)
+
+- Every link the walk does not follow was reported as one "whose target is
+  unavailable or unscanned", false for in-tree aliases. The diagnostic now
+  says what the target was found to be: missing or a loop, outside the tree
+  (never echoing an outside path), or an in-tree path walked at its own path
+  but not assessed as the link path, or one the walk does not scan.
+- Significant-Gravitas/AutoGPT exited 3 on two such links:
+  `.agents/skills -> ../.claude/skills` and
+  `docs/content/forge/components/agents.md`, a lowercase `agents.md`
+  pointing at a README. Both targets were walked at their own paths, where
+  they are not configuration for the client that reads the link path. A
+  link that stands for agent configuration whose in-tree target the walk
+  scans is now read a second time at the link path (`_alias_entries`): the
+  link is never followed, the target is opened by its real path with the
+  same confined opens as every file, and its findings name the link path.
+  Its files count toward `max_files` and the entry budget; a link below the
+  alias is judged as a link and never read again, so a loop cannot multiply
+  the walk; a file link below an alias is read at its own link path (a file
+  cannot loop). An aliased file belongs to the project its link path lies
+  in (`_project_root`): review found that the walk's stack of project roots
+  holds only its last branch by the time aliases are read, which reported
+  `services/a/CLAUDE.md` as the repository root's. A link to an excluded or
+  unselected target, or outside the tree,
+  stays blinding, and so does a directory behind a link named like a
+  configuration file (`CLAUDE.md -> docs`). The per-file loop of
+  `_iter_entries` moves verbatim into `_file_entry` / `_regular_entry`, which
+  the alias walk reuses.
+- A second review found:
+  - A link inside its own target (`pkg0/.agents/skills -> ../../`) was read
+    at the link path, walking the whole tree again below it: 16 entries
+    became 112, with fabricated paths such as
+    `pkg0/.agents/skills/.claude/skills/deploy/SKILL.md`. Such a link stays
+    blinding now. At most `MAX_ALIAS_FILES` (5,000) files a root are read at
+    link paths; past that a link stays blinding, so many links to one large
+    directory cannot multiply the walk.
+  - Each credential was reported twice, at the real path and at the link
+    path. A budgeted gap of the same weight is now charged once per real
+    file (`_ledger_gap`): a partly broken notebook in an aliased skills
+    directory (#300) made a scan within budget exceed it. (A first fix also
+    dropped a credential at the link path when the real path reported it; see
+    the third review below.)
+  - The alias target was listed by its path after the walk. Before listing,
+    the target is checked again: not a link, the same device and inode as
+    when the link was classified, the same real path. A target swapped since
+    then stays blinding instead of having outside names listed.
+- A third review found a fail-open: an alias entry reached the file scanner
+  with its target's on-disk path, and the scanner decided by that path's
+  name and suffix (what is analyzed, what is a notebook, which file is a
+  `SKILL.md`). A link named unlike its target was read at neither path:
+  `.vscode/settings.json -> config/settings.json.example` (a shell MCP
+  server with an inline key), `.mcp.json -> nb/servers.ipynb` and
+  `.claude/skills/evil/SKILL.md -> docs/howto.md` completed with no
+  findings, where main fails closed. The scanner now decides by the path
+  a client reads (`rel`; `_SourceFile.name` and `ext` too) and reads by the
+  on-disk path. The review also found that dropping a credential at the
+  link path kept a documentation- or test-only finding and lost the live
+  one (`--fail-on high` passed a docs-linked `.claude/skills`): credentials
+  are reported at both paths again. An exclude below an aliased directory
+  now holds at the link path too.
 
 ### Release readiness review (October 21)
 
