@@ -13,6 +13,16 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### certifi CA bundle advisory (October 20)
+
+certifi 2026.10.19 replaces 2026.7.22 in the runtime, CI and docs locks. Earlier
+bundles trust `emSign ECC Root CA - G3`; eight eMudhra intermediates chaining to it
+had compromised private keys and were revoked, so an on-path holder of one could
+present a valid-looking certificate for any connector endpoint
+(GHSA-6q48-6c7w-9gw2). The advisory was published after `main`'s last audit and
+made every lock fail `pip-audit`. Both hashes match PyPI's published wheel and
+sdist; no other pin changed.
+
 ### Explicit discovery-benchmark baseline (October 20)
 
 - `.github/workflows/benchmark.yml` took its regression baseline as the
@@ -32,16 +42,6 @@ Counts and figures quoted in an entry are those of its date.
 - Moving the baseline is now a reviewed one-line change that says why. The
   committed `2026-10-09` run is in-sample for ShadowScan; the gate measures
   regression, not accuracy.
-
-### certifi CA bundle advisory (October 20)
-
-certifi 2026.10.19 replaces 2026.7.22 in the runtime, CI and docs locks. Earlier
-bundles trust `emSign ECC Root CA - G3`; eight eMudhra intermediates chaining to it
-had compromised private keys and were revoked, so an on-path holder of one could
-present a valid-looking certificate for any connector endpoint
-(GHSA-6q48-6c7w-9gw2). The advisory was published after `main`'s last audit and
-made every lock fail `pip-audit`. Both hashes match PyPI's published wheel and
-sdist; no other pin changed.
 
 ### Native eBPF metadata and service-specific Google endpoints (October 20)
 

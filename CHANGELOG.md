@@ -8,12 +8,12 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## Unreleased
 
+certifi 2026.10.19 removes the `emSign ECC Root CA - G3` root, whose revoked
+intermediates had compromised keys (GHSA-6q48-6c7w-9gw2), from every lock.
+
 The weekly discovery-benchmark gate compares against the companion results
 directory its workflow names (`BASELINE_RUN`, currently `2026-10-09`), so a
 later results directory can no longer become the baseline by sorting last.
-
-certifi 2026.10.19 removes the `emSign ECC Root CA - G3` root, whose revoked
-intermediates had compromised keys (GHSA-6q48-6c7w-9gw2), from every lock.
 
 Expired connectors share one five-second allowance for preparing partial findings,
 so repeated overruns cannot each delay the report for another five seconds.
