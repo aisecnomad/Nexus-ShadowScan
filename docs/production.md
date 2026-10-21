@@ -539,10 +539,11 @@ argument list for at most 8,192 steps; a credential-typed call that is still
 open there (often prose naming `` `ClientSession(` ``) is read on to its end
 within an extension budget of 8 work units per character of the text, shared
 by all such calls in it, and inside the shared 128 Mi-unit redaction work
-limit. A call read on whose comment markers (`#`, `//`, `/*`) can be read two
-ways keeps both readings and withholds what either holds, and every string
-literal of the call when the two split it differently or either pairs a
-credential key. A call past either
+limit. A call read on to its end withholds the text from its first argument
+to the end of the text, with the line count kept; the text before it keeps
+its excerpts, as main's rules show them, and the scan completes. Where its
+comment markers (`#`, `//`, `/*`) can be read two ways it keeps both
+readings. A call past either
 budget, nested more than 32 deep under either reading, or whose completed
 reading no longer pairs a credential key the bounded one paired, still withholds
 the file's excerpts (sanitization-limit, exit 3). CODEOWNERS patterns use bounded iterative

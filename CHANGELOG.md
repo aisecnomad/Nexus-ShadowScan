@@ -20,10 +20,11 @@ explain operator migrations. Earlier per-change entries are preserved in the
   2026.10.19 and a CI dependency audit); no benchmark evidence changed.
 
 - Prose and comments that name a credential-typed call without closing it
-  (`ClientSession(` in Markdown) no longer withhold a whole file's excerpts:
-  such a call is read to its end within a per-text work budget, and the
-  credential-call lexer crosses inert text in runs, 1.66x faster with
-  identical output.
+  (`ClientSession(` in Markdown) no longer fail a scan closed: such a call is
+  read to its end within a per-text work budget, and the text from it to the
+  end of the file is withheld from excerpts, so the text before it keeps its
+  excerpts; the credential-call lexer crosses inert text in runs, 1.66x
+  faster with identical output.
 
 - Local scans start faster: built-in signature patterns compile on first use,
   outside each input's matching budget (credential patterns in the linear form
