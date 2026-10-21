@@ -22,7 +22,7 @@ jobs:
     # skip this job without failing once the repository is renamed. Forks have
     # their own ID, so they still skip it.
     if: github.repository_id == '1174915264' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -76,7 +76,7 @@ jobs:
           retention-days: 90
   lock-audit:
     name: Audit hash-locked dependencies
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

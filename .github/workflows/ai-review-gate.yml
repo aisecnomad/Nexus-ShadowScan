@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   preflight:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -56,7 +56,7 @@ jobs:
     # review and check on the head. A run cancelled while this job runs completes its check as
     # a failure (it may already have posted its review); it never leaves a passing check.
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read

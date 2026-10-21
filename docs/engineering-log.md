@@ -13,6 +13,30 @@ Counts and figures quoted in an entry are those of its date.
 
 ## 0.1.3 — 2026-11-20
 
+### Repository hygiene after the companion move (October 21)
+
+- `.gitattributes`, `.editorconfig`, `.gitignore`, `.pre-commit-config.yaml`
+  and the repository consistency tests still named benchmark corpora, artifacts,
+  results and harnesses that moved to the pinned `benchmark-suite/` companion,
+  and two tests that no longer exist. No tracked file matched those entries; they
+  are removed. The former-name and Markdown checks now cover `benchmarks/README.md`,
+  the only remaining file there, which passes.
+- Every workflow job runs on `ubuntu-24.04` instead of `ubuntu-latest`, which
+  GitHub is moving to a newer Ubuntu release, so a runner image change is a
+  reviewed edit. The macOS test leg keeps `macos-latest` until its current image
+  is confirmed.
+- The evaluation corpora that `make evaluate` names in its reports no longer use
+  the former project name. No digest binds those names.
+- `GOVERNANCE.md` still said the 2026-10-10 bypass actors applied until removed;
+  it now cites the 2026-10-18 readback, which lists none, as
+  `docs/operations/merge-policy.md` already did.
+- Wording: `make test-fast` excludes the slow timed sweeps; the pull request
+  template matches CONTRIBUTING on when to write `Fixes #NNN`; the #284
+  adaptation names that pull request as closed, unmerged and unreviewed; ADR 005
+  records that its #107 precondition was satisfied by #123; and
+  `.github/dependabot.yml` says why the companion gitlink and the fixture
+  manifests are not tracked.
+
 ### Release readiness review (October 21)
 
 - `tools/release/assets.py` looked up the release with `releases/tags/{tag}`,
@@ -280,8 +304,8 @@ The proposal stays open; these tests do not claim live DNS acceptance.
 
 ### Repository scan completion and bounded processing (October 20)
 
-Adapted reviewed changes from
-[PR #284](https://github.com/aisecnomad/Nexus-ShadowScan/pull/284) onto the
+Adapted selected changes from the closed, unmerged
+[PR #284](https://github.com/aisecnomad/Nexus-ShadowScan/pull/284), which had no recorded review, onto the
 existing staged-scan and readiness workflows. The filesystem probe counts up to
 180,000 entries within its unchanged one-second bound and proposes at most
 1800 seconds at the 120-second default. The existing rate of 12,000 entries per

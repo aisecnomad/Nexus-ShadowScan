@@ -8,6 +8,10 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## 0.1.3 — 2026-11-20
 
+- Repository hygiene: workflows run on a pinned `ubuntu-24.04` image, and
+  configuration left behind for benchmark paths that moved to the Nexus
+  ShadowBench companion is removed.
+
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the
   checkout so it exercises the installed wheel.
