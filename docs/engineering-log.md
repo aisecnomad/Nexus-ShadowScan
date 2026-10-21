@@ -123,10 +123,14 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   while the real comment holds an unbalanced bracket or a stray triple quote
   under the other, so neither places the credential at an argument start and
   the union withheld nothing. A call whose readings split it differently now
-  withholds every string literal it holds, scanned under both comment rules
-  and charged to the extension budget (a spent budget fails closed); readings
-  that agree keep the exact rules, and prose naming a credential-typed call
-  still completes. Six regression tests: five such shapes fail on the union
+  withholds every string literal it holds; readings that agree keep the
+  exact rules, and prose naming a credential-typed call still completes. The
+  literals are listed once per text, from its start under both comment rules
+  (`_CallLexer._literal_index`), and each split call takes those overlapping
+  it: a first version lexed the rest of the text per call against the
+  extension budget, which three prose mentions in `redaction_calls.py`'s own
+  docstrings spent, so the repository's self-scan failed closed
+  (`test_the_call_lexers_own_source_completes`). Six regression tests: five such shapes fail on the union
   and pass now, and a control keeps the other literals of an unambiguous call.
   The same review noted that a completed call pairing a credential key
   withheld only the paired value, so its other strings (a positional

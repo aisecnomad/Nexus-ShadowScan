@@ -99,6 +99,8 @@ class _CallLexer:
         self._go_comments: dict[int, int] = {}
         # Work left for reading calls past _MAX_CALL_STEPS (see complete_arguments).
         self._extension = _CALL_EXTENSION_PER_CHAR * len(text)
+        # The text's string literals under each comment rule (see string_literals).
+        self._literals: tuple[tuple[list[int], list[tuple[int, int]]], ...] | None = None
 
     def tick(self, steps: int = 1) -> None:
         self.work += steps
@@ -338,38 +340,48 @@ class _CallLexer:
             self._extension = max(0, self._extension - (self.work - before))
         return readings
 
-    def string_literals(self, start: int, end: int) -> list[tuple[int, int]] | None:
-        """Every string literal from ``start`` to ``end``, under comment rules and with the markers as text.
+    def string_literals(self, start: int, end: int) -> list[tuple[int, int]]:
+        """Every string literal of the text that overlaps ``start`` to ``end``.
 
         For a call read past the step bound whose readings split it differently,
         neither may place its credential at an argument start, so any literal in
-        it may be the credential. The scan draws on the extension budget; None
-        once that is spent, and the call fails closed.
+        it may be the credential. The text's literals are listed once, from its
+        start, under comment rules and with the markers as text
+        (``_literal_index``), so each such call costs a lookup rather than a
+        lexing of the rest of the text; a literal the call opens inside, or one
+        that runs over it, is included whole.
         """
-        before = self.work
         found: set[tuple[int, int]] = set()
-        try:
+        for starts, spans in self._literal_index():
+            index = bisect_left(starts, start)
+            if index and spans[index - 1][1] > start:
+                found.add(spans[index - 1])
+            found.update(spans[index : bisect_left(starts, end, index)])
+        self.tick(len(found))
+        return sorted(found)
+
+    def _literal_index(self) -> tuple[tuple[list[int], list[tuple[int, int]]], ...]:
+        """The text's string literals, read from its start under each comment rule: their starts and spans."""
+        if self._literals is None:
+            text = self.text
+            indexes = []
             for comments in (True, False):
-                position = start
-                while position < end:
-                    stop = _LITERAL_STOPS.search(self.text, position, end)
-                    at = end if stop is None else stop.start()
+                spans: list[tuple[int, int]] = []
+                position = 0
+                while (stop := _LITERAL_STOPS.search(text, position)) is not None:
+                    at = stop.start()
                     self.tick(at - position + 1)
-                    if self.work - before > self._extension:
-                        return None
-                    if stop is None:
-                        break
-                    if self.text[at] in "\"'`":
+                    if text[at] in "\"'`":
                         position = self.string_end(at)
-                        found.add((at, position))
-                    elif comments and (self.text[at] == "#" or self.text.startswith(("//", "/*"), at)):
-                        block = self.text.startswith("/*", at)
-                        position = self.block_end(at) if block else self.line_end(at)
+                        spans.append((at, position))
+                    elif comments and (text[at] == "#" or text.startswith(("//", "/*"), at)):
+                        position = self.block_end(at) if text.startswith("/*", at) else self.line_end(at)
                     else:
                         position = at + 1
-        finally:
-            self._extension = max(0, self._extension - (self.work - before))
-        return sorted(found)
+                self.tick(len(text) - position)
+                indexes.append(([span_start for span_start, _ in spans], spans))
+            self._literals = tuple(indexes)
+        return self._literals
 
 
 class _CallReadings:
@@ -429,9 +441,8 @@ class _CallReadings:
         fails closed, when a reading stops for length too (with the shared
         budget nearly spent it can stop before the step-bound reading did, and
         judging that shorter reading could miss the credential key the longer
-        one holds), when the step-bound reading paired a credential key and
-        no reading of the extension does, or when the budget runs out before
-        the literals of a split call are read.
+        one holds) or when the step-bound reading paired a credential key and
+        no reading of the extension does.
         """
         spans, state = self.read(start)
         if state != "length":
@@ -445,8 +456,8 @@ class _CallReadings:
                     for reading, reading_state in readings
                 ]
                 sensitive = any(reading_sensitive for reading_sensitive, _ in judged)
-                region = self._region_literals(start, readings, sensitive)
-                if region is not None and (sensitive or not self._judged(start)[0]):
+                if sensitive or not self._judged(start)[0]:
+                    region = self._region_literals(start, readings, sensitive)
                     kept = readings
                     self.region_literals[start] = region
                     values = [value for _, reading_values in judged for value in reading_values]
@@ -456,7 +467,7 @@ class _CallReadings:
 
     def _region_literals(
         self, start: int, readings: list[tuple[list[tuple[int, int]], str]], sensitive: bool
-    ) -> list[tuple[int, int]] | None:
+    ) -> list[tuple[int, int]]:
         """Every literal of the call when it pairs a credential key or its readings split it; else none.
 
         Main fails closed on every call past the step bound, so a completed call
