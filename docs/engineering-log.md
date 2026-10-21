@@ -51,6 +51,13 @@ Counts and figures quoted in an entry are those of its date.
   keeps the search linear. `separate_budget` also checks its own allowance
   when the work returns, so redaction that ran out between periodic checks
   still withholds the file's excerpts.
+- Review of the integration branch found that a constant `if` in a tool
+  loop continues on its branch with a copy of the rest of the body, and
+  nesting such guards copied it again at every level without charging the
+  flow budget. With the raised bounds a 939 KB file reached that recursion
+  and peaked at about 1.4 GiB before failing closed (main: 259 MiB, refused
+  at its old node bound). Each copied statement now costs a flow step, so
+  the same file fails closed at 227 MiB in 0.6 s.
 
 ### Release readiness review (October 21)
 
