@@ -106,7 +106,7 @@
     "shadowscan/utils/redaction.py::_Sanitizer.discover": 28,
     "shadowscan/utils/redaction_calls.py::_CallLexer.string_end": 18,
     "shadowscan/utils/redaction_calls.py::_go_sdk_credential_bindings": 20,
-    "shadowscan/utils/redaction_calls.py::_redact_credential_calls": 19,
+    "shadowscan/utils/redaction_calls.py::_redact_credential_calls": 17,
     "shadowscan/utils/redaction_commands.py::_aws_argument_tail_end": 16,
     "shadowscan/utils/redaction_commands.py::_aws_text_arguments": 17,
     "shadowscan/utils/redaction_formats.py::_dotted_token_reader": 23,

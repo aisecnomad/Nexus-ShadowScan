@@ -313,7 +313,9 @@ def test_reading_past_the_step_bound_stays_linear(monkeypatch):
             pass  # the budget ran out: the call fails closed
         return ticks
 
-    source = "'x'\n" + "#getToken(\n" * 200 + tail
+    # Each '# ]' is a comment under one reading and ends the other at a mismatched
+    # bracket, so neither reading closes the call or reaches the nesting bound.
+    source = "'x'\n" + "#getToken(\n# ]\n" * 200 + tail
     extra = work(source) - work(source.replace("getToken", "getThing"))
     assert 0 < extra <= redaction._CALL_EXTENSION_PER_CHAR * len(source) + 64
 
@@ -335,5 +337,53 @@ def test_a_completed_call_that_never_closes_keeps_the_unclosed_call_rules():
 def test_nesting_found_while_completing_a_call_still_fails_closed():
     # The completed reading keeps the nesting bound of the first one.
     source = 'HTTPBasicAuth("user", ' + "a, " * 5000 + "(" * 40 + f'"{SYNTHETIC}"' + ")" * 41 + "\n"
+    with pytest.raises(SanitizationLimitError, match="credential call nesting limit"):
+        redaction._redact_credential_calls(source)
+
+
+# '#', '//' and '/*' start comments only in some languages. Past the step bound
+# the reading under comment rules and the one with the markers as text can split
+# a call differently, and each can leave the credential mid-argument; main failed
+# closed on every such call, so a completed one withholds what either reading holds.
+_LONG_ARGUMENTS = "".join(f"    0.{n % 10}, 0.{n % 7},\n" for n in range(1200))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # A comma in a real comment, and floor division hiding the ')' from the comment reading.
+        f'cred = make_credential(  # key, endpoint, then weights\n    "{SYNTHETIC}", "https://example.invalid/", [\n'
+        + _LONG_ARGUMENTS
+        + "    ], shards // 2)\n",
+        # A JavaScript private field read as a comment, after a comment holding a comma.
+        f'const cred = new AzureKeyCredential(  // key, from the portal\n  "{SYNTHETIC}", {{\n'
+        + "".join(f"    o{n}: this.#cfg.v{n},\n" for n in range(1200))
+        + "    retry: this.#retry})\n",
+        # A key/value pairing whose value the comment-split reading would move.
+        f'os.environ.setdefault("OPENAI_API_KEY",  # name, value\n    "{SYNTHETIC}",\n'
+        + "".join(f"    arg{n},\n" for n in range(1200))
+        + "  # )\n",
+    ],
+    ids=["floor-division", "private-field", "pairing"],
+)
+def test_a_completed_call_withholds_what_either_comment_reading_holds(source):
+    safe = sanitize_text(source)
+    assert SYNTHETIC not in safe and REDACTED in safe
+    assert safe.count("\n") == source.count("\n")
+
+
+def test_a_completed_call_no_longer_pairing_its_key_still_fails_closed():
+    # At the step bound the key argument runs on and reads as a literal key; read
+    # to its end it is a computed expression. The call keeps failing closed rather
+    # than emitting a value the step-bound reading paired with a credential key.
+    source = 'os.environ.setdefault("OPENAI_API_KEY"' + "".join(f" + p{n}" for n in range(2500))
+    source += f', "{SYNTHETIC}")\n'
+    with pytest.raises(SanitizationLimitError, match="credential call length limit"):
+        redaction._redact_credential_calls(source)
+
+
+def test_a_completed_call_fails_closed_when_either_reading_stops_at_a_bound():
+    # With the markers as text, each '#getToken(' opens a bracket past the nesting bound.
+    source = "'x'\n" + "#getToken(\n" * 200 + "plain line of text here\n" * 2000
     with pytest.raises(SanitizationLimitError, match="credential call nesting limit"):
         redaction._redact_credential_calls(source)

@@ -309,26 +309,32 @@ class _CallLexer:
         spans.append((argument_start, len(text)))
         return spans, state, skipped_comment
 
-    def complete_arguments(self, start: int) -> tuple[list[tuple[int, int]], str]:
+    def complete_arguments(self, start: int) -> list[tuple[list[tuple[int, int]], str]]:
         """Read past the step bound an argument list ``arguments`` stopped in.
 
         Only a call that would otherwise fail closed is read again, so ordinary
         calls keep the step bound that keeps their rescans near linear. Every
         such read in one text draws on one budget proportional to its length;
-        once it is spent the call reports ``length`` as before. The reading
-        under comment rules is retried with the markers as text, as in
-        ``_redact_credential_calls``.
+        once it is spent the call reports ``length`` as before.
+
+        ``#``, ``//`` and ``/*`` start comments only in some languages, and the
+        two readings can split one call differently: a comma in a real comment,
+        or a ``this.#field`` read as one. Choosing either could leave a
+        credential mid-argument, where nothing withholds it, in a call that
+        fails closed at the step bound. A reading under comment rules that
+        skipped a marker is therefore read with the markers as text too, and
+        both readings are returned for the caller to withhold what either holds.
         """
         before = self.work
         try:
             spans, state, skipped = self.arguments(start, comments=True, until=before + self._extension)
-            if state != "closed" and skipped and self.work - before < self._extension:
+            readings = [(spans, state)]
+            if skipped and state not in {"length", "nesting"}:
                 retry = self.arguments(start, comments=False, until=before + self._extension)
-                if retry[1] == "closed":
-                    spans, state = retry[0], retry[1]
+                readings.append((retry[0], retry[1]))
         finally:
             self._extension = max(0, self._extension - (self.work - before))
-        return spans, state
+        return readings
 
 
 class _CallReadings:
@@ -342,6 +348,9 @@ class _CallReadings:
         self.lexer = lexer
         self.lexed: dict[int, tuple[list[tuple[int, int]], str]] = {}
         self.judged: dict[int, tuple[bool, list[tuple[int, int]]]] = {}
+        # Calls read past the step bound: the readings kept (see ``complete``).
+        self.completed: dict[int, list[tuple[list[tuple[int, int]], str]]] = {}
+        self.read_literals: set[tuple[int, int, tuple[int, ...]]] = set()
 
     def read(self, start: int) -> tuple[list[tuple[int, int]], str]:
         """Lex an argument list within the step bound.
@@ -358,23 +367,44 @@ class _CallReadings:
             self.lexed[start] = spans, state
         return self.lexed[start]
 
-    def complete(self, start: int) -> tuple[list[tuple[int, int]], str]:
+    def _judged(self, start: int) -> tuple[bool, list[tuple[int, int]]]:
+        if start not in self.judged:
+            spans, state = self.read(start)
+            self.judged[start] = _credential_call_values(self.lexer.text, spans, state == "closed")
+        return self.judged[start]
+
+    def complete(self, start: int) -> list[tuple[list[tuple[int, int]], str]]:
         """Read a call that would fail closed at the step bound to its end.
 
         Only a ``length`` reading is extended, so every other call keeps the
-        spans it had; the judged values of an extended call are recomputed.
-        An extension that stops for length too is discarded: with the shared
-        budget nearly spent it can stop before the step-bound reading did,
-        and judging that shorter reading could miss the credential key the
-        longer one holds, so the call keeps its first reading and fails closed.
+        spans it had. Every reading of the extension is kept (see
+        ``complete_arguments``) and its judged values are their union, so a
+        value either reading pairs with a credential key is withheld.
+
+        The extension is discarded, and the call keeps its first reading and
+        fails closed, when a reading stops for length too (with the shared
+        budget nearly spent it can stop before the step-bound reading did, and
+        judging that shorter reading could miss the credential key the longer
+        one holds) or when the step-bound reading paired a credential key and
+        no reading of the extension does.
         """
         spans, state = self.read(start)
-        if state == "length":
-            extended = self.lexer.complete_arguments(start)
-            if extended[1] != "length":
-                spans, state = self.lexed[start] = extended
-                self.judged.pop(start, None)
-        return spans, state
+        if state != "length":
+            return [(spans, state)]
+        if start not in self.completed:
+            kept = [(spans, state)]
+            readings = self.lexer.complete_arguments(start)
+            if all(reading_state != "length" for _, reading_state in readings):
+                judged = [
+                    _credential_call_values(self.lexer.text, reading, reading_state == "closed")
+                    for reading, reading_state in readings
+                ]
+                sensitive = any(reading_sensitive for reading_sensitive, _ in judged)
+                if sensitive or not self._judged(start)[0]:
+                    kept = readings
+                    self.judged[start] = sensitive, [value for _, values in judged for value in values]
+            self.completed[start] = kept
+        return self.completed[start]
 
     def judge(self, start: int) -> tuple[str, bool, list[tuple[int, int]]]:
         """Return the call's state, whether it pairs a credential key, and its values.
@@ -382,15 +412,39 @@ class _CallReadings:
         A pairing call cut off at the step bound is completed before its
         values are taken, so a value past the bound is withheld exactly.
         """
-        spans, state = self.read(start)
-        if start not in self.judged:
-            self.judged[start] = _credential_call_values(self.lexer.text, spans, state == "closed")
-        sensitive, values = self.judged[start]
-        if sensitive and state == "length":
-            spans, state = self.complete(start)
-            self.judged[start] = _credential_call_values(self.lexer.text, spans, state == "closed")
-            sensitive, values = self.judged[start]
-        return state, sensitive, values
+        readings = self.completed.get(start) or [self.read(start)]
+        sensitive, values = self._judged(start)
+        if sensitive and readings[0][1] == "length":
+            readings = self.complete(start)
+            sensitive, values = self._judged(start)
+        return _bounded_state(readings), sensitive, values
+
+    def literals(self, start: int, level: int, known: tuple[int, ...]) -> list[tuple[int, int]]:
+        """Credential literals of a credential-named or SDK call, from every reading it keeps.
+
+        A call that stops at a bound fails closed. Each kind of name sharing
+        one ``(`` reads its literals once.
+        """
+        completed = self.complete(start)
+        state = _bounded_state(completed)
+        if state in {"nesting", "length"}:
+            raise SanitizationLimitError(f"credential call {state} limit exceeded")
+        if (start, level, known) in self.read_literals:
+            return []
+        self.read_literals.add((start, level, known))
+        return [
+            literal
+            for spans, reading_state in completed
+            for literal in _credential_literals(self.lexer, spans, reading_state == "closed", level, known)
+        ]
+
+
+def _bounded_state(readings: list[tuple[list[tuple[int, int]], str]]) -> str:
+    """The state of a call's readings: a bound any of them stopped at, else the first's."""
+    for _, state in readings:
+        if state in {"nesting", "length"}:
+            return state
+    return readings[0][1]
 
 
 def _call_argument_start(text: str, start: int, end: int) -> int:
@@ -542,7 +596,6 @@ def _redact_credential_calls(text: str) -> str:
     # Its arguments are lexed and judged once; each callee adds what its own
     # name withholds, once per kind of name.
     readings = _CallReadings(lexer)
-    read_literals: set[tuple[int, int, tuple[int, ...]]] = set()
 
     for call in calls:
         if call.start() < skip_until:
@@ -566,14 +619,9 @@ def _redact_credential_calls(text: str) -> str:
             level = min(level, 1)
         known = _sdk_credential_positions(callee, imported)
         if level or known:
-            spans, state = readings.complete(argument_start)
-            if state in {"nesting", "length"}:
-                raise SanitizationLimitError(f"credential call {state} limit exceeded")
             # Literal credentials do not skip nested calls: a call inside
             # another argument can still pair a credential key with a value.
-            if (argument_start, level, known) not in read_literals:
-                read_literals.add((argument_start, level, known))
-                literals.extend(_credential_literals(lexer, spans, state == "closed", level, known))
+            literals.extend(readings.literals(argument_start, level, known))
         state, sensitive, call_values = readings.judge(argument_start)
         if not sensitive:
             continue
