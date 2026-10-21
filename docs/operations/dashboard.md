@@ -323,7 +323,7 @@ rows, references and records are shortened.
   "diagnostics_omitted": 0,
   "drift": null,
   "generated_at": "2026-10-09T08:00:40+00:00",
-  "generator": {"name": "ShadowScan", "version": "0.1.2"},
+  "generator": {"name": "ShadowScan", "version": "0.1.3"},
   "history": null,
   "legacy_fleet": false,
   "reasons": [],
@@ -349,7 +349,7 @@ rows, references and records are shortened.
     ]
   },
   "registries": {"malformed_records": 0, "registries": []},
-  "report_version": "0.1.2",
+  "report_version": "0.1.3",
   "schema": "shadowscan.inventory/v1",
   "sources": [
     {
@@ -362,7 +362,7 @@ rows, references and records are shortened.
       "name": "laptop-a/report.json",
       "staleness_days": 4,
       "started_at": "2026-10-05T08:00:00+00:00",
-      "version": "0.1.2"
+      "version": "0.1.3"
     }
   ],
   "status": "complete"

@@ -209,7 +209,7 @@ of publishing findings without their references.
    (`python -m tools.mapping_reference`).
 4. Add a test in `tests/unit/test_mappings.py` with a finding that the rule
    should match.
-5. Note the change in `CHANGELOG.md` under Unreleased.
+5. Note the change in the newest section (`## Unreleased`, or the upcoming release's dated section until it is tagged) of `CHANGELOG.md`.
 
 ## Earlier output
 

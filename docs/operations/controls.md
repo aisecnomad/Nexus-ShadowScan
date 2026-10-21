@@ -176,7 +176,7 @@ The `shadowscan.control-evidence/v1` document:
 {
   "schema": "shadowscan.control-evidence/v1",
   "notice": "Evidence references, not compliance determinations. Mappings are author mappings and have not been independently reviewed.",
-  "generator": {"name": "ShadowScan", "version": "0.1.2"},
+  "generator": {"name": "ShadowScan", "version": "0.1.3"},
   "report_finished_at": "2026-10-10T09:00:00+00:00",
   "evidence_scope": {
     "status": "complete",

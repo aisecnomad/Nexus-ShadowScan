@@ -187,7 +187,7 @@ From the reviewed checkout, in a clean virtual environment:
 python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
 python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
-python -m pip install --no-deps dist/nexusshadowscan-0.1.3-*.whl
+python -m pip install --no-deps dist/nexusshadowscan-*.whl
 python -m pip check
 python -m shadowscan.signatures.validate
 python -m shadowscan.mappings.validate

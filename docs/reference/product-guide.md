@@ -765,12 +765,12 @@ for where the code, tests, docs, tooling and benchmarks live.
 
 ## Project status
 
-* **Release state.** Version `0.1.3` is prepared for publication to PyPI as
-  `NexusShadowScan`, as an alpha pre-release; 0.1.2 is the published release
-  (tag `v0.1.2`). Confirm publication and artifact identity on
-  [PyPI](https://pypi.org/project/NexusShadowScan/0.1.3/) and the
-  [GitHub release](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.3)
-  before installing it. The package classifier is `Development Status :: 3 - Alpha`.
+* **Release state.** Version `0.1.3` is an alpha pre-release planned for TestPyPI
+  and then PyPI as `NexusShadowScan` on 2026-11-20. Until it appears on
+  [PyPI](https://pypi.org/project/NexusShadowScan/0.1.3/) and as the
+  [GitHub release](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.3),
+  the latest published release is 0.1.2 (tag `v0.1.2`); confirm publication and artifact
+  identity there before installing 0.1.3. The package classifier is `Development Status :: 3 - Alpha`.
   Commits on `main` after a release tag are unreleased. Publication does not
   establish independent review or deployment acceptance.
 * **Single maintainer, AI-assisted development.** Apart from Dependabot updates, every commit was written

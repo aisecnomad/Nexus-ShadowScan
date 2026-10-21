@@ -143,6 +143,24 @@ def verified_assets(directory: Path, *, repository: str, commit: str, run_id: st
     return f"v{version}", [directory / name for name in sorted(hashes)] + [sums, provenance, sbom]
 
 
+def _release(repository: str, tag: str) -> dict[str, Any]:
+    """The one maintainer-created release, draft or published, for ``tag``.
+
+    ``releases/tags/{tag}`` serves published releases only, so a draft prepared
+    for its evidence is found in the release listing, which includes drafts for
+    a token with push access. Several releases naming the tag are ambiguous.
+    """
+    listing = _gh("api", "--paginate", f"repos/{repository}/releases?per_page=100", "--jq", ".[] | @json")
+    entries = [_json(line) for line in listing.splitlines() if line]
+    matches = [entry for entry in entries if entry.get("tag_name") == tag]
+    if len(matches) != 1 or type(matches[0].get("id")) is not int:
+        raise ValueError("expected exactly one existing maintainer-created release for the tag")
+    release: dict[str, Any] = _json(_gh("api", f"repos/{repository}/releases/{matches[0]['id']}"))
+    if release.get("tag_name") != tag or release.get("id") != matches[0]["id"]:
+        raise ValueError("release changed while it was read")
+    return release
+
+
 def attach(
     directory: Path, *, repository: str, commit: str, run_id: str, upload: bool = False
 ) -> dict[str, Any]:
@@ -151,9 +169,7 @@ def attach(
     tagged = _json(_gh("api", f"repos/{repository}/commits/refs/tags/{tag}"))
     if tagged.get("sha") != commit:
         raise ValueError("release tag does not resolve to the reviewed commit")
-    release = _json(_gh("api", f"repos/{repository}/releases/tags/{tag}"))
-    if release.get("tag_name") != tag or type(release.get("id")) is not int:
-        raise ValueError("expected an existing maintainer-created release")
+    release = _release(repository, tag)
     assets = release.get("assets")
     if not isinstance(assets, list) or any(not isinstance(asset, dict) for asset in assets):
         raise ValueError("invalid release asset listing")
