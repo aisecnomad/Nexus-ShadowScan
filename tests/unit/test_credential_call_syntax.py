@@ -420,11 +420,10 @@ def test_a_completed_call_both_of_whose_readings_misplace_its_arguments_withhold
 
 def test_a_completed_call_whose_readings_agree_keeps_its_other_literals():
     # Without a comment the readings agree, so only the credential's position is withheld.
-    source = (
-        'cred = make_credential(\n    "https://vault.example.invalid/",\n' + _FILL + f'    "{SYNTHETIC}")\n'
-    )
+    source = 'cred = make_credential(\n    "vault-endpoint-name",\n' + _FILL + f'    "{SYNTHETIC}")\n'
     safe = sanitize_text(source)
-    assert SYNTHETIC not in safe and "https://vault.example.invalid/" in safe
+    assert SYNTHETIC not in safe
+    assert safe.splitlines()[1] == '    "vault-endpoint-name",'
 
 
 def test_a_completed_call_pairing_a_credential_key_withholds_its_other_literals():
@@ -438,3 +437,15 @@ def test_a_completed_call_pairing_a_credential_key_withholds_its_other_literals(
     except SanitizationLimitError:
         return  # failing closed is safe too
     assert SYNTHETIC not in safe and other not in safe
+
+
+def test_the_call_lexers_own_source_completes():
+    # Its docstrings name split calls in prose. Reading each one's literals by lexing the rest
+    # of the text spent the extension budget, so the repository's self-scan failed closed;
+    # the literals are now listed once per text.
+    from pathlib import Path
+
+    from shadowscan.utils import redaction_calls
+
+    source = Path(redaction_calls.__file__).read_text(encoding="utf-8")
+    assert sanitize_text(source).count("\n") == source.count("\n")
