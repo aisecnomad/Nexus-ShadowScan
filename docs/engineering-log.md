@@ -83,6 +83,11 @@ Counts and figures quoted in an entry are those of its date.
   image data, no matches on random data), and a value the credential pass
   matches is kept: read with the text outputs, or, when that puts them over
   `max_file_size`, the notebook's recorded oversize gap.
+- The integration review's fidelity pass found that the partly-parsed
+  notebook budget skipped the agent-configuration guard every other gap
+  site applies: a notebook in an agent definition directory (`.cursor/rules/`) with
+  one cell that does not parse completed, where main fails it and a Python
+  file beside it still does. Agent configuration is never budgeted now.
 
 ### Release readiness review (October 21)
 

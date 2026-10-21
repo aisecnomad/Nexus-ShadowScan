@@ -2145,15 +2145,16 @@ class FileScanner:
         runs each cell alone, so the binder still read those cells and the
         failed ones keep their lexical evidence; tutorial notebooks hold
         placeholders (``api_key = <YOUR API KEY>``) and shell lines pasted into
-        code cells on purpose. Such a notebook is one partial gap charged to the
-        coverage budget at a whole entry, unless the accounting is strict or the
-        ci profile declares it; a tree of them still exhausts the budget.
+        code cells on purpose. Such a notebook is one partial gap charged to the coverage budget
+        at a whole entry, unless the accounting is strict, it is agent configuration (never budgeted)
+        or the ci profile declares it; a tree of them still exhausts the budget.
         """
         if not self._syntax_gap(file):
             self.ctx.warn(message, incomplete=False)
         elif (
             notebook_cells
             and not self.walker._strict_accounting()
+            and not self.walker._agent_configuration(file.rel)
             and not self.walker._declared_omission(file.rel)
         ):
             self.walker._ledger_gap(
