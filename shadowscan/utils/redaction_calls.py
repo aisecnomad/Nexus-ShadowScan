@@ -61,6 +61,13 @@ _MAX_CALL_STEPS = 8 * 1024
 # one structured file; a call past that budget still fails closed.
 _CALL_EXTENSION_PER_CHAR = 8
 _OPENERS = {")": "(", "]": "[", "}": "{"}
+# Runs of characters the lexer only steps over: none opens a string, comment or
+# bracket, closes one, or separates arguments (inside a string: none escapes,
+# quotes, interpolates or ends a line). Each run is crossed in one step and
+# charged its length, so every bound counts exactly what the loop's per-character
+# steps counted and trips at the same place; only the Python overhead goes.
+_ARGUMENT_RUN = re.compile(r"[^\"'`#/()\[\]{},]++")
+_STRING_RUN = re.compile(r"[^\\\"'`#{}$@\n]++")
 
 
 class _CallLexer:
@@ -87,8 +94,8 @@ class _CallLexer:
         # Work left for reading calls past _MAX_CALL_STEPS (see complete_arguments).
         self._extension = _CALL_EXTENSION_PER_CHAR * len(text)
 
-    def tick(self) -> None:
-        self.work += 1
+    def tick(self, steps: int = 1) -> None:
+        self.work += steps
         if self.work > _MAX_REDACTION_WORK:
             raise SanitizationLimitError("credential call work limit exceeded")
 
@@ -178,6 +185,11 @@ class _CallLexer:
         braces = 0
         end = len(text)
         while position < len(text):
+            run = _STRING_RUN.match(text, position, position + max(_MAX_REDACTION_WORK - self.work, 0) + 1)
+            if run is not None:
+                self.tick(run.end() - position)
+                position = run.end()
+                continue
             self.tick()
             char = text[position]
             if char == "\\" and not verbatim:
@@ -241,11 +253,21 @@ class _CallLexer:
         skipped_comment = False
         state = "open"
         while position < len(text):
-            self.tick()
-            steps += 1
+            # A run is matched no further than the step after the bound, which trips
+            # where the per-character loop tripped: an unclosed call in a long
+            # paragraph-free text stops at the bound instead of crossing all of it.
+            allowed = _MAX_CALL_STEPS - steps if until is None else until - self.work
+            allowed = min(allowed, _MAX_REDACTION_WORK - self.work)
+            run = _ARGUMENT_RUN.match(text, position, position + max(allowed, 0) + 1)
+            length = 1 if run is None else run.end() - position
+            self.tick(length)
+            steps += length
             if (steps > _MAX_CALL_STEPS) if until is None else (self.work > until):
                 state = "length"
                 break
+            if run is not None:
+                position = run.end()
+                continue
             char = text[position]
             if char in "\"'`":
                 position = self.string_end(position)
