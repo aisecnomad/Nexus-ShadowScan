@@ -32,6 +32,15 @@ explain operator migrations. Earlier per-change entries are preserved in the
   provider's SDK (any of the 38 `category: provider` signatures) are queued
   for nested dispatch, not those importing `platform.litellm` alone, so
   litellm's own tree no longer fills the 16 MiB queue.
+- JSON is decided by its structure, not its bytes: a data file with a
+  repeated key (a provider catalog, an editor grammar) is one budgeted gap
+  when no reading of the key holds an MCP server table, a JSON Schema
+  that describes an `mcp_servers` field is not a server table, and an
+  oversize JSON file of up to 4 MiB is parsed to decide whether it is
+  blinding. A file without a repeated key is parsed once, text that opens
+  more than 100,000 containers stays undecided, and manifests, lockfiles
+  and agent configuration still fail closed.
+
 - Fewer false exit 3s from unparsed input: a Continue `uses:` block reference
   is an MCP server finding, an empty manifest or MCP configuration is a note,
   and unrendered template source (a file under a `{{cookiecutter...}}`

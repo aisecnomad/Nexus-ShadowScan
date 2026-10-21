@@ -10,7 +10,25 @@ summarise them for operators, and the
 [candidate change history](history/production-change-history.md) keeps the
 full dated log.
 
-## October 20 unparsed-input triage (Unreleased)
+## October 21 MCP structure in JSON (Unreleased)
+
+- A JSON data file the integrity checks refuse for a repeated key (a provider
+  catalog, an editor grammar) is one budgeted partial gap instead of exit 3
+  when no reading of the key — first value kept, last value kept, repeated
+  objects merged — holds an MCP server table and no structured detector reads
+  it as agent configuration. Manifests, lockfiles and agent configuration
+  still fail closed, as does a repeated key that hides a server table from
+  any reading. Repositories with such catalogs may stop exiting 3;
+  re-baseline.
+- A JSON Schema object's field named `mcp_servers` describes a value, not
+  servers: an oversize OpenAPI snapshot whose bytes name the key is parsed
+  (up to 4 MiB) and, holding no server table, is one budgeted gap instead of
+  a blinding one. A table at any depth, a spelling only a case-insensitive
+  decoder reads (`McpServers`, `mcp.Servers`), a file that does not parse,
+  one larger than 4 MiB, or text that opens more than 100,000 containers
+  stays blinding: the structural check decides only what it can parse and
+  walk within its bounds, and is never weaker than the byte check it
+  refines.
 
 - A Continue `mcpServers` block reference (`{uses, with?, override?}`) is now
   an `mcp-server` finding instead of an input defect. The record gains
