@@ -78,7 +78,7 @@ from shadowscan.connectors.code.vercel_tools import (
 )
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal, Signature
-from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout, required_literals
+from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout, ready, required_literals
 from shadowscan.utils.redaction import sanitize_text
 from shadowscan.utils.text import line_counter, python_source_lines
 
@@ -2745,7 +2745,7 @@ def _call_evidence(
         for signal in signature.signals:
             if signal.type != "code" or signal.languages and language not in signal.languages:
                 continue
-            for pattern in signal.bounded_compiled:
+            for pattern in map(ready, signal.bounded_compiled):
                 match = pattern.search(canonical, timeout=pattern_timeout(), concurrent=False)
                 if match is None or match.start() > len(symbol):
                     continue

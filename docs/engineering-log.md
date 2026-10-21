@@ -361,6 +361,12 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   to a quarter of the window), so the report keeps its "after N of M files"
   accounting; emission that still runs into the deadline records how many
   project findings it did not emit instead of dropping them silently.
+- Review follow-ups: crediting a first compile back moved the input's wall
+  deadline too, which carries the walker's clamp to the connector deadline;
+  only CPU time is credited now (`_ScanBudget.credit(cpu)`), and the wall
+  cap, four times the allowance, leaves room for a compile. The Python
+  source-semantics pass now compiles a deferred pattern (`ready`) before
+  timing its search, as the matcher does.
 
 ### Release readiness review (October 21)
 
