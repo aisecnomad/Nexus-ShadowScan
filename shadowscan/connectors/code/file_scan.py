@@ -1540,19 +1540,7 @@ class FileScanner:
                 cells=file.cells,
             )
         except SourceBudgetExceeded as exc:
-            # The budget is a property of the file, not of
-            # the scan: keep its lexical evidence. Test code
-            # is discounted evidence, so it only warns.
-            message = (
-                f"code.filesystem: {file.rel}: import-bound analysis skipped ({exc}); "
-                "lexical evidence retained"
-            )
-            # A time budget is a timeout; an AST, call, nesting or recursion limit is not.
-            reason = incomplete_reason(str(exc))
-            if not self.include_tests and _is_test_path(file.rel):
-                self.walker._strict_gap_warning(message, reason=reason)
-            else:
-                self.ctx.error(message, reason=reason)
+            self._binding_budget_exceeded(file, "import-bound analysis", exc)
             return [], whole
         except SourceNotParsed as exc:
             # Newer syntax than the interpreter knows, or invalid source: no
@@ -1582,7 +1570,12 @@ class FileScanner:
                     resolve_javascript_tool=resolve_javascript_tool,
                     resolve_dispatch=resolve_dispatch,
                 )
-            except (SourceBudgetExceeded, SourceNotParsed):
+            except SourceBudgetExceeded as exc:
+                # The rendering parsed, so this is the binder's limit, not the
+                # template's gap: it fails as it does for any other source.
+                self._binding_budget_exceeded(file, "import-bound analysis of its template rendering", exc)
+                return [], whole
+            except SourceNotParsed:
                 return [], whole
             file.unparsed = ()
         if truncated:
@@ -2221,6 +2214,20 @@ class FileScanner:
             f"credentials matched {', '.join(sorted(new))}; credential evidence incomplete",
             reason="analysis-limit",
         )
+
+    def _binding_budget_exceeded(self, file: _SourceFile, analysis: str, exc: SourceBudgetExceeded) -> None:
+        """Record that binding ``file`` ran past an analysis budget: a gap, a warning in test code.
+
+        The budget is a property of the file, not of the scan, so its lexical
+        evidence is kept. Test code is discounted evidence, so it only warns.
+        """
+        message = f"code.filesystem: {file.rel}: {analysis} skipped ({exc}); lexical evidence retained"
+        # A time budget is a timeout; an AST, call, nesting or recursion limit is not.
+        reason = incomplete_reason(str(exc))
+        if not self.include_tests and _is_test_path(file.rel):
+            self.walker._strict_gap_warning(message, reason=reason)
+        else:
+            self.ctx.error(message, reason=reason)
 
     def _syntax_warning(self, file: _SourceFile, message: str, *, notebook_cells: bool = False) -> None:
         """Record source that did not parse: a gap when ``_syntax_gap`` says so, else a plain warning.

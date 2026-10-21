@@ -489,7 +489,11 @@ applied in this order:
    under a directory whose name holds Jinja syntax (cookiecutter's
    `{{cookiecutter.package_name}}/pyproject.toml`) is read by no tool until a
    generator renders it, so its gap is partial and its warning says
-   `unrendered template source`. A shell-style `${env}/` directory, or a file
+   `unrendered template source`. Python source is the exception: Python runs
+   a module under such a directory as written, and a newer interpreter than
+   the scanner's parses grammar the scanner cannot, so a Python module or
+   notebook there is template source only by the content rule below, however
+   many `{{ }}` its prompt strings hold. A shell-style `${env}/` directory, or a file
    without Jinja syntax of its own, is judged as anywhere else. So is a
    Python, TOML or JSON file under an ordinary name that parses once each
    Jinja placeholder is filled in and each tag line dropped (crewAI's
@@ -497,7 +501,9 @@ applied in this order:
    other way still fails. A placeholder holds no quote, separator or
    bracket and a tag is a line of its own, so neither can swallow the
    strings, values or statements around it. The scanner analyzes the
-   rendering (stand-ins for the placeholders, tags dropped, every line kept):
+   rendering (stand-ins of each placeholder's length, tag lines blanked, so
+   every line and character position is kept; an analysis limit reached on
+   the rendering fails the scan as it does for any source):
    a templated manifest's dependencies and a templated module's imports are
    still evidence. Only a parse failure is explained this way: a repeated
    JSON key, a redaction limit or any other gap under a template-named

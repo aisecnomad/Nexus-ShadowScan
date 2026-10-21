@@ -2450,10 +2450,10 @@ class TreeWalker:
         paths) means no tool reads the file where it is: the generator fills in
         its placeholders, and its Jinja blocks
         (``{%- if cookiecutter.depends_on_core -%}``) are not TOML, JSON or
-        YAML. The file's own text must hold Jinja syntax too
-        (``note_template_syntax``): a module of newer Python syntax under such
-        a directory, or under a shell-style ``${env}``, is broken source, and
-        keeps its gap. A file under an ordinary name is template source when it fails
+        YAML. The file's own text must hold Jinja syntax too (``note_template_syntax``),
+        and it must not be Python, which runs there as written: newer Python syntax
+        (or any under ``${env}``) is broken source and keeps its gap, ``{{ }}`` in a
+        prompt or not. A file under an ordinary name is template source when it fails
         to parse only because of its placeholders (``budget_defects``):
         crewAI's ``templates/crew/crew.py`` declares ``class {{crew_name}}():``.
         So is the ambiguity of a JSON data file whose duplicate keys neither
@@ -2476,6 +2476,7 @@ class TreeWalker:
             kind == "parse"
             and rel in self._template_syntax
             and _JINJA_DIRECTORY.search(rel.rpartition("/")[0])
+            and not rel.lower().endswith((".py", ".pyi", ".ipynb"))
         ):
             return "unrendered template source (template syntax in its directory)"
         recorded = self._budgeted_defects.get(rel)
