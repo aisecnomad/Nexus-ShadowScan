@@ -1,13 +1,13 @@
 - rule: AI runtime process execution
   desc: Observe process execution for operator-side AI runtime inventory.
   condition: spawned_process
-  output: "AI runtime process execution (user=%user.name command=%proc.cmdline container=%container.name)"
+  output: "AI runtime process execution (user=%user.name process=%proc.name command=%proc.cmdline container=%container.name namespace=%k8s.ns.name pod=%k8s.pod.name)"
   priority: NOTICE
   source: syscall
 
 - rule: AI service outbound connection
   desc: Observe outbound connections for operator-side AI service correlation.
   condition: evt.type=connect and fd.typechar=4 and fd.sip exists
-  output: "Outbound runtime connection (process=%proc.name destination=%fd.sip destination_name=%fd.sip.name port=%fd.sport container=%container.name)"
+  output: "Outbound runtime connection (process=%proc.name destination=%fd.sip destination_name=%fd.sip.name port=%fd.sport container=%container.name namespace=%k8s.ns.name pod=%k8s.pod.name)"
   priority: NOTICE
   source: syscall

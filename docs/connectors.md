@@ -29,6 +29,9 @@ to another origin. Denied access, collection failures, pagination limits and
 oversized or slow responses (see
 [resource limits](production.md#resource-limits-and-incomplete-scans)) make
 the scan incomplete rather than producing a clean result.
+GCP list-shape and pagination failures, malformed Okta grants and conflicting
+Entra permission labels carry explicit incomplete categories; resource names and
+the word `permission` in an input-defect diagnostic do not determine those categories.
 TLS verification cannot be disabled and `REQUESTS_CA_BUNDLE` / `SSL_CERT_FILE` are
 ignored, so a private endpoint admitted with `--allow-private-origin` behind
 internal PKI fails verification (and the scan is incomplete) unless the connector
@@ -1343,9 +1346,13 @@ guides).
 
 ### `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models` and `endpoint.ebpf`
 The offline inventories analyze host and runtime, MCP tool-list, Ollama, local
-model metadata and eBPF event exports; see the
+model metadata and eBPF event exports. Host inventory recognizes the catalog's
+Windows Jan and LM Studio install directories, and model-store attribution
+requires a literal home anchor or store-specific layout; see the
 [endpoint guide](connectors/endpoint.md). `endpoint.ebpf` reads native
-Tetragon, Falco, Tracee and Hubble event shapes as well as flat records
+Tetragon, Falco, Tracee and Hubble event shapes as well as flat records;
+native sensor hostnames are not destinations, wrapped Hubble enrichment is
+retained, and observed Google AI Private Service Connect names are recognized
 (see [eBPF event formats](connectors/endpoint.md#ebpf-event-formats)); a
 record matching none of them is reported, not silently dropped, and marks the
 scan incomplete, as does an event with a field of the wrong type or a list

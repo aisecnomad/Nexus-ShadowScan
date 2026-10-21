@@ -11,7 +11,7 @@ for people who install and operate ShadowScan. Entries name the pull request
 they came from where one exists, and say what was deliberately not carried.
 Counts and figures quoted in an entry are those of its date.
 
-## 0.1.3 — 2026-10-20
+## 0.1.3 — 2026-10-21
 
 ### Lock the sample Dockerfile's CLI dependency graph (October 20)
 
@@ -26,6 +26,167 @@ The [alert triage record](operations/security-alert-triage.md#october-20-fixture
 preserves the prior dispositions and distinguishes this correction from a
 measured Scorecard result.
 
+### Publication hygiene: diff-base diagnosis, Falco example fields and upgrade notes (October 20)
+
+- `shadowscan code --diff-base` reported every non-zero `git diff` exit as "is
+  REF a valid ref?". The hardened metadata prefix passes `--no-lazy-fetch` so
+  that Git older than 2.45 fails closed, and such a Git exits 129 (usage error)
+  before reading any ref; with Git 2.43, `--diff-base HEAD~1` asked whether
+  `HEAD~1` was valid. Status 129 now names the Git 2.45 requirement; a bad ref
+  (128) keeps the ref hint. The full-scan fallback and its warning are
+  unchanged. A regression test stubs both statuses and needs no Git.
+- The connector guide says `examples/ebpf/` holds Falco rules "that emit the
+  fields above", including `k8s.ns.name` and `k8s.pod.name`, but neither rule
+  referenced them. Falco fills `output_fields` only from the template, and the
+  reader builds each finding's resource as namespace/pod/process, so alerts
+  from the example lost both and every pod's `python3` merged into one
+  finding. Both rules now emit them; a regression test parses the example and
+  fails on the previous version.
+- The execution rule also omitted `proc.name`, the reader's only process-name
+  field, while emitting `proc.cmdline`, which it does not read. An alert from
+  that template for `ollama serve` therefore produced no matching finding.
+  The template now emits `proc.name`; a regression builds an alert using only
+  the template's selected fields and verifies the expected workload resource.
+  The test fails before the change. This is an offline reader-contract check,
+  not a live Falco deployment test.
+- `RELEASE_NOTES.md` and `docs/production-migrations.md` did not describe
+  several operator-visible changes: name-only app attribution, the
+  `related_groups`/`related_truncation` contract (only `production.md` and
+  `architecture.md` did, without #280's scope salting), Python dispatch and
+  imported-tool agents, workload-bound Kubernetes attribution, the raised
+  dependency floors, oci's new native `python-pkcs11` dependency and the
+  aiohttp advisories. Both now do.
+- Swept and found clean, with no change: all nine evaluation gates; every
+  hash lock audited; `pre-commit run --all-files`; strict docs with every page
+  in the navigation; relative links and anchors in all tracked Markdown; the 26
+  external GitHub repositories the docs cite; codespell over documentation and
+  shipped code; workflow permissions, injection-prone expressions and
+  checkout credentials; wheel and sdist contents and metadata; the pinned
+  benchmark-suite submodule commit. About 90 external links on other hosts
+  could not be reached from the sweep environment and remain unverified.
+
+### certifi CA bundle advisory (October 20)
+
+certifi 2026.10.19 replaces 2026.7.22 in the runtime, CI and docs locks. Earlier
+bundles trust `emSign ECC Root CA - G3`; eight eMudhra intermediates chaining to it
+had compromised private keys and were revoked, so an on-path holder of one could
+present a valid-looking certificate for any connector endpoint
+(GHSA-6q48-6c7w-9gw2). The advisory was published after `main`'s last audit and
+made every lock fail `pip-audit`. Both hashes match PyPI's published wheel and
+sdist; no other pin changed.
+
+### Explicit discovery-benchmark baseline (October 20)
+
+- `.github/workflows/benchmark.yml` took its regression baseline as the
+  results directory under the companion's
+  `benchmarks/shadow-ai-discovery/results/` that sorted last. Any later
+  directory there (another tool's run, a re-score or an independent
+  submission) would have become the baseline as soon as the
+  `benchmark-suite` pin moved to include it, and a directory without
+  `metrics.json` or `runs.json` would have broken the gate. The job now names
+  its baseline in `BASELINE_RUN` (`2026-10-09`), fails with an error when that
+  directory lacks either file, and prints a notice when a later directory
+  exists but is not used.
+- Behaviour is unchanged at the current pin, where `2026-10-09` is the newest
+  directory. The shell logic was exercised against a copy of the companion's
+  results tree for the pinned case, a newer directory and a missing baseline;
+  the workflow itself was not dispatched.
+- Moving the baseline is now a reviewed one-line change that says why. The
+  committed `2026-10-09` run is in-sample for ShadowScan; the gate measures
+  regression, not accuracy.
+
+### Native eBPF metadata and service-specific Google endpoints (October 20)
+
+- A native Tetragon, Tracee or Hubble record's top-level `hostname` is now
+  treated as sensor/log-shipper metadata, like Falco's, instead of a connected
+  destination. Bare Hubble flows still reserve `destination` for their endpoint
+  map, but a wrapped flow can retain a separately enriched top-level string
+  destination. Before/after regressions reproduce all four earlier mistakes.
+- Google AI destinations now recognize the documented service-specific
+  `SERVICE-ENDPOINT.p.googleapis.com` form, limited to the existing GCP AI
+  service names and one DNS label. Tests cover every listed AI service,
+  non-AI services and prefix/length boundaries, plus an offline combined
+  native-enrichment fixture. No resolver is called; observed names do not
+  prove private routing or agency.
+- Source for the DNS form: Google's
+  [Private Service Connect endpoint guide](https://docs.cloud.google.com/vpc/docs/configure-private-service-connect-apis#use_an_endpoint),
+  checked October 20. No live eBPF deployment or cloud tenant was exercised.
+
+### Shared surrender allowance across expired connectors (October 20)
+
+- The supervisor now shares its five-second allowance for copying and sanitizing
+  partial findings across every expired connector in a scan (#264), instead of
+  restarting the allowance for each job. The allowance counts time spent in
+  surrender, rather than time waiting for other jobs. Findings left after the
+  allowance is spent are omitted with an explicit timeout diagnostic; the scan
+  remains incomplete. Cancellation stays cooperative and a single preparation
+  already in progress is not interrupted, so this is not a hard wall-clock cap.
+- A deterministic regression with two overrun jobs and one second of simulated
+  preparation per finding failed before the fix (ten seconds) and now stops
+  after the shared five seconds, with both omissions counted.
+- Rechecked the earlier scalar follow-up: exact standard-library `date`,
+  `datetime`, `time`, `timedelta`, `Decimal` and `UUID` metadata leaves are already
+  retained. New regressions cover each. Arbitrary subclasses remain refused
+  on surrender because dispatching their methods would run worker-controlled
+  code on the supervisor; existing tests verify omissions are reported and
+  such methods are never called. This is advisory coding-agent verification,
+  not independent human review or live tenant acceptance.
+
+### Host inventory path precision follow-ups (October 20)
+
+- Reproduced #264's Windows context omission with a Jan inventory row naming
+  its install directory and a bundled `lms.exe` path inside LM Studio's Windows
+  install directory. The endpoint catalog now names `AppData/Local/Programs/Jan`,
+  `AppData/Local/Programs/LM Studio` and `Program Files/LM Studio` as product
+  contexts. Bare Jan and unrelated `lms.exe` remain filtered. The Jan
+  [troubleshooting guide](https://docs.jan.ai/desktop/troubleshooting) names its
+  Windows install path; LM Studio's own [issue tracker report](https://github.com/lmstudio-ai/lmstudio-bug-tracker/issues/1860)
+  records its per-user install directory, and [another report](https://github.com/lmstudio-ai/lmstudio-bug-tracker/issues/914)
+  records the system install directory. These are path-format evidence, not a
+  live Windows acceptance run.
+- Model-store home anchoring retains the original path separator and drive
+  context: relative `home/u`, `Users/u`, `root`, `var/root`, drive-relative paths,
+  named-tilde text and traversal components no longer establish a home-directory
+  shortcut. Integration review also reproduced two traversal paths that escaped
+  the home shortcut but still matched the layout fallback because a later file
+  had a model suffix; traversal now withholds model-store attribution there too.
+  Exact symbolic home prefixes and absolute Unix/Windows homes remain
+  recognized; no variable expansion, account lookup or filesystem read occurs.
+- Ten newly added cases failed before these fixes and pass afterwards, and an
+  offline export fixture exercises collection and analysis together. This is
+  coding-agent verification, not independent human review or live tenant acceptance.
+
+### Explicit categories for cloud-list and identity input defects (October 20)
+
+GCP list validation now names `unparsed-input` for malformed response shapes,
+unreachable-location fields, item arrays and pagination tokens; exhausted page
+budgets name `analysis-limit`. Empty responses, provider error envelopes and
+valid unavailable-location reports remain `upstream-error`. These categories
+come from the failure branch rather than the URL or project name embedded in
+the message. A project called `timeout-project` or `permission-403-project`
+can no longer turn these events into a timeout or access denial. Invalid Okta
+grants and conflicting Entra role labels name `unparsed-input`, avoiding the
+fallback classifier's interpretation of the word `permission` as access denial.
+
+Regression cases fail on the prior source and verify retained identity evidence,
+unchanged incomplete status, once-only conflict diagnostics and categories across
+ordinary and misleading project names. This is a focused correction for #264;
+other connectors still use the diagnostic-text fallback and are not claimed to
+have completed the explicit-reason migration. No live provider was contacted.
+
+### DNS snapshot proposal and offline boundary regression (October 20)
+
+Recorded the remaining #210 enhancement as a concrete proposal with a separate
+explicit-opt-in collector, strict versioned snapshot and deterministic local
+replay. The acceptance plan specifies TTL and exact-vantage checks, ambiguous
+and conflicting evidence, bounded collection/replay, cancellation and no
+synthetic client-contact or agent claims. Resolver transport/dependency and
+artifact interface remain review decisions; no live collector, resolver option
+or egress was added. The network guide links the proposal. An explicit test
+guards resolver calls and packet sends during ordinary offline network scans;
+the existing hermetic DNS fixture alone would have hidden a resolver call.
+The proposal stays open; these tests do not claim live DNS acceptance.
+
 ### Forward-compatible coverage-gap reasons in report readers (October 20)
 
 - `validate_coverage_summary` no longer refuses a report whose published
@@ -39,6 +200,40 @@ measured Scorecard result.
   records stay strict: `CoverageGap` rejects an unknown reason at creation.
   Regression tests cover acceptance, the preserved slug, the still-strict
   write path and the still-refused forgeries.
+
+### Repository scan completion and bounded processing (October 20)
+
+Adapted reviewed changes from
+[PR #284](https://github.com/aisecnomad/Nexus-ShadowScan/pull/284) onto the
+existing staged-scan and readiness workflows. The filesystem probe counts up to
+180,000 entries within its unchanged one-second bound and proposes at most
+1800 seconds at the 120-second default. The existing rate of 12,000 entries per
+default budget, engine ceiling and treatment of explicit timeouts are unchanged.
+This removes the earlier 200-second estimate ceiling; it does not establish a
+measured throughput or promise that every repository finishes.
+
+Recognized media and font headers can identify binary artifacts selected only
+by a broad file glob. Source and agent-instruction names still record binary
+coverage gaps. Hypothesis's `.hypothesis` example database joins the documented
+default tool-cache exclusions; disabling those exclusions restores its scope.
+Supported IPython package-manager automagic is normalized within a single-line
+notebook cell, while unknown forms and malformed multiline cells remain gaps.
+Review follow-up preserves string and comment spans for explicit magics and
+shell commands as well: command-looking lines inside a multiline string cannot
+remove its closing quotes or discard executable import binding. String spans
+are computed separately per cell, so one unfinished cell cannot mask another.
+
+Generic credential-assignment matching avoids repeated regex work inside long
+failed identifiers while preserving long valid assignments, match spans and
+order, quotas and incomplete-scan semantics. Only the exact supported grammar
+receives the optimization; other custom patterns retain their original behavior.
+Required-literal hints still derive from the declared pattern. The signature
+pack's declared patterns and the bounded native-event YAML parser are unchanged.
+
+The [incomplete-scan guide](getting-started/incomplete-scans.md) links readiness
+checks, private reports, reason categories and scope-aware remediation. No
+coverage budget, file-size, parser, sanitizer or credential quota is relaxed.
+The existing preflight schema continues to report that no scan ran.
 
 ### Local scan usability, companion benchmarks and release evidence (October 20)
 

@@ -2276,6 +2276,47 @@ def test_readme_estate_row_says_when_the_labels_were_frozen() -> None:
     assert "label-completeness pass in which every runnable tool ran once" in section
 
 
+def test_readme_and_guide_benchmark_metrics_and_sources_match_committed_evidence() -> None:
+    """Numeric table values bind to the matching report; companion URLs retain the Git pin."""
+    sections = {
+        name: _readme_section(_read(ROOT / name), "## Benchmarks")
+        for name in ("README.md", "docs/reference/product-guide.md")
+    }
+    evidence = json.loads(_BENCHMARK_EVIDENCE.read_text(encoding="utf-8"))
+    readme_rows = {
+        match.group(1): cells
+        for line in sections["README.md"].splitlines()
+        if line.startswith("|")
+        for cells in [[cell.strip() for cell in line.strip("|").split("|")]]
+        if (match := re.search(r"Nexus-ShadowBench/blob/[0-9a-f]{40}/([^)]*)", cells[0]))
+    }
+    cases_report = "benchmarks/shadowbench/cases/results/2026-10-11/REPORT.md"
+    code_report = "benchmarks/shadow-ai-discovery/results/2026-10-09/REPORT.md"
+    cases_recall = evidence["cases_tools"]["shadowscan"]["estate"]["recall"]
+    code_f1 = evidence["code"]["tool"]["value_level"]["in_scope"]["f1"]
+    assert re.search(rf"\brecall\s+{re.escape(f'{cases_recall:.3f}')}\b", readme_rows[cases_report][2])
+    assert re.search(rf"\bF1\s+{re.escape(f'{code_f1:.3f}')}\b", readme_rows[code_report][2])
+    guide_rows = [
+        line for line in sections["docs/reference/product-guide.md"].splitlines() if line.startswith("|")
+    ]
+    [code_row] = [row for row in guide_rows if f"/{code_report}" in row]
+    assert _percentages(evidence["code"]["tool"]["value_level"]["in_scope"]) in code_row
+    pin = subprocess.check_output(
+        ["git", "-C", str(ROOT), "ls-files", "--stage", "--", "benchmark-suite"], text=True
+    ).split()[1]
+    for section in sections.values():
+        linked = re.findall(r"https://github\.com/aisecnomad/Nexus-ShadowBench/blob/([0-9a-f]{40})/", section)
+        assert linked and set(linked) == {pin}
+    links = dict(re.findall(r"\[([^]]+)\]\((https://[^)]+)\)", sections["docs/reference/product-guide.md"]))
+    for count, report in (
+        (34, "tools/benchmark/results-realworld/REPORT.md"),
+        (41, "tools/benchmark_realworld/results/REPORT.md"),
+        (326, "tools/benchmark/realworld/REPORT.md"),
+    ):
+        [url] = [url for label, url in links.items() if re.match(rf"{count}\b", label)]
+        assert url == f"https://github.com/aisecnomad/Nexus-ShadowBench/blob/{pin}/{report}"
+
+
 def test_estate_benchmark_documents_say_later_shadowscan_runs_are_in_sample() -> None:
     """ShadowScan was tuned with the 2026-10-11 estate run's errors in view.
 

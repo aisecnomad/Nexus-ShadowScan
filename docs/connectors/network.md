@@ -10,6 +10,9 @@ remote MCP server.
     The network connector reads exported logs. It makes no network request
     and captures no packets.
 
+Live DNS observation snapshots remain a [proposal](../proposals/dns-observation-snapshots.md)
+tracked in #210. No resolver option or live DNS collector is implemented.
+
 ## `network.logs`
 
 Each input record is read as a DNS query, a TLS connection or a flow:

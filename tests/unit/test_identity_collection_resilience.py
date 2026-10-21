@@ -9,6 +9,7 @@ import responses
 
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.identity.auth0 import Auth0Connector
+from shadowscan.connectors.identity.entra import EntraConnector, _GraphExport
 from shadowscan.connectors.identity.okta import OktaConnector
 from shadowscan.models import ScanStats, now_iso
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -230,6 +231,23 @@ def test_okta_isolates_a_malformed_application_record(index):
     findings = list(connector.analyze(records))
     assert [f.title for f in findings] == ["Okta service app: Service a", "Okta service app: Service c"]
     assert ctx.stats.incomplete and any("malformed application record" in w for w in ctx.stats.warnings)
+
+
+def test_okta_invalid_grant_is_an_input_defect_not_an_access_denial(index):
+    ctx = _ctx(index)
+    findings = list(OktaConnector(ctx).analyze([_okta_service_app("a", _grants=[{"scopeId": 3}])]))
+    assert len(findings) == 1
+    assert ctx.stats.incomplete_reasons == {"unparsed-input": 1}
+
+
+def test_entra_conflicting_permission_labels_are_an_input_defect_not_an_access_denial(index):
+    ctx = _ctx(index)
+    connector = EntraConnector(ctx)
+    graph = _GraphExport()
+    graph.role_map_labels["role-id"] = {"Mail.Read", "Files.Read"}
+    assert connector._role_label(graph, "role-id") == "role-id"
+    assert connector._role_label(graph, "role-id") == "role-id"
+    assert ctx.stats.incomplete_reasons == {"unparsed-input": 1}
 
 
 def test_auth0_isolates_a_malformed_client_record(index):

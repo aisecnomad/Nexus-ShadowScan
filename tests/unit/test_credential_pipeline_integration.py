@@ -89,6 +89,28 @@ def test_no_candidate_cap_hides_a_key_behind_rejected_references(run_connector, 
     assert not stats.incomplete and not stats.errors
 
 
+@pytest.mark.parametrize("keyword", ["API_KEY", "ACCESS_TOKEN", "CLIENT_SECRET", "PASSWORD", "CREDENTIAL"])
+@pytest.mark.parametrize("prefix_length", [256, 4096])
+def test_long_credential_identifier_keeps_its_literal_finding(
+    run_connector, tmp_path, keyword, prefix_length
+):
+    # PR #284's proposed 255-character prefix cap silently lost these valid
+    # Python assignments while reporting the scan complete.
+    name = "X" * prefix_length + "_" + keyword
+    secrets, stats = _scan(run_connector, tmp_path, {"settings.py": f'{name} = "{RANDOM}"\n'})
+    assert secrets["settings.py"].metadata["count"] == 1
+    assert not stats.incomplete and not stats.errors
+
+
+def test_identifier_run_without_a_keyword_does_not_hide_a_later_credential(run_connector, tmp_path):
+    # Each dash creates a word boundary where the old unbounded pattern
+    # restarted. The later key makes both literal prefilter hints present.
+    text = "# " + "a-" * 16_000 + "API\n" + f'BACKUP_API_KEY = "{RANDOM}"\n'
+    secrets, stats = _scan(run_connector, tmp_path, {"settings.py": text})
+    assert secrets["settings.py"].metadata["count"] == 1
+    assert not stats.incomplete and not stats.errors
+
+
 def test_placeholders_do_not_make_a_sample_env_file_incomplete(run_connector, tmp_path):
     samples = "".join(f"SERVICE{n}_API_KEY=sk-your-key-here-{n}a7c9e1f3\n" for n in range(8))
     secrets, stats = _scan(run_connector, tmp_path, {".env.example": samples})

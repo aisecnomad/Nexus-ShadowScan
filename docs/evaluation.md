@@ -37,7 +37,9 @@ Run third-party tools only on an externally isolated, disposable runner with
 egress disabled and no credentials. See its README for the method and its
 REPORT.md for the measured numbers; neither replaces the regression corpora
 above. The `compare` subcommand and `.github/workflows/benchmark.yml` turn the
-committed results into a weekly regression gate for ShadowScan: a drop in
+committed run that the workflow's `BASELINE_RUN` names (`2026-10-09`, not
+whichever results directory sorts last) into a weekly regression gate for
+ShadowScan: a drop in
 in-scope F1 of more than one point, any drop in repository-level recall, a
 newly flagged control or near-miss repository, or a repository whose scan was
 complete in the baseline and is now incomplete (exit 3) fails the run.
