@@ -13,6 +13,45 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Publication hygiene: diff-base diagnosis, Falco example fields and upgrade notes (October 20)
+
+- `shadowscan code --diff-base` reported every non-zero `git diff` exit as "is
+  REF a valid ref?". The hardened metadata prefix passes `--no-lazy-fetch` so
+  that Git older than 2.45 fails closed, and such a Git exits 129 (usage error)
+  before reading any ref; with Git 2.43, `--diff-base HEAD~1` asked whether
+  `HEAD~1` was valid. Status 129 now names the Git 2.45 requirement; a bad ref
+  (128) keeps the ref hint. The full-scan fallback and its warning are
+  unchanged. A regression test stubs both statuses and needs no Git.
+- The connector guide says `examples/ebpf/` holds Falco rules "that emit the
+  fields above", including `k8s.ns.name` and `k8s.pod.name`, but neither rule
+  referenced them. Falco fills `output_fields` only from the template, and the
+  reader builds each finding's resource as namespace/pod/process, so alerts
+  from the example lost both and every pod's `python3` merged into one
+  finding. Both rules now emit them; a regression test parses the example and
+  fails on the previous version.
+- The execution rule also omitted `proc.name`, the reader's only process-name
+  field, while emitting `proc.cmdline`, which it does not read. An alert from
+  that template for `ollama serve` therefore produced no matching finding.
+  The template now emits `proc.name`; a regression builds an alert using only
+  the template's selected fields and verifies the expected workload resource.
+  The test fails before the change. This is an offline reader-contract check,
+  not a live Falco deployment test.
+- `RELEASE_NOTES.md` and `docs/production-migrations.md` did not describe
+  several operator-visible changes: name-only app attribution, the
+  `related_groups`/`related_truncation` contract (only `production.md` and
+  `architecture.md` did, without #280's scope salting), Python dispatch and
+  imported-tool agents, workload-bound Kubernetes attribution, the raised
+  dependency floors, oci's new native `python-pkcs11` dependency and the
+  aiohttp advisories. Both now do.
+- Swept and found clean, with no change: all nine evaluation gates; every
+  hash lock audited; `pre-commit run --all-files`; strict docs with every page
+  in the navigation; relative links and anchors in all tracked Markdown; the 26
+  external GitHub repositories the docs cite; codespell over documentation and
+  shipped code; workflow permissions, injection-prone expressions and
+  checkout credentials; wheel and sdist contents and metadata; the pinned
+  benchmark-suite submodule commit. About 90 external links on other hosts
+  could not be reached from the sweep environment and remain unverified.
+
 ### certifi CA bundle advisory (October 20)
 
 certifi 2026.10.19 replaces 2026.7.22 in the runtime, CI and docs locks. Earlier

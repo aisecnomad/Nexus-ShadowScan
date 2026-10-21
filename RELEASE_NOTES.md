@@ -140,9 +140,39 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   unset `connector_timeout_seconds` is raised to fit a large tree. Remove
   `connector_timeout_seconds: 120` from configurations copied from earlier
   sample configurations, or a large repository keeps exiting 3 at 120 seconds.
+- Dependency floors rise to PyJWT 2.15.1, regex 2026.9.29, boto3 1.43.114,
+  google-auth 2.62.0, azure-identity 1.26.0 and oci 2.188.0. oci 2.188.0 adds a
+  hard dependency on `python-pkcs11` 0.9.4, a native extension with wheels for
+  CPython 3.11-3.14 on Linux and macOS. Rebuild images from the hash locks
+  rather than upgrading packages in place. See the
+  [pending migration notes](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production-migrations.md).
 
 ### What changes in scan results
 
+- Application display names, publishers and descriptions no longer establish
+  an AI vendor by themselves, in identity-provider, SaaS and low-code app
+  records and in JWT client names. Name-only records keep provisional
+  `metadata.potential_*` hints at possible confidence and lose vendor-specific
+  capabilities. A JWT client name alone no longer turns a human or delegated
+  token into an agent identity. Expect lower scores and fewer vendor
+  attributions on such records; a lower score does not mean an integration
+  was removed.
+- Exact-identifier groups larger than 25 observations, and capped exact pairs,
+  keep compact `metadata.related_groups` memberships, with
+  `metadata.related_truncation` explaining omitted pairwise expansion. Earlier,
+  such groups lost their links. Pairwise `related` lists are not exhaustive:
+  consumers that reconstruct cross-surface relationships must read both.
+  Large-group tokens include the member's exact-scope partition. Capped
+  exact pairs can retain compatible partial scopes, with each two-member
+  token bound to both endpoints and their combined scope; those pairs do
+  not combine conflicting scopes into a larger group. Filtering a report
+  recomputes member counts and drops a token fewer than two retained
+  findings share.
+- Code scans can classify supported Python provider tool loops and locally
+  imported AI SDK executable tools as agents, so findings that were SDK usage
+  can become agents. Kubernetes image attribution requires a parsed,
+  recognized workload; Compose and Dockerfile product evidence remains.
+  Establish a fresh baseline for the pinned revision.
 - New commands: `shadowscan endpoint` scans a workstation profile's AI client
   configuration; `shadowscan merge` combines JSON reports from several machines
   into one fleet report; `shadowscan mcp-registry snapshot` writes a listing to pin.
@@ -240,6 +270,11 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
 
 ### Security and safety
 
+- The runtime lock pins aiohttp (pulled in by oci) to 3.14.5, retaining the
+  fixes introduced in 3.14.4 for
+  GHSA-2g87-pp6c-29x5 (unbounded memory or CPU on crafted requests),
+  GHSA-494j-54xm-rwp3 (a Secure cookie sent over plain HTTP) and
+  GHSA-5wr8-gcqf-gqf3 (keepalive timeout not applied before the first bytes).
 - A triage reply steered by scanned content cannot change a finding's risk,
   shadow status, kind or tags; a reply over 16 KiB is refused unread, a reply
   that carries more than one verdict object is `unparseable`, and requests send

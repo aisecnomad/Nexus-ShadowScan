@@ -710,7 +710,12 @@ def diff_changed_files(
     except (OSError, subprocess.SubprocessError) as exc:
         raise DiffError(f"git diff failed: {exc}") from None
     if result.returncode != 0:
-        raise DiffError(f"git diff exited with status {result.returncode}; is {base_ref!r} a valid ref?")
+        # 129 is Git's usage error: an older Git rejects an option the hardened
+        # prefix passes (--no-lazy-fetch arrived in 2.45). A bad ref exits 128.
+        hint = (
+            "Git 2.45 or newer is required" if result.returncode == 129 else f"is {base_ref!r} a valid ref?"
+        )
+        raise DiffError(f"git diff exited with status {result.returncode}; {hint}")
     output = result.stdout
     if not output:
         return frozenset()

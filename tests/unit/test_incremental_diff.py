@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -188,6 +189,28 @@ class TestDiffChangedFiles:
         result = self.diff(repo, "main~1", ctx)
         assert "app.py" in result
         assert not marker.exists(), "diff.external was executed"
+
+
+@pytest.mark.parametrize(
+    ("status", "hint"),
+    [(129, "Git 2.45 or newer is required"), (128, "is 'main' a valid ref?")],
+)
+def test_diff_failure_names_its_likely_cause(
+    tmp_path: Path, index, monkeypatch, status: int, hint: str
+) -> None:
+    """An old Git's usage error is not reported as a bad ref; both still fall back to a full scan."""
+    from shadowscan.connectors.base import ConnectorContext
+    from shadowscan.utils import git
+
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(git, "require_local_git_metadata", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        git,
+        "run_bounded_metadata",
+        lambda cmd, *args, **kwargs: subprocess.CompletedProcess(cmd, status, stdout="", stderr=""),
+    )
+    with pytest.raises(git.DiffError, match=f"status {status}; {re.escape(hint)}"):
+        git.diff_changed_files(tmp_path, "main", ConnectorContext(config={}, index=index))
 
 
 # =========================================================================
