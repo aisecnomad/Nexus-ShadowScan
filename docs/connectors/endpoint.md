@@ -269,7 +269,11 @@ past the hundredth are not read. Each producer, and the flat shape, records
 one warning for malformed fields and one for the list limit, naming the
 producer and no value from the export. See
 `examples/ebpf/` for a Tetragon TracingPolicy and Falco rules that emit the
-fields above.
+fields above. The Falco execution rule emits `proc.name` explicitly: the
+reader does not infer it from `proc.cmdline`. Keep that field and the namespace
+and pod fields when adapting the output templates, so matching processes retain
+their workload identity. Template fields can still be unavailable when the
+producer has not resolved the container metadata.
 
 MCP tool definitions are analyzed for risky capability names, prompt-injection
 or exfiltration indicators, missing declared authentication, and duplicate tool
