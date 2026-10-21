@@ -69,6 +69,11 @@ from urllib3.connectionpool import HTTPSConnectionPool
 from urllib3.exceptions import ConnectTimeoutError, NameResolutionError, NewConnectionError
 
 from shadowscan import __version__
+from shadowscan.utils.http_scope import _allow_private_origin, _request_limits
+from shadowscan.utils.http_scope import reset_allow_private_origin as reset_allow_private_origin
+from shadowscan.utils.http_scope import reset_request_deadline as reset_request_deadline
+from shadowscan.utils.http_scope import set_allow_private_origin as set_allow_private_origin
+from shadowscan.utils.http_scope import set_request_deadline as set_request_deadline
 from shadowscan.utils.redaction import sanitize_text
 
 log = logging.getLogger("shadowscan.http")
@@ -83,14 +88,7 @@ MAX_RETRY_DELAY = 120
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 _HEADER_NAME = re.compile(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+\Z")
 
-_allow_private_origin: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "shadowscan_allow_private_origin", default=False
-)
 _ca_bundle: contextvars.ContextVar[str | None] = contextvars.ContextVar("shadowscan_ca_bundle", default=None)
-# (monotonic deadline, cancellation event) of the connector the current worker runs.
-_request_limits: contextvars.ContextVar[tuple[float | None, threading.Event | None]] = contextvars.ContextVar(
-    "shadowscan_request_limits", default=(None, None)
-)
 _acquisition_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar(
     "shadowscan_http_acquisition_deadline", default=None
 )
@@ -373,18 +371,6 @@ METADATA_NETS = (
 )
 
 
-def set_allow_private_origin(enabled: bool) -> contextvars.Token[bool]:
-    """Set the current worker's policy; callers must reset the returned token."""
-    if not isinstance(enabled, bool):
-        raise TypeError("allow_private_origin must be a boolean")
-    return _allow_private_origin.set(enabled)
-
-
-def reset_allow_private_origin(token: contextvars.Token[bool]) -> None:
-    """Restore the policy after a connector finishes, including failed scans."""
-    _allow_private_origin.reset(token)
-
-
 def set_ca_bundle(path: str | None) -> contextvars.Token[str | None]:
     """Trust only this PEM bundle for clients the current worker creates.
 
@@ -397,21 +383,6 @@ def set_ca_bundle(path: str | None) -> contextvars.Token[str | None]:
 
 def reset_ca_bundle(token: contextvars.Token[str | None]) -> None:
     _ca_bundle.reset(token)
-
-
-def set_request_deadline(
-    deadline: float | None, cancelled: threading.Event | None
-) -> contextvars.Token[tuple[float | None, threading.Event | None]]:
-    """Let clients created by the current worker stop retrying once the scan is over.
-
-    ``deadline`` is a ``time.monotonic()`` value and ``cancelled`` the
-    connector's cancellation event. Callers must reset the returned token.
-    """
-    return _request_limits.set((deadline, cancelled))
-
-
-def reset_request_deadline(token: contextvars.Token[tuple[float | None, threading.Event | None]]) -> None:
-    _request_limits.reset(token)
 
 
 # RFC 6052 well-known NAT64 prefix. A DNS64 resolver maps every IPv4 name into it, so

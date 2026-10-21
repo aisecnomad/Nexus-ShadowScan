@@ -62,7 +62,7 @@ from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.signatures.loader import signature_source_digest
 from shadowscan.triage import Triage, TriageConfigError, skip
 from shadowscan.utils.credential_identity import reset_credential_identity_key, set_credential_identity_key
-from shadowscan.utils.http import (
+from shadowscan.utils.http_scope import (
     reset_allow_private_origin,
     reset_request_deadline,
     set_allow_private_origin,

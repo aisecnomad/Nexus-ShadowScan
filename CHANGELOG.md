@@ -22,6 +22,10 @@ explain operator migrations. Earlier per-change entries are preserved in the
   such a call is read to its end within a per-text work budget, and the
   credential-call lexer crosses inert text in runs, 1.66x faster with
   identical output.
+- Local scans start faster: built-in signature patterns compile on first use,
+  outside each input's matching budget (credential patterns in the linear form
+  the matcher runs), and `import shadowscan.cli` no longer loads `requests`,
+  `urllib3` or `ssl` for a local `shadowscan code` run.
 
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the
