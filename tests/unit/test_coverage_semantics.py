@@ -926,9 +926,14 @@ def test_profile_ci_never_declares_notebook_outputs_unread_for_credentials(tmp_p
     _, ci = run_connector(
         "code.filesystem", path=str(tmp_path), use_git=False, profile="ci", max_file_size=1_000
     )
+    # Never declared: the gap is charged to the budget at a whole entry, as any
+    # other oversize file whose bytes credential detection did not read.
     assert ci.stats.declared_omissions == 0
-    assert ci.stats.incomplete and ci.stats.incomplete_reasons == {"oversize-file": 1}
-    assert any("saved outputs not scanned for credentials" in w for w in ci.stats.warnings)
+    assert [(gap["path"], gap["kind"]) for gap in ci.stats.coverage["details"]] == [
+        ("docs/walkthrough.ipynb", "partial")
+    ]
+    assert ci.stats.coverage["weighted_gap_entries"] == 1.0
+    assert any("text outputs over max_file_size not scanned for credentials" in w for w in ci.stats.warnings)
 
 
 def test_a_credential_limit_in_test_code_is_never_declared(tmp_path, run_connector):

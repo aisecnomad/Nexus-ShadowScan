@@ -64,6 +64,7 @@ from shadowscan.connectors.code.model_identifiers import (
     _MODEL_QUOTED_RE,
     _MODEL_ROUTE_PREFIXES,
     _MODEL_STEMS,
+    MAX_MODEL_LITERAL_OCCURRENCES,
     MAX_MODEL_LITERALS_PER_FILE,
     MAX_MODEL_MATCHES_PER_SIGNATURE,
     _has_model_stem,
@@ -170,6 +171,7 @@ from shadowscan.utils.text import (
     BINARY_CONTENT_ERROR,
     line_counter,
     notebook_to_source,
+    notebook_without_binary_data,
     read_credential_text,
     read_text,
     redact,
@@ -590,12 +592,33 @@ class FileScanner:
         if len(text) > self.max_file_size:
             gap = f"code.filesystem: {rel}: skipped, notebook code cells exceed max_file_size"
         elif oversized_notebook and self.scan_secrets:
-            # Code cells are analyzed as usual. Saved outputs are
-            # read only for credentials, and not at this size.
-            gap = (
-                f"code.filesystem: {rel}: notebook over max_file_size; code cells analyzed, "
-                "saved outputs not scanned for credentials"
-            )
+            # Code cells are analyzed as usual. Saved outputs are read only for
+            # credentials: their text, once the base64 images, audio, video and
+            # PDFs that make a notebook large are emptied, when that fits.
+            outputs, removed = notebook_without_binary_data(document)
+            if len(outputs) <= self.max_file_size:
+                raw_notebook = outputs
+                self.walker.note_file(
+                    rel,
+                    f"notebook over max_file_size; {removed:,} characters of base64 image, audio, video "
+                    "and PDF output data not read, every text output scanned for credentials",
+                )
+            elif self.strict_coverage:
+                gap = (
+                    f"code.filesystem: {rel}: notebook over max_file_size; code cells analyzed, "
+                    "saved outputs not scanned for credentials"
+                )
+            else:
+                # Its code is analyzed, and its text outputs are data like any other
+                # oversize file's: one whole entry of the budget (``_oversize_gap``).
+                self.walker._budgeted_gap(
+                    rel,
+                    f"code.filesystem: {rel}: notebook over max_file_size; code cells analyzed, "
+                    "text outputs over max_file_size not scanned for credentials; coverage gap",
+                    full_weight=True,
+                    reason="oversize-file",
+                    unread_credentials=True,
+                )
         if gap is not None:
             self.walker._gap(
                 rel, gap, error=self.strict_coverage, reason="oversize-file", unread_credentials=True
@@ -1331,8 +1354,9 @@ class FileScanner:
         ``model_literal`` (weight capped at emit time) and, outside source
         files, ``data_mention``: a model id in a data file names a model as a
         domain names a host, so it anchors nothing and keeps a pricing table a
-        catalog. At most ``MAX_MODEL_LITERALS_PER_FILE`` literals with a
-        vendor stem are read per pass (ordinary strings are skipped in the match
+        catalog. At most ``MAX_MODEL_LITERAL_OCCURRENCES`` literals with a
+        vendor stem are read per pass, and ``MAX_MODEL_LITERALS_PER_FILE`` distinct
+        ones matched (ordinary strings are skipped in the match
         iterator and do not count) and ``MAX_MODEL_MATCHES_PER_SIGNATURE``
         matches kept per signature; unread candidates leave coverage incomplete.
         """
@@ -1352,27 +1376,37 @@ class FileScanner:
             _MODEL_QUOTED_RE,
             content_text,
             "model identifiers",
-            MAX_MODEL_LITERALS_PER_FILE + 1,
+            MAX_MODEL_LITERAL_OCCURRENCES + 1,
             in_comment if starts else None,
             lambda m: _has_model_stem(m.group(2)),
         )
-        limited = len(quoted) > MAX_MODEL_LITERALS_PER_FILE
-        literals.extend((m.start(2), m.group(2)) for m in quoted[:MAX_MODEL_LITERALS_PER_FILE])
+        limited = len(quoted) > MAX_MODEL_LITERAL_OCCURRENCES
+        literals.extend((m.start(2), m.group(2)) for m in quoted[:MAX_MODEL_LITERAL_OCCURRENCES])
         if not source:
             keyed = _finditer(
                 _MODEL_KEY_VALUE_RE,
                 content_text,
                 "model identifiers",
-                MAX_MODEL_LITERALS_PER_FILE + 1,
+                MAX_MODEL_LITERAL_OCCURRENCES + 1,
                 selected=lambda m: _has_model_stem(m.group(1)),
             )
-            limited = limited or len(keyed) > MAX_MODEL_LITERALS_PER_FILE
-            literals.extend((m.start(1), m.group(1)) for m in keyed[:MAX_MODEL_LITERALS_PER_FILE])
+            limited = limited or len(keyed) > MAX_MODEL_LITERAL_OCCURRENCES
+            literals.extend((m.start(1), m.group(1)) for m in keyed[:MAX_MODEL_LITERAL_OCCURRENCES])
+        # A literal's matches depend on its value alone, and a repeat was never
+        # recorded twice (``seen`` below): each distinct value is matched once, at
+        # its first offset, and the bound counts distinct values. A package's own
+        # dotted module names ("llama_index.core", carrying the "llama" stem)
+        # repeat throughout its mapping files.
+        first: dict[str, int] = {}
+        for offset, value in sorted(literals):
+            first.setdefault(value, offset)
+        limited = limited or len(first) > MAX_MODEL_LITERALS_PER_FILE
+        literals = sorted((offset, value) for value, offset in first.items())[:MAX_MODEL_LITERALS_PER_FILE]
         if limited:
             self.walker._gap(
                 file.rel,
                 f"code.filesystem: {file.rel}: model identifiers read from the first "
-                f"{MAX_MODEL_LITERALS_PER_FILE} literals only; later ones were not matched",
+                f"{MAX_MODEL_LITERALS_PER_FILE} distinct literals only; later ones were not matched",
                 suffix=False,
                 reason="analysis-limit",
             )
@@ -1456,6 +1490,7 @@ class FileScanner:
                         file,
                         f"code.filesystem: {file.rel}: import-bound analysis skipped for notebook "
                         f"{cells} {numbers}, which {verb} not parse; lexical evidence retained",
+                        notebook_cells=len(unparsed) < len(file.cells),
                     )
             bound = bound_source_matches(
                 self.index,
@@ -2133,16 +2168,35 @@ class FileScanner:
             reason="analysis-limit",
         )
 
-    def _syntax_warning(self, file: _SourceFile, message: str) -> None:
+    def _syntax_warning(self, file: _SourceFile, message: str, *, notebook_cells: bool = False) -> None:
         """Record source that did not parse: a gap when ``_syntax_gap`` says so, else a plain warning.
 
         A gap goes through ``_gap``, so the ci profile declares it under a
         template, example or test path, and is counted as unparsed input.
+
+        ``notebook_cells`` says only some cells of a notebook did not parse. Jupyter
+        runs each cell alone, so the binder still read every other cell and the
+        failed ones keep their lexical evidence; tutorial notebooks hold
+        placeholders (``api_key = <YOUR API KEY>``) and shell lines pasted into
+        code cells on purpose. Such a notebook is one partial gap charged to the
+        coverage budget at a whole entry, unless the accounting is strict or the
+        ci profile declares it; a tree of them still exhausts the budget.
         """
-        if self._syntax_gap(file):
-            self.walker._gap(file.rel, message, suffix=False, reason="unparsed-input")
-        else:
+        if not self._syntax_gap(file):
             self.ctx.warn(message, incomplete=False)
+        elif (
+            notebook_cells
+            and not self.walker._strict_accounting()
+            and not self.walker._declared_omission(file.rel)
+        ):
+            self.walker._ledger_gap(
+                file.rel,
+                f"{message}; the other cells were analyzed; coverage gap",
+                full_weight=True,
+                reason="unparsed-input",
+            )
+        else:
+            self.walker._gap(file.rel, message, suffix=False, reason="unparsed-input")
 
     def _scan_undecodable_file(
         self,

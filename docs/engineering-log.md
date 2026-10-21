@@ -13,6 +13,48 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Notebooks no longer leave llama_index incomplete (October 21)
+
+- A default scan of run-llama/llama_index still exited 3 after the October 20
+  fixes, on 40 diagnostics: 18 notebooks over `max_file_size`, 21 notebook
+  cells that did not parse and one model-literal limit. Measured cause by
+  cause, then fixed or recalibrated; the scan now completes with 22 tolerated
+  gaps against a budget of about 194 entries.
+- IPython syntax the binder did not emulate (12 cells): a line magic spelled
+  with a space (`% pip install x`, `% autoreload 2`, recognised by a line
+  magic's own name, so a continued `% name` modulo stays Python), lines a
+  backslash continues after a magic or shell line (`%pip install --upgrade \`),
+  and an assigned shell escape or magic (`shell_output = ! gsutil du`, which
+  keeps its target). Each becomes an inert expression with every offset and
+  line kept. `%%ngql`, `%%cypher`, `%%gremlin`, `%%sparql`, `%%kql`, `%%kusto`,
+  `%%graphql`, `%%mermaid` and `%%dot` join the cell magics whose body is not
+  Python.
+- Notebooks over `max_file_size` (18): their size is base64 output data
+  (multimodal demos' rendered images). Outputs are now scanned for
+  credentials with every value under a binary MIME key emptied (`image/*`
+  except SVG, `audio/*`, `video/*`, `application/pdf`, in outputs and markdown
+  attachments): 1.1-3.1 MB notebooks become 11-37 KB, with every line at its
+  number, in 30-80 ms. The scanner reads images nowhere else. A notebook whose
+  text outputs alone exceed the limit (docugami's 1.37 MB `text/plain`) is one
+  oversize gap of the budget at a whole entry, as any other oversize file's
+  unread data is; never declared by the `ci` profile, an error under
+  `strict_coverage`.
+- Cells that are not Python (14, in 10 notebooks): placeholders
+  (`<FILL-IN>`, `<YOUR API KEY>`), a pasted `export` line or Colab badge, typos.
+  Jupyter runs cells one at a time and the binder already read the others, so
+  such a notebook is one partial gap of the budget at a whole entry. A
+  notebook none of whose cells parse stays a full gap, as does every one
+  under strict accounting.
+- `llama_index/core/command_line/mappings.json` names 1,111 literals carrying
+  the `llama` vendor stem (the package's own module paths), 580 of them
+  distinct, past the 400-literal bound. A literal's matches depend on its
+  value alone and a repeat was never recorded twice, so each distinct value is
+  now matched once; the bound is 2,000 distinct values and 20,000
+  occurrences. Matching one costs about 80 us of CPU, so the bound costs at
+  most about 0.2 s a file, against about 17 s for an unbounded 1 MB file.
+- The evaluation corpora are unchanged (all nine gates pass, with the
+  realistic corpus's one known false positive as on main).
+
 ### Unrendered template source is a budgeted gap, not an outright failure (October 21)
 
 - microsoft/autogen still exited 3 on one file after the October 20 fixes:

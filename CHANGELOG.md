@@ -36,7 +36,8 @@ Ordinary repositories finish complete more often: binary media headers,
 a ReDoS-bounded inline-credential pattern, a filesystem deadline sized by entries
 and bytes, IPython automagic, `.hypothesis` exclusion, faster built-in pack
 loading, unparsed-input triage, unrendered template source charged to the
-coverage budget, unclosed credential calls and dangling-link
+coverage budget, notebooks (more IPython syntax, credential scans of large notebooks without
+their base64 output data, broken tutorial cells and repeated model literals charged to the budget), unclosed credential calls and dangling-link
 descriptions. `shadowscan code --preflight` also lists the static coverage gaps
 a full scan would record, `--max-file-size` sets the size limit, and exit 3
 prints per-reason remediation with an incomplete-scans guide. The command line
