@@ -463,6 +463,58 @@ def notebook_to_source(
     return "\n".join(out)
 
 
+# The JSON tokens of a notebook document (already parsed as strict JSON, so its
+# strings hold no raw line break): strings, punctuation, scalars and blanks.
+_NOTEBOOK_JSON_TOKEN = re.compile(r'"(?:[^"\\\n]|\\.)*+"|[{}\[\]:,]|[^\s{}\[\]:,"]++|\s++')
+
+
+def _binary_mime(key: str) -> bool:
+    """Whether a MIME bundle key holds base64-encoded binary data, as nbformat stores it."""
+    key = key.lower()
+    if key.startswith("image/"):
+        return key != "image/svg+xml"  # SVG is XML text, read like any other output
+    return key.startswith(("audio/", "video/")) or key == "application/pdf"
+
+
+def notebook_without_binary_data(document: str) -> tuple[str, int]:
+    """``document`` with every value under a binary MIME key emptied, and the characters removed.
+
+    A notebook keeps rendered images, audio, video and PDFs of its outputs and
+    markdown attachments as base64 strings under their MIME type
+    (``"image/png": "iVBOR..."``), and that data is most of a large notebook.
+    The scanner reads no image anywhere else, so emptying those strings loses
+    nothing it would read, while every text output (streams, tracebacks,
+    ``text/plain``, HTML, JSON, SVG) stays. Each emptied value is a string or an
+    array of strings on its own lines, so every line keeps its number and only
+    columns after it move. ``document`` must be valid JSON (``notebook_to_source``
+    has parsed it).
+    """
+    out: list[str] = []
+    removed = 0
+    # One frame per open container: [is_object, key of the value being read,
+    # expecting a key, inside an array under a binary key].
+    stack: list[list[Any]] = []
+    for match in _NOTEBOOK_JSON_TOKEN.finditer(document):
+        piece = match.group()
+        frame = stack[-1] if stack else None
+        if piece in "{[":
+            binary_array = piece == "[" and frame is not None and frame[0] and _binary_mime(frame[1] or "")
+            stack.append([piece == "{", None, True, binary_array])
+        elif piece in "}]":
+            stack.pop()
+        elif piece == ",":
+            if frame is not None and frame[0]:
+                frame[2] = True
+        elif piece.startswith('"') and frame is not None:
+            if frame[0] and frame[2]:
+                frame[1], frame[2] = strict_json_loads(piece), False
+            elif (frame[0] and _binary_mime(frame[1] or "")) or (not frame[0] and frame[3]):
+                removed += len(piece) - 2
+                piece = '""'
+        out.append(piece)
+    return "".join(out), removed
+
+
 def parse_timestamp(value: Any) -> datetime | None:
     """Best-effort timestamp parsing.
 

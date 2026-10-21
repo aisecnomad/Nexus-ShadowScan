@@ -28,9 +28,9 @@ These are known failure categories, not a measured ranking across repositories.
 
 | Reason | Next step |
 |---|---|
-| `oversize-file` | Review the affected files. Exclude generated or out-of-scope data with a specific `--exclude` pattern, or configure `max_file_size` through the filesystem connector after assessing memory cost. |
+| `oversize-file` | A notebook made large by saved images is read for credentials with that base64 output data left out; one whose text outputs alone exceed the limit is one budgeted gap. Review the affected files. Exclude generated or out-of-scope data with a specific `--exclude` pattern, or configure `max_file_size` through the filesystem connector after assessing memory cost. |
 | `timeout` | Leave the connector timeout unset to allow automatic scaling, or set a deliberate larger `--connector-timeout-seconds`. Split very large scans into explicit roots. A separate process deadline still applies. |
-| `unparsed-input` | Correct malformed source or configuration and use a supported text encoding. Unknown binary content and unparsed notebook cells remain gaps. Exclude a fixture only when it is outside the intended scope. |
+| `unparsed-input` | Correct malformed source or configuration and use a supported text encoding. Unknown binary content remains a gap. A notebook in which only some cells do not parse (tutorial placeholders such as `<YOUR API KEY>`) is one partial gap charged to the coverage budget; its other cells are analyzed, and one none of whose cells parse stays a full gap. Exclude a fixture only when it is outside the intended scope. |
 | `unresolved-link` / `unscanned-input` | Inspect missing submodules, linked targets or unfetched content. Make the intended input available, scan its target explicitly, or document its exclusion. |
 | `analysis-limit` / `sanitization-limit` | Inspect the affected input and the named limit. Reduce or split generated data where appropriate. Sanitization limits must not be bypassed to expose raw evidence. |
 | `access-denied` / `upstream-error` | Check the connector's documented scopes, connectivity and rate limits, then rerun. |

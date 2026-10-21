@@ -18,9 +18,13 @@ import regex
 # model the code may call, not an installed SDK (see _scan_model_literals).
 MODEL_LITERAL_MAX_WEIGHT = 0.5
 MODEL_IDS_ONLY_MAX_CONFIDENCE = 0.6
-# Model-id candidates (literals with a vendor stem) the model-identifier pass
-# reads per file before it stops; ordinary strings do not count.
-MAX_MODEL_LITERALS_PER_FILE = 400
+# Distinct model-id candidates (literals with a vendor stem) the model-identifier
+# pass matches per file, and candidate occurrences it reads, before it stops;
+# ordinary strings do not count. Matching one costs about 80 us of CPU, so the
+# distinct bound costs at most about 0.2 s a file; reading an occurrence is a
+# regular-expression step.
+MAX_MODEL_LITERALS_PER_FILE = 2000
+MAX_MODEL_LITERAL_OCCURRENCES = 20000
 # Model matches kept per signature per file.
 MAX_MODEL_MATCHES_PER_SIGNATURE = 3
 

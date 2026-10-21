@@ -230,8 +230,22 @@ def _quote_glob_values(front_matter: str) -> str:
 
 # IPython line and cell magics (%pip, %%time) and shell escapes (!pip), each
 # alone on its line, as IPython rewrites them before Python reads the cell.
-# "% name" continuing an expression is the modulo operator and stays.
-_IPYTHON_LINE = re.compile(r"^([ \t]*+)((?:%%?[A-Za-z_]|!)[^\n]*)", re.MULTILINE)
+# "% name" continuing an expression is the modulo operator and stays, so a magic
+# spelled with a space after its "%" ("% pip install x", which IPython accepts)
+# is recognised only by a line magic's own name. IPython also assigns a shell
+# escape's or a magic's output ("files = !ls", "names = %who_ls"), and joins a
+# line that ends in a backslash with the next one ("%pip install a \"), so the
+# continued lines are part of the magic too.
+_SPACED_LINE_MAGICS = (
+    "pip|conda|mamba|micromamba|uv|autoreload|aimport|load_ext|reload_ext|unload_ext|matplotlib|"
+    "env|set_env|config|time|timeit|prun|run|cd|pwd|ls|cat|pycat|sx|sc|system|store|who|whos|"
+    "who_ls|reset|history|load|save|xmode|precision|alias|bookmark|pushd|popd|dhist|lsmagic|magic"
+)
+_IPYTHON_LINE = re.compile(
+    r"^([ \t]*+(?:[A-Za-z_][\w.]*+[ \t]*+=[ \t]*+)?)"
+    r"((?:%%?[A-Za-z_]|%[ \t]++(?:" + _SPACED_LINE_MAGICS + r")\b|!)[^\n]*+(?:(?<=\\)\n[^\n]*+)*)",
+    re.MULTILINE,
+)
 # Unescaped package-manager magics apply only to a single-line input cell.
 # A magic name followed by one of these subcommands is not a Python statement;
 # no subcommand listed is a keyword ("pip in xs" stays).
@@ -240,14 +254,17 @@ _IPYTHON_AUTOMAGIC = re.compile(
     r"(?:install|uninstall|download|list|show|freeze|check|config|create|env|remove|update|upgrade|"
     r"add|sync|search|info|init)\b)[^\n]*)",
 )
+_NOT_A_LINE_BREAK = re.compile(r"[^\n]")
 
 
 def _without_ipython_lines(text: str, cells: _CellSpans = ()) -> str:
     """Replace a notebook's magic and shell lines with an inert expression, keeping every offset.
 
     IPython turns each into an expression statement, so an indented one can be a
-    block's only statement: it becomes ``0`` padded to its length, not blanks.
-    Unescaped package-manager magics are restricted to single-line cells;
+    block's only statement: it becomes ``0`` padded to its length, not blanks. An
+    assignment keeps its target (``files = 0``), and the lines a backslash continues
+    become blank lines, so every line keeps its number. Unescaped package-manager
+    magics are restricted to single-line cells;
     absent cell spans, ``text`` is one cell.
     """
 
@@ -290,7 +307,8 @@ def _without_cell_ipython_lines(cell: str) -> str:
         if index >= 0 and match.start(2) < spans[index][1]:
             continue
         command = match[2]
-        source = source[: match.start(2)] + "0" + " " * (len(command) - 1) + source[match.end(2) :]
+        masked = "0" + _NOT_A_LINE_BREAK.sub(" ", command[1:])
+        source = source[: match.start(2)] + masked + source[match.end(2) :]
         if _LEXICAL_CHARACTERS.isdisjoint(command):
             continue
         relexes += 1
@@ -323,7 +341,8 @@ _FOREIGN_CELL_MAGICS = frozenset(
     {
         "bash", "sh", "zsh", "script", "perl", "ruby", "html", "javascript", "js", "latex",
         "markdown", "svg", "writefile", "file", "sx", "system", "cmd", "powershell", "pwsh", "r",
-        "sql", "julia", "octave", "matlab", "cython", "python2",
+        "sql", "julia", "octave", "matlab", "cython", "python2", "ngql", "cypher", "gremlin",
+        "sparql", "kql", "kusto", "graphql", "mermaid", "dot",
     }
 )  # fmt: skip
 _CELL_MAGIC = re.compile(r"\s*+%%([A-Za-z_][\w.]*+)[ \t]*+([^\n]*+)")
