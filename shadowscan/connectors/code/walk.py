@@ -909,8 +909,8 @@ class TreeWalker:
         self._default_skipped: dict[str, int] = {}
         # Files that were read but not as clean text, by what was done to them (see ``note_file``).
         self._file_notes: dict[str, list[str]] = {}
-        # Defects in content no client reads as written, by why (``budget_defects``).
-        self._budgeted_defects: dict[str, str] = {}
+        # Defects in content no client reads as written: path -> (kind of defect, why) (``budget_defects``).
+        self._budgeted_defects: dict[str, tuple[str, str]] = {}
         self._symlink_warnings: set[Path] = set()
         self._declared_link_notes: set[Path] = set()
         self._blinding_link_notes: set[Path] = set()
@@ -2110,17 +2110,21 @@ class TreeWalker:
         """
         return not self.include_tests and _is_test_path(rel) and not self._agent_configuration(rel)
 
-    def budget_defects(self, rel: str, why: str) -> None:
-        """Record that the defects of ``rel`` are in content no client reads as written, and ``why``.
+    def budget_defects(self, rel: str, why: str, *, kind: str = "parse") -> None:
+        """Record that ``rel``'s ``kind`` of defect is in content no client reads as written, and ``why``.
 
         The file scanner, which holds the text, decides this: a template that
         parses once its placeholders are filled in
-        (``template_source.unrendered_template``). A gap recorded for ``rel``
-        afterwards is charged to the budget (``_template_source_gap``).
+        (``template_source.rendered_template``) is a ``parse`` defect. Only a
+        gap of the same kind recorded for ``rel`` afterwards is charged to the
+        budget (``_template_source_gap``); any other gap the file has, a
+        redaction limit or an integrity failure, is judged as without it.
         """
-        self._budgeted_defects[rel] = why
+        self._budgeted_defects[rel] = (kind, why)
 
-    def _template_source_gap(self, rel: str, *, full_weight: bool = False) -> str | None:
+    def _template_source_gap(
+        self, rel: str, *, full_weight: bool = False, kind: str | None = None
+    ) -> str | None:
         """Why a gap in ``rel`` is in content no client reads as written, such as unrendered template source.
 
         Template syntax in a directory name (cookiecutter's
@@ -2137,13 +2141,18 @@ class TreeWalker:
         Agent configuration is never discounted (``_agent_configuration``): a
         client started in the rendered project reads it as written. Strict
         accounting, and a caller that found MCP servers by structure
-        (``full_weight``), keep the gap. None when the gap is not one of these.
+        (``full_weight``), keep the gap. ``kind`` is the defect the gap records:
+        only a ``parse`` failure is one a template explains, so an integrity
+        failure (a repeated JSON key), a redaction limit or anything else under
+        a template-named directory keeps its gap. None when the gap is not one
+        of these.
         """
-        if full_weight or self._strict_accounting() or self._agent_configuration(rel):
+        if kind is None or full_weight or self._strict_accounting() or self._agent_configuration(rel):
             return None
-        if _TEMPLATE_SYNTAX.search(rel.rpartition("/")[0]):
+        if kind == "parse" and _TEMPLATE_SYNTAX.search(rel.rpartition("/")[0]):
             return "unrendered template source (template syntax in its directory)"
-        return self._budgeted_defects.get(rel)
+        recorded = self._budgeted_defects.get(rel)
+        return recorded[1] if recorded is not None and recorded[0] == kind else None
 
     def _discounted_gap(
         self,
@@ -2155,9 +2164,14 @@ class TreeWalker:
         full_weight: bool = False,
         reason: str | None = None,
         charged_in_full: bool = False,
+        defect: str | None = None,
     ) -> None:
         """Record ``message`` about ``rel`` as a gap (``_gap``), or charge it to the budget in test code
         or unrendered template source (``_template_source_gap``, a whole entry).
+
+        ``defect`` names the kind of defect the gap records (``parse`` for content
+        that does not parse); only a caller that names one can have its gap
+        explained by unrendered template source.
 
         A ``ci`` profile declaration takes precedence over the discount, so the
         omission is counted in ``declared_omissions`` like every other one the
@@ -2185,7 +2199,7 @@ class TreeWalker:
                 full_weight=charged_in_full,
                 reason=reason,
             )
-        elif (template := self._template_source_gap(rel, full_weight=full_weight)) and not (
+        elif (template := self._template_source_gap(rel, full_weight=full_weight, kind=defect)) and not (
             self._declared_omission(rel)
         ):
             self._ledger_gap(

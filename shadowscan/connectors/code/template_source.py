@@ -11,7 +11,9 @@ recognized here instead, by rendering it with stand-ins.
 The rule is narrow on purpose. The file must fail its own parser, hold Jinja
 placeholders or tags, and parse once each placeholder is replaced by a
 stand-in and each one-line tag is dropped. A file that is broken in any other
-way still fails with the stand-ins, so it is not a template by this rule.
+way still fails with the stand-ins, so it is not a template by this rule. The
+rendering is what the scanner then analyzes, so a placeholder added to a
+deployed file does not hide the dependencies or imports around it.
 """
 
 from __future__ import annotations
@@ -51,16 +53,27 @@ def _parses(rel: str, text: str) -> bool | None:
     return True
 
 
-def unrendered_template(rel: str, text: str) -> bool:
-    """Whether ``text`` fails to parse only because of Jinja placeholders and tags.
+def rendered_template(rel: str, text: str) -> str | None:
+    """``text`` rendered with stand-ins when it fails to parse only because of Jinja placeholders and tags.
 
-    True when the file holds a placeholder or tag, does not parse as written,
-    and parses with each placeholder replaced by one stand-in and each tag
-    dropped (lines are kept, so line numbers do not move).
+    The rendering replaces each placeholder by one stand-in and drops each tag,
+    keeping every line, so line numbers do not move; it is the text a scanner
+    can still analyze (a manifest's dependencies, a module's imports). None
+    when the file holds no placeholder or tag, parses as written, is a format
+    not judged here, or does not parse with any stand-in.
     """
     if len(text) > MAX_TEMPLATE_BYTES or ("{{" not in text and "{%" not in text):
-        return False
+        return None
     if _parses(rel, text) is not False:
-        return False
+        return None
     untagged = _TAG.sub("", text)
-    return any(_parses(rel, _PLACEHOLDER.sub(stand_in, untagged)) for stand_in in _STAND_INS)
+    for stand_in in _STAND_INS:
+        rendered = _PLACEHOLDER.sub(stand_in, untagged)
+        if _parses(rel, rendered):
+            return rendered
+    return None
+
+
+def unrendered_template(rel: str, text: str) -> bool:
+    """Whether ``text`` fails to parse only because of Jinja placeholders and tags (``rendered_template``)."""
+    return rendered_template(rel, text) is not None

@@ -40,8 +40,17 @@ Counts and figures quoted in an entry are those of its date.
   (`TreeWalker.budget_defects`) and the walker charges the gap. A file broken
   in any other way still fails; agent configuration, strict accounting and
   MCP configuration found by structure keep the gap, and a tree of templates
-  exhausts the budget. No installer or interpreter reads such a file as
-  written, so its dependencies and definitions are not deployed from it.
+  exhausts the budget. The scanner analyzes the rendering itself: a
+  templated manifest's dependencies are inventoried from it and a templated
+  module is bound from it (crewAI's `crew.py` is then an agent), so a
+  placeholder added to a deployed file cannot hide what surrounds it.
+- Review follow-ups. An independent review found that the first version
+  budgeted every gap of a file under a template-named directory, a repeated
+  JSON key under `deploy/${env}/` included, and that adding `{{ x }}` to a
+  deployed `pyproject.toml` dropped its dependency findings while the scan
+  completed. The directory rule and the content rule now explain only parse
+  failures (`_discounted_gap(defect="parse")`, a registry scoped by kind),
+  and the rendering is analyzed as above.
 
 ### Release readiness review (October 21)
 

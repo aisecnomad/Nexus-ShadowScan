@@ -110,3 +110,41 @@ def test_a_tree_of_templates_exhausts_the_budget(tmp_path, run_connector):
         (tmp_path / f"t{i}.py").write_text(CREW)
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete and not ctx.stats.coverage["within_budget"]
+
+
+# ------------------------------------------------------- review follow-ups
+
+
+def test_an_integrity_failure_under_a_template_named_directory_still_fails(tmp_path, run_connector):
+    # A repeated JSON key is no unrendered template: the directory name explains parse failures only.
+    duplicate = '{"model": "gpt-4o", "api_base": "https://api.openai.com", "model": "x"}'
+    _project(tmp_path, {"deploy/${env}/llm.json": duplicate})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+
+
+def test_a_templated_manifest_keeps_its_dependency_findings(tmp_path, run_connector):
+    # A placeholder must not hide the dependencies around it: the rendering is analyzed.
+    manifest = (
+        '[project]\nname = "svc"\nversion = "0.1"\n'
+        'dependencies = ["langchain-openai", "openai", "mcp"]\n[tool.x]\n{{ x }} = 1\n'
+    )
+    _project(tmp_path, {"svc/pyproject.toml": manifest})
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
+    assert [gap for gap in _gaps(ctx) if gap[0] == "svc/pyproject.toml"]  # still a recorded gap
+    assert any("langchain" in framework for finding in findings for framework in finding.frameworks), [
+        finding.title for finding in findings
+    ]
+
+
+def test_a_templated_module_is_bound_from_its_rendering(tmp_path, run_connector):
+    # Bound from its rendering, the crew's Agent(...) construction proves an agent;
+    # left unbound it was framework usage only.
+    _project(tmp_path, {"templates/crew/crew.py": CREW})
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
+    agents = [f for f in findings if f.kind == Kind.AGENT]
+    assert any(e.location == "templates/crew/crew.py:10" for f in agents for e in f.evidence), [
+        (f.kind, f.title) for f in findings
+    ]

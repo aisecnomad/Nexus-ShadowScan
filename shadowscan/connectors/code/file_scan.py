@@ -130,7 +130,7 @@ from shadowscan.connectors.code.source_text import (
     _without_xml_comments,
     foreign_cell,
 )
-from shadowscan.connectors.code.template_source import unrendered_template
+from shadowscan.connectors.code.template_source import rendered_template
 from shadowscan.connectors.code.tool_attribution import ToolRegions
 from shadowscan.connectors.code.walk import (
     _AGENT_DEFINITION_DIRS,
@@ -642,6 +642,7 @@ class FileScanner:
             suffix=False,
             full_weight=full_weight,
             reason="unparsed-input",
+            defect="parse",
         )
 
     # Syntax/shape defects get a distinct diagnostic so operators can find
@@ -1018,6 +1019,10 @@ class FileScanner:
             file, dict.fromkeys(manifest.errors), "empty manifest; it declares nothing"
         ):
             return
+        if manifest.errors and (rendered := rendered_template(rel, file.text)) is not None:
+            # Unrendered template source (its gap is recorded above): the manifest a
+            # generator renders from it declares these dependencies, placeholders aside.
+            manifest = parse_manifest(rel, rendered) or manifest
         for dep in manifest.deps:
             file.proj.deps.append(dep)
             for m in self.index.match_dependency(dep.ecosystem, dep.name):
@@ -1467,7 +1472,27 @@ class FileScanner:
                 f"code.filesystem: {file.rel}: import-bound analysis skipped ({exc}); "
                 "lexical evidence retained",
             )
-            return [], whole
+            rendered = None if file.cells else rendered_template(file.rel, content_text)
+            if rendered is None:
+                return [], whole
+            # Unrendered template source (its gap is recorded above): bind the
+            # rendering, so a placeholder cannot hide the imports around it.
+            try:
+                bound = bound_source_matches(
+                    self.index,
+                    rendered,
+                    lang,
+                    ignored,
+                    is_local_module=is_local_module if lang == "python" else None,
+                    max_ast_nodes=self.max_ast_nodes,
+                    truncated=truncated,
+                    resolve_import=resolve_import,
+                    resolve_javascript_tool=resolve_javascript_tool,
+                    resolve_dispatch=resolve_dispatch,
+                )
+            except (SourceBudgetExceeded, SourceNotParsed):
+                return [], whole
+            file.unparsed = ()
         if truncated:
             # An option past the limit (tools, a stop condition) was not read: the
             # call-analysis budget is a coverage gap like the one above, but the
@@ -2114,7 +2139,9 @@ class FileScanner:
         if not self._syntax_gap(file):
             self.ctx.warn(message, incomplete=False)
         elif self._note_template(file):
-            self.walker._discounted_gap(file.rel, message, suffix=False, reason="unparsed-input")
+            self.walker._discounted_gap(
+                file.rel, message, suffix=False, reason="unparsed-input", defect="parse"
+            )
         else:
             self.walker._gap(file.rel, message, suffix=False, reason="unparsed-input")
 
@@ -2125,11 +2152,11 @@ class FileScanner:
         (``_template_source_gap``); one under an ordinary name is one when it
         parses once its Jinja placeholders are filled in (``unrendered_template``).
         """
-        if unrendered_template(file.rel, file.text):
+        if rendered_template(file.rel, file.text) is not None:
             self.walker.budget_defects(
                 file.rel, "unrendered template source (parses once its placeholders are filled in)"
             )
-        return self.walker._template_source_gap(file.rel) is not None
+        return self.walker._template_source_gap(file.rel, kind="parse") is not None
 
     def _scan_undecodable_file(
         self,
