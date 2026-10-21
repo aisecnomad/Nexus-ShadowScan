@@ -383,6 +383,7 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   `.mts` and `.cts` count as source, the documented margin names its 250 ms
   floor, and the emission diagnostic says it counts projects, whose project,
   agent and tool findings were left out.
+
 ### Agent-configuration links read at their link path (October 21)
 
 - Every link the walk does not follow was reported as one "whose target is
