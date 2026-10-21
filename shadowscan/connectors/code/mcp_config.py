@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import tomllib
 from typing import Any, NamedTuple
 
@@ -227,7 +228,9 @@ def _holds_server_table(node: dict[Any, Any], listed: bool, *, fields: bool = Fa
     return isinstance(mcp, dict) and "servers" in mcp and _server_table(mcp["servers"], listed)
 
 
-def mcp_server_holders(document: Any, *, first: bool = False) -> tuple[list[dict[Any, Any]], bool]:
+def mcp_server_holders(
+    document: Any, *, first: bool = False, exhaustive: bool = False
+) -> tuple[list[dict[Any, Any]], bool]:
     """The mappings of a parsed document that hold an MCP server table, and whether the bounds cut the walk.
 
     The table may sit at the top level, nested within a client's section, or
@@ -237,8 +240,13 @@ def mcp_server_holders(document: Any, *, first: bool = False) -> tuple[list[dict
     levels and ``MCP_WALK_BREADTH`` entries of each, so a hostile document
     cannot make it expensive; the flag says a container it did not read in
     full holds containers, where a table may sit. ``first`` stops at the first
-    holder. A holder's own table is not searched further.
+    holder. A holder's own table is not searched further. ``exhaustive``
+    lifts both bounds, for a caller whose document is already bounded by its
+    size (``json_readings_declare_mcp``): the walk is iterative and visits
+    each container once, so its cost is linear in the document.
     """
+    depth_limit = sys.maxsize if exhaustive else MCP_WALK_DEPTH
+    breadth = sys.maxsize if exhaustive else MCP_WALK_BREADTH
     holders: list[dict[Any, Any]] = []
     truncated = False
     # Each entry: a node, its depth, whether a list holds it, whether it is a schema's field map.
@@ -260,13 +268,11 @@ def mcp_server_holders(document: Any, *, first: bool = False) -> tuple[list[dict
         else:
             continue
         # Only a container that holds something can hold a table.
-        containers = [
-            child for child in children[:MCP_WALK_BREADTH] if isinstance(child, dict | list) and child
-        ]
-        dropped = any(isinstance(child, dict | list) and child for child in children[MCP_WALK_BREADTH:])
-        if dropped or (containers and depth >= MCP_WALK_DEPTH):
+        containers = [child for child in children[:breadth] if isinstance(child, dict | list) and child]
+        dropped = any(isinstance(child, dict | list) and child for child in children[breadth:])
+        if dropped or (containers and depth >= depth_limit):
             truncated = True
-        if depth < MCP_WALK_DEPTH:
+        if depth < depth_limit:
             stack.extend(
                 (child, depth + 1, listed, id(child) in field_maps) for child in reversed(containers)
             )
@@ -285,9 +291,11 @@ def json_readings_declare_mcp(text: str) -> bool | None:
     """Whether either reading of ambiguous JSON holds an MCP server table; None when that is not known.
 
     Parsers disagree on a repeated key: most keep its last value, some its
-    first. Both readings are parsed and walked (``mcp_server_holders``), so a
-    duplicate cannot hide a table from one reading that the other holds. None
-    when either reading does not parse, or the walk's bounds cut one short.
+    first. Both readings are parsed and walked in full (``mcp_server_holders``
+    with ``exhaustive``: every caller bounds ``text`` by its size first), so a
+    duplicate cannot hide a table from one reading that the other holds, and
+    a deep API contract is decided rather than left undecided. None when
+    either reading does not parse.
     """
     holds = False
     for hook in (None, _first_wins):
@@ -295,9 +303,7 @@ def json_readings_declare_mcp(text: str) -> bool | None:
             document = json.loads(text, object_pairs_hook=hook)
         except (ValueError, RecursionError):
             return None
-        holders, truncated = mcp_server_holders(document, first=True)
-        if truncated and not holders:
-            return None
+        holders, _ = mcp_server_holders(document, first=True, exhaustive=True)
         holds = holds or bool(holders)
     return holds
 

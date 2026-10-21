@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,8 @@ from shadowscan.connectors.code.mcp_config import json_readings_declare_mcp, mcp
 from shadowscan.connectors.code.source_semantics import MAX_AST_NODES, MAX_BOUND_CALLS
 from shadowscan.connectors.code.template_source import unrendered_template
 from shadowscan.models import Kind
+from shadowscan.signatures.budget import separate_budget
+from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
 
 CREW = (
     "from crewai import Agent, Crew, Process, Task\n"
@@ -215,3 +218,104 @@ def test_a_module_of_90000_nodes_is_bound(tmp_path, run_connector):
     assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
     assert findings
     assert MAX_BOUND_CALLS == 2_048
+
+
+# ------------------------------------- continue, openai-agents-python and AutoGPT
+
+
+def test_a_textmate_grammar_with_a_repeated_key_is_budgeted(tmp_path, run_connector):
+    # continue's textmate-syntaxes/fsharp.json repeats a repository key.
+    grammar = '{"scopeName": "source.fsharp", "repository": {"comments": {}, "comments": {"name": "c"}}}'
+    _project(tmp_path, {"extensions/vscode/textmate-syntaxes/fsharp.json": grammar})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
+    assert {kind for _, kind, _ in _gaps(ctx)} == {"partial"}
+
+
+def _nested(depth: int, leaf: object) -> object:
+    for level in range(depth):
+        leaf = {f"level{level}": leaf, "type": "object"}
+    return leaf
+
+
+def test_a_deep_oversize_api_contract_is_decided_by_its_structure(tmp_path, run_connector):
+    # released_api_contract.json nests past the server-table walk's 12 levels and
+    # names mcp_servers fields; parsed whole, it holds no server table.
+    contract = {
+        "classes": _nested(
+            20, {"type": "object", "properties": {"mcp_servers": {"anyOf": [{"type": "array"}]}}}
+        ),
+        "pad": "v" * 6_000,
+    }
+    _project(tmp_path, {"tests/fixtures/released_api_contract.json": json.dumps(contract)})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, max_file_size=4_000)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
+    assert [kind for _, kind, _ in _gaps(ctx)] == ["partial"]
+
+
+def test_a_server_table_deep_in_an_oversize_contract_stays_blinding(tmp_path, run_connector):
+    contract = {"classes": _nested(20, {"mcpServers": {"s": {"command": "evil"}}}), "pad": "v" * 6_000}
+    _project(tmp_path, {"tests/fixtures/released_api_contract.json": json.dumps(contract)})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, max_file_size=4_000)
+    assert ctx.stats.incomplete
+    assert [kind for _, kind, _ in _gaps(ctx)] == ["blinding"]
+
+
+def test_the_readings_walk_every_level_and_entry():
+    deep = "[" * 900 + '{"mcpServers": {"s": {"command": "x"}}}' + "]" * 900
+    assert json_readings_declare_mcp(deep) is True
+    wide = json.dumps([{"k": [1]} for _ in range(1_000)] + [{"mcpServers": {}}])
+    assert json_readings_declare_mcp(wide) is True
+
+
+@pytest.mark.parametrize(
+    ("rel", "text"),
+    [
+        # npm keeps the last of a repeated key: the first dependencies table is hidden from it.
+        ("package.json", '{"dependencies": {"openai": "4"}, "dependencies": {}}'),
+        ("composer.json", '{"require": {}, "metadata": 1e999}'),
+        (".vscode/settings.json", '{"a": 1, "a": 2}'),
+    ],
+)
+def test_a_repeated_key_in_a_manifest_or_agent_configuration_still_fails(tmp_path, run_connector, rel, text):
+    _project(tmp_path, {rel: text})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+
+
+# ------------------------------------------- excerpt redaction's own allowance
+
+
+def _burn(seconds: float) -> None:
+    started = time.thread_time()
+    while time.thread_time() - started < seconds:
+        pass
+
+
+def test_work_under_a_separate_budget_is_not_charged_to_the_input(index):
+    # litellm's 940 KB test_mcp_server_manager.py finished detection inside its 8 s
+    # but exceeded it with excerpt redaction, which now has an allowance of its own.
+    with index.scan_budget(seconds=0.3):
+        _burn(0.1)
+        with separate_budget():
+            _burn(0.3)
+        assert pattern_timeout() > 0  # the input still has about 0.2 s
+
+
+def test_a_separate_budget_is_exhausted_like_any_other(index):
+    with index.scan_budget(seconds=0.2), separate_budget():
+        _burn(0.25)
+        with pytest.raises(MatchTimeoutError):
+            pattern_timeout()
+
+
+def test_the_input_budget_still_ends_its_own_work(index):
+    with pytest.raises(MatchTimeoutError), index.scan_budget(seconds=0.2):
+        with separate_budget():
+            _burn(0.1)
+        _burn(0.25)
+
+
+def test_without_an_input_budget_nothing_changes():
+    with separate_budget():
+        assert pattern_timeout(1.5) == 1.5

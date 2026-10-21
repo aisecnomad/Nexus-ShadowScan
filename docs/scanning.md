@@ -39,10 +39,17 @@ that are never silent:
   `.github/instructions`, `.github/agents`, `.cursor/rules/team`,
   `.well-known`): one generic dot-directory on its path does not make it so
   (`.github/actions/setup` holds no file `.github/copilot-instructions.md`
-  names). An alias of a scanned directory there stays blinding when a file it
-  holds would be configuration at the alias path (`.cursor` aliasing a
-  directory with `mcp.json` or `rules/`): under that path its files are
-  configuration, at their real path they are not. One that holds none
+  names). An alias of a scanned directory there, when a file it holds would
+  be configuration at the alias path (`.cursor` aliasing a directory with
+  `mcp.json` or `rules/`, AutoGPT's `.agents/skills -> ../.claude/skills`),
+  and a link to a scanned file whose own name makes it agent configuration
+  (a lowercase `agents.md` pointing at a README), are read a second time at
+  the link path: the link is not followed, its target is opened by its real
+  path below the root, as any file is, and analyzed and reported under the
+  link path, where a client reads it as configuration. Its files count
+  toward `max_files`; a link below such an alias is judged as a link, not
+  read again. A link to an excluded or unselected target stays blinding.
+  One that holds none
   (`web/public/.well-known` aliasing `static/well-known` without an MCP
   manifest or agent card) is an alias like any other, one entry. The `ci`
   profile never declares a link that stands for configuration. So does a

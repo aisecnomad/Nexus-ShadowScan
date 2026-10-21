@@ -37,7 +37,7 @@ a ReDoS-bounded inline-credential pattern, a filesystem deadline sized by entrie
 and bytes, IPython automagic, `.hypothesis` exclusion, faster built-in pack
 loading, unparsed-input triage, unrendered template source charged to the
 coverage budget, notebooks (more IPython syntax, credential scans of large notebooks without
-their base64 output data, broken tutorial cells and repeated model literals charged to the budget), generator templates recognized by content, repeated-key JSON catalogs and OpenAPI schemas that describe MCP fields charged to the budget, larger syntax-tree and call bounds (200,000 nodes, 2,048 calls), unclosed credential calls and dangling-link
+their base64 output data, broken tutorial cells and repeated model literals charged to the budget), generator templates recognized by content, repeated-key JSON catalogs and OpenAPI schemas that describe MCP fields charged to the budget, larger syntax-tree and call bounds (200,000 nodes, 2,048 calls), in-tree agent-configuration links read at their link path, unclosed credential calls and dangling-link
 descriptions. `shadowscan code --preflight` also lists the static coverage gaps
 a full scan would record, `--max-file-size` sets the size limit, and exit 3
 prints per-reason remediation with an incomplete-scans guide. The command line

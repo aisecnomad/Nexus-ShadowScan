@@ -12,6 +12,8 @@ imports the loader.
 from __future__ import annotations
 
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
@@ -81,6 +83,32 @@ class _ScanBudget:
 
 
 _SCAN_BUDGET: ContextVar[_ScanBudget | None] = ContextVar("signature_scan_budget", default=None)
+
+
+@contextmanager
+def separate_budget() -> Iterator[None]:
+    """Run work that follows an input's analysis under an allowance of its own, not charged to the input's.
+
+    Redacting a file for its excerpts runs once detection is done and has its
+    own work bound; charged to the input's budget, it made a 940 KB test file
+    whose detection took 4 s of an 8 s allowance time out on 6 s of redaction.
+    The work here gets a fresh budget of the active one's size (CPU and wall
+    cap), and its time is then given back to the active budget
+    (``_ScanBudget.credit``), so an input costs at most twice its allowance.
+    Exhausting it raises ``MatchTimeoutError`` like any budget. Without an
+    active budget nothing changes.
+    """
+    outer = _SCAN_BUDGET.get()
+    if outer is None:
+        yield
+        return
+    cpu, wall = time.thread_time(), time.monotonic()
+    token = _SCAN_BUDGET.set(_ScanBudget(outer.cpu_seconds, outer.wall_seconds, None))
+    try:
+        yield
+    finally:
+        _SCAN_BUDGET.reset(token)
+        outer.credit(time.thread_time() - cpu, time.monotonic() - wall)
 
 
 class DeferredPattern:

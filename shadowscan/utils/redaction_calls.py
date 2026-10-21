@@ -185,7 +185,7 @@ class _CallLexer:
         braces = 0
         end = len(text)
         while position < len(text):
-            run = _STRING_RUN.match(text, position)
+            run = _STRING_RUN.match(text, position, position + max(_MAX_REDACTION_WORK - self.work, 0) + 1)
             if run is not None:
                 self.tick(run.end() - position)
                 position = run.end()
@@ -253,7 +253,12 @@ class _CallLexer:
         skipped_comment = False
         state = "open"
         while position < len(text):
-            run = _ARGUMENT_RUN.match(text, position)
+            # A run is matched no further than the step after the bound, which trips
+            # where the per-character loop tripped: an unclosed call in a long
+            # paragraph-free text stops at the bound instead of crossing all of it.
+            allowed = _MAX_CALL_STEPS - steps if until is None else until - self.work
+            allowed = min(allowed, _MAX_REDACTION_WORK - self.work)
+            run = _ARGUMENT_RUN.match(text, position, position + max(allowed, 0) + 1)
             length = 1 if run is None else run.end() - position
             self.tick(length)
             steps += length

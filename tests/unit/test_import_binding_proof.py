@@ -43,11 +43,11 @@ def _filler(lines: int) -> str:
 PLAIN_MODULE = (
     "import os\nimport collections.abc as abc\n\n"
     "def join(parts: abc.Sequence[str]) -> str:\n    return os.path.join(*parts)\n\n"
-) + _filler(6000)
+) + _filler(24_000)
 OPENAI_MODULE = (
     "from openai import OpenAI\n\nclient = OpenAI()\n"
     "reply = client.chat.completions.create(model='gpt-4o', messages=[])\n"
-) + _filler(6000)
+) + _filler(24_000)
 
 # Inputs where the proof's handling of Python syntax matters, with whether a
 # binding can resolve to a signature.
@@ -340,8 +340,13 @@ def _plain_imports(count: int) -> str:
 MANY_IMPORTS = {
     "within-node-budget": (_plain_imports(4000), False, 0, []),
     "within-node-budget-beyond-match-budget": (_plain_imports(4200), False, 0, []),
-    "over-node-budget": (_plain_imports(3000) + _filler(6000), True, 0, []),
-    "over-node-budget-beyond-match-budget": (_plain_imports(8000), True, 3, [SKIPPED_BINDING]),
+    "over-node-budget": (_plain_imports(3000) + _filler(22_000), True, 0, []),
+    "over-node-budget-beyond-match-budget": (
+        _plain_imports(8000) + _filler(18_000),
+        True,
+        3,
+        [SKIPPED_BINDING],
+    ),
 }
 
 

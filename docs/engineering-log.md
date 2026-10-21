@@ -13,6 +13,62 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Agent-configuration links, repeated-key grammars and deep API contracts (October 21)
+
+- Significant-Gravitas/AutoGPT exited 3 on two in-tree links that stand for
+  agent configuration: `.agents/skills -> ../.claude/skills` and
+  `docs/content/forge/components/agents.md`, a lowercase `agents.md` pointing
+  at a README. Both targets were walked at their own paths, where they are
+  not configuration for the client that reads the link path. Such a link's
+  target, resolved below the root and scanned there, is now read a second
+  time at the link path: the link is never followed, the target is opened by
+  its real path with the same confined opens as every file, and its
+  findings name the link path (the skill appears as evidence under both
+  `.claude/skills/` and `.agents/skills/`). Its files count toward
+  `max_files` and the entry budget; a link below the alias is judged as a
+  link and never read again, so a loop cannot multiply the walk. A link to
+  an excluded or unselected target, or outside the tree, stays blinding.
+- continuedev/continue exited 3 on `textmate-syntaxes/fsharp.json`, a grammar
+  that repeats a repository key. October 21's repeated-key rule covers it:
+  neither reading holds an MCP server table, so its two integrity gaps are
+  charged to the budget.
+- openai/openai-agents-python exited 3 on the 1.15 MB
+  `tests/fixtures/released_api_contract.json`, whose bytes name
+  `mcp_servers` fields. The structural check of an oversize JSON file found
+  no table but could not say so: the contract nests past the server-table
+  walk's 12 levels. `json_readings_declare_mcp` now walks every level and
+  entry of both readings (`mcp_server_holders(..., exhaustive=True)`); every
+  caller bounds the text by size first (`max_file_size`, or 8 MiB for an
+  oversize file) and the walk visits each container once, so its cost stays
+  linear: 0.08 s for the contract. A table at any depth is still found.
+- The repeated-key rule of the entry below is limited to plain data files:
+  a manifest or lockfile (npm keeps the last of two `dependencies` keys,
+  hiding the first from a reader that keeps it) and agent configuration
+  still fail the scan, as `test_code_structured_input_integrity` pins.
+- litellm's last two gaps were time budgets on test files.
+  `test_mcp_server_manager.py` (940 KB) finished detection inside its 8 s
+  allowance (4 x 2 s for its size) and then spent about 6 s redacting its
+  excerpts, charged to the same allowance and checked as it closed. Excerpt
+  redaction runs once detection is done, under an allowance of its own of
+  the same size (`signatures.budget.separate_budget`), whose time is
+  credited back to the input's, as deferred pattern compilation already
+  was: a file costs at most twice its allowance. A redaction that exhausts
+  its own allowance withholds the file's excerpts (a sanitization-limit gap:
+  an error outside discounted test code), never a finding.
+  `test_common_request_processing.py` needed 201,156 steps of the provider
+  tool-loop flow walk, past its fixed 100,000; the bound is now four steps
+  per node the binder accepts (800,000), still checked against the CPU
+  budget every 256 steps. It completes in 2.7 s.
+- A regression in October 21's lexer speed-up, caught by
+  `test_reading_past_the_step_bound_stays_linear` before release: an
+  argument run could cross a whole text without brackets or quotes, so 200
+  unclosed calls over a 960 KB tail each scanned to its end before the step
+  bound tripped (quadratic, where the per-character loop stopped at the
+  bound). A run is now matched no further than the step after the bound,
+  and no further than the shared work bound. Over 4,500 corpus and
+  adversarial texts the output and exceptions are identical to the
+  per-character lexer of ffe9873, in 17.9 s against 29.7 s.
+
 ### Generator templates, ambiguous catalogs and large modules no longer leave crewAI and litellm incomplete (October 21)
 
 - crewAIInc/crewAI exited 3 on six files: the project templates `crewai

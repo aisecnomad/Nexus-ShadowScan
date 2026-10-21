@@ -164,10 +164,10 @@ def _call_lexer_work(source: str, monkeypatch: pytest.MonkeyPatch) -> int:
     ticks = 0
     tick = redaction._CallLexer.tick
 
-    def counted(self: redaction._CallLexer) -> None:
+    def counted(self: redaction._CallLexer, steps: int = 1) -> None:
         nonlocal ticks
-        ticks += 1
-        tick(self)
+        ticks += steps
+        tick(self, steps)
 
     monkeypatch.setattr(redaction._CallLexer, "tick", counted)
     redaction._redact_credential_calls(source)
@@ -278,10 +278,10 @@ def test_reading_past_the_step_bound_stays_linear(monkeypatch):
     ticks = 0
     tick = redaction._CallLexer.tick
 
-    def counted(self: redaction._CallLexer) -> None:
+    def counted(self: redaction._CallLexer, steps: int = 1) -> None:
         nonlocal ticks
-        ticks += 1
-        tick(self)
+        ticks += steps
+        tick(self, steps)
 
     monkeypatch.setattr(redaction._CallLexer, "tick", counted)
 

@@ -156,9 +156,11 @@ from shadowscan.connectors.posture import assess as assess_posture
 from shadowscan.connectors.posture import parseable as posture_parseable
 from shadowscan.models import Evidence, Kind
 from shadowscan.signatures import Match
+from shadowscan.signatures.budget import separate_budget
 from shadowscan.signatures.matcher import (
     MAX_SECRETS_PER_SIGNAL,
     SOURCE_EXTENSIONS,
+    MatchTimeoutError,
     _finditer,
     language_for_path,
     reported_credential,
@@ -649,16 +651,32 @@ class FileScanner:
             # Detection still runs, but without an established
             # structured context none of this file's excerpts can
             # safely be emitted.
-            if (
-                isinstance(exc, JSONIntegrityError)
-                and rel.endswith(".json")
-                and json_readings_declare_mcp(text) is False
-            ):
+            if isinstance(exc, JSONIntegrityError) and self._ambiguous_data_file(rel, text):
                 self.walker.budget_defects(
                     rel, "ambiguous JSON data that neither reading makes MCP configuration"
                 )
             self._withhold_excerpts(rel, exc, "parsing")
             return None, False
+
+    def _ambiguous_data_file(self, rel: str, text: str) -> bool:
+        """Whether JSON the integrity checks refused is a data file that neither reading makes configuration.
+
+        A provider catalog or an editor grammar that repeats a key is read by
+        no client as configuration: both readings of the key (first value kept,
+        last value kept) are walked for an MCP server table
+        (``json_readings_declare_mcp``) and neither holds one. A manifest or
+        lockfile is never such a file (npm keeps a repeated ``dependencies``
+        key's last value, which hides the first from a reader that keeps it),
+        nor is agent configuration (``_agent_configuration``).
+        """
+        name = PurePosixPath(rel).name
+        return (
+            name.lower().endswith(".json")
+            and not is_manifest_name(name)
+            and name.lower() not in LOCKFILE_NAMES
+            and not self.walker._agent_configuration(rel)
+            and json_readings_declare_mcp(text) is False
+        )
 
     @staticmethod
     def _parsed_document(file: _SourceFile, suffixes: tuple[str, ...], *, strict: bool = False) -> Any:
@@ -784,8 +802,11 @@ class FileScanner:
                 # Match locations count LF only. Other separators can occur
                 # inside literals (Go raw imports may contain CR) and must not
                 # shift excerpts. _excerpt strips a CR left by a CRLF ending.
-                source.safe_lines = _redacted_source(source.text or "", source.structure).split("\n")
-            except (YAMLResourceLimitError, SanitizationLimitError) as exc:
+                with separate_budget():
+                    source.safe_lines = _redacted_source(source.text or "", source.structure).split("\n")
+            except (YAMLResourceLimitError, SanitizationLimitError, MatchTimeoutError) as exc:
+                # Redaction runs once detection is done (``_settle_excerpts``) under an
+                # allowance of its own: exhausting it withholds the excerpts, never a finding.
                 self._withhold_excerpts(source.rel, exc)
                 source.structure = None
                 source.safe_lines = []
