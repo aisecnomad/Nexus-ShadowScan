@@ -137,9 +137,8 @@ class Signal:
         ``shadowscan.signatures.validate`` rejects a broken pack before a scan.
         """
         self.bounded_compiled = []
-        for p in self.patterns:
+        for p, bounded in zip(self.patterns, self.bounded_patterns(), strict=True):
             try:
-                bounded = _linear_assignment_pattern(p) if self.type == "secret" else p
                 self.bounded_compiled.append(regex.compile(bounded, regex.MULTILINE | regex.VERSION0))
             except regex.error as exc:
                 raise ValueError(f"invalid regex {p!r}: {exc}") from exc
@@ -151,14 +150,21 @@ class Signal:
                     except regex.error as exc:
                         raise ValueError(f"invalid domain regex {value!r}: {exc}") from exc
 
+    def bounded_patterns(self) -> list[str]:
+        """The patterns the bounded engine runs: a credential pattern in its linear form."""
+        return [_linear_assignment_pattern(p) if self.type == "secret" else p for p in self.patterns]
+
     def defer(self) -> None:
         """Compile each pattern on its first use instead (``budget.DeferredPattern``).
 
         Only for the built-in packs, which ``shadowscan.signatures.validate``
         compiles and checks in full before they ship. ``re:`` domain values are
-        compiled by :class:`SignatureIndex` as before.
+        compiled by :class:`SignatureIndex` as before. A credential pattern is
+        deferred in the linear form ``compile`` would run (``bounded_patterns``).
         """
-        self.bounded_compiled = [DeferredPattern(p, regex.MULTILINE | regex.VERSION0) for p in self.patterns]
+        self.bounded_compiled = [
+            DeferredPattern(p, regex.MULTILINE | regex.VERSION0) for p in self.bounded_patterns()
+        ]
 
 
 @dataclass(slots=True)

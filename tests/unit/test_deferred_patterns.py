@@ -147,3 +147,18 @@ def test_a_pattern_that_cannot_compile_leaves_the_scan_incomplete(tmp_path: Path
     assert any(
         "agent.py" in error and "incomplete" in error for stats in result.stats for error in stats.errors
     )
+
+
+def test_a_deferred_credential_pattern_is_the_linear_form_compile_runs():
+    # The built-in packs are deferred; a credential pattern must defer the linear
+    # rewrite main's matcher runs, not the pack's original (super-linear) source.
+    signature = get_index().get("heuristic.inline-credential")
+    assert signature is not None
+    source = next(signal for signal in signature.signals if signal.type == "secret")
+    eager = Signal(type="secret", patterns=list(source.patterns))
+    deferred = Signal(type="secret", patterns=list(source.patterns))
+    eager.compile()
+    deferred.defer()
+    compiled = [rx.pattern for rx in eager.bounded_compiled]
+    assert compiled != list(source.patterns)  # the rewrite applies to these patterns
+    assert [rx.pattern for rx in deferred.bounded_compiled] == compiled
