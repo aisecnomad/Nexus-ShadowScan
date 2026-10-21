@@ -185,7 +185,7 @@ Scope:
 
 ### REG-3 Google Gemini Enterprise (L)
 
-Status: implemented, unreleased, as the opt-in `agent_registry` and
+Status: implemented, released in 0.1.3, as the opt-in `agent_registry` and
 `gemini_enterprise` catalogs of `cloud.gcp`; see
 [Agent Registry and Gemini Enterprise catalogs](../connectors/cloud.md#agent-registry-and-gemini-enterprise-catalogs).
 It was built from Google's API discovery documents and synthetic fixtures and
@@ -286,7 +286,7 @@ Scope:
 
 ## 2. Scheduled drift detection (DRIFT)
 
-Status: DRIFT-0 to DRIFT-4 are implemented, unreleased: attested live scope
+Status: DRIFT-0 to DRIFT-4 are implemented, released in 0.1.3: attested live scope
 for `cloud.aws`, `cloud.azure`, `cloud.gcp` and app-only `identity.entra`
 (DRIFT-1, below), `--fail-on-drift`, `--baseline-sha256`,
 `--max-baseline-age-days` and the weekly workflow and CronJob templates;
@@ -345,7 +345,7 @@ These go into `collection_scope`. A denied, throttled or truncated operation
 makes the scan incomplete. Two scans compare only when their scope digests
 match. Third-party plugins stay non-comparable.
 
-Status: DRIFT-1 is implemented, unreleased, for `cloud.aws`, `cloud.azure`,
+Status: DRIFT-1 is implemented, released in 0.1.3, for `cloud.aws`, `cloud.azure`,
 `cloud.gcp` and app-only `identity.entra`; delegated Entra scans and other
 live connectors stay non-comparable. GCP discovery mode attests the discovered
 project set rather than the mode alone, so lost visibility never resolves
@@ -414,7 +414,7 @@ and a Kubernetes CronJob variant:
 
 ## 3. Autonomy tiers (TIER)
 
-Status: TIER-1 implemented, unreleased; see [autonomy tiers](../concepts/autonomy.md).
+Status: TIER-1 implemented, released in 0.1.3; see [autonomy tiers](../concepts/autonomy.md).
 The rest of this section records the proposal as drafted.
 
 ### Problem
@@ -512,7 +512,7 @@ Rules:
 
 ## 4. Enterprise inventory dashboard (DASH)
 
-Status: DASH-0 to DASH-3 are implemented, unreleased, as `shadowscan
+Status: DASH-0 to DASH-3 are implemented, released in 0.1.3, as `shadowscan
 dashboard` and its `shadowscan.inventory/v1` export; see
 [Fleet dashboard](../operations/dashboard.md). The tests use synthetic
 reports, not a live fleet.
@@ -570,7 +570,7 @@ CycloneDX output into their own BI or SIEM tools (DASH-3).
 
 ## 5. Threat mapping (THREAT)
 
-Status: THREAT-0 to THREAT-3 are implemented, unreleased, in
+Status: THREAT-0 to THREAT-3 are implemented, released in 0.1.3, in
 `shadowscan/mappings` against the OWASP 2026 lists and ATLAS 2026.09; see
 [Threat and control mappings](../concepts/mappings.md). The rest of this
 section records the proposal as drafted.
@@ -640,13 +640,13 @@ results carried them as tags, and JSON findings carried them as
 
 ## 6. Control mapping (CTRL)
 
-Status: CTRL-1 catalogs are implemented, unreleased, as `metadata.controls`,
+Status: CTRL-1 catalogs are implemented, released in 0.1.3, as `metadata.controls`,
 and the HTML and Markdown reports list each finding's control references; see
 [Threat and control mappings](../concepts/mappings.md). The control evidence
-report (CTRL-0 and CTRL-2) is implemented, unreleased, as
+report (CTRL-0 and CTRL-2) is implemented, released in 0.1.3, as
 [`shadowscan controls`](../operations/controls.md) with Markdown, CSV and JSON
 output; the HTML report has no controls section yet. Declared facts (CTRL-3)
-are implemented, unreleased, as the Capability Card
+are implemented, released in 0.1.3, as the Capability Card
 [`governance:` block](../inventory.md#declared-governance-facts).
 
 ### Frameworks

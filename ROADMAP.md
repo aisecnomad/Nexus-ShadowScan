@@ -1,8 +1,8 @@
 # Roadmap
 
-ShadowScan 0.1.3 is the release candidate prepared on `main`; 0.1.2 is the
-published alpha pre-release (`NexusShadowScan` on PyPI, tag `v0.1.2`). This
-roadmap is intent, not a contract. Items move only when they keep the
+ShadowScan 0.1.3 is the published alpha pre-release (`NexusShadowScan` on
+PyPI, tag `v0.1.3`); `main` carries unreleased changes. This roadmap is
+intent, not a contract. Items move only when they keep the
 fail-closed trust model.
 
 ## Now
@@ -55,10 +55,10 @@ fail-closed trust model.
 
 Scoped, sequenced and with acceptance criteria in
 [docs/proposals/agent-governance.md](docs/proposals/agent-governance.md).
-All six items below are implemented and part of the 0.1.3 candidate; they
-wait on independent review of that candidate and on live validation.
+All six items below are implemented and released in 0.1.3; they wait on
+independent review of that release and on live validation.
 
-- Threat mapping: implemented in the 0.1.3 candidate. OWASP LLM and Agentic, MITRE
+- Threat mapping: released in 0.1.3. OWASP LLM and Agentic, MITRE
   ATLAS and MAESTRO references come from edition-pinned, validated catalogs;
   see [docs/concepts/mappings.md](docs/concepts/mappings.md). Independent
   review of the author mappings remains open.
@@ -69,7 +69,7 @@ wait on independent review of that candidate and on live validation.
   [docs/concepts/autonomy.md](docs/concepts/autonomy.md). Evaluation corpus
   cases per tier and surface and a comparison with other autonomy frameworks
   remain open.
-- Scheduled drift: implemented in the 0.1.3 candidate. Live `cloud.aws`, `cloud.azure`,
+- Scheduled drift: released in 0.1.3. Live `cloud.aws`, `cloud.azure`,
   `cloud.gcp` and app-only `identity.entra` scans attest their collection
   scope, `diff` labels drift classes (inventory, capability, autonomy,
   governance, coverage, including MCP tool-definition changes), baselines are
@@ -77,20 +77,20 @@ wait on independent review of that candidate and on live validation.
   [docs/operations/drift.md](docs/operations/drift.md). Validation against
   live accounts and tenants, and attestation for the other live connectors,
   remain open.
-- Registry integrations: implemented in the 0.1.3 candidate. AWS AgentCore Registry,
+- Registry integrations: released in 0.1.3. AWS AgentCore Registry,
   Microsoft Agent 365 and Gemini Enterprise as discovery and reconciliation
   sources; official MCP Registry provenance and private MCP registry
   allowlists; A2A Agent Card collection. Vendor registry approval never
   confers sanctioned status unless the operator explicitly trusts that
   registry. Validation against live registries remains open.
-- Enterprise inventory dashboard: implemented in the 0.1.3 candidate. `shadowscan
+- Enterprise inventory dashboard: released in 0.1.3. `shadowscan
   dashboard` writes a static, self-contained page from fleet reports that
   shows coverage before counts, with autonomy against shadow status,
   registry reconciliation, reference counts, drift and history, plus the
   versioned `shadowscan.inventory/v1` export for BI and SIEM tools; see
   [docs/operations/dashboard.md](docs/operations/dashboard.md). Use on a
   large live fleet remains to be validated.
-- Control mapping: implemented in the 0.1.3 candidate. ISO/IEC 42001, NIST AI RMF, the
+- Control mapping: released in 0.1.3. ISO/IEC 42001, NIST AI RMF, the
   EU AI Act and AIUC-1 references, `shadowscan controls` evidence reports and
   declared governance facts in schema version 2 Capability Cards; see
   [docs/operations/controls.md](docs/operations/controls.md). They are
@@ -99,9 +99,9 @@ wait on independent review of that candidate and on live validation.
 
 ## Later, after independent review
 
-- Done: the PyPI trusted publisher is registered, and 0.1.2 is published to
+- Done: the PyPI trusted publisher is registered, and 0.1.3 is published to
   PyPI as `NexusShadowScan` through the approval-gated trusted-publishing job
-  (tag `v0.1.2`). Nothing publishes automatically, and publication does not
+  (tag `v0.1.3`). Nothing publishes automatically, and publication does not
   establish independent review or deployment acceptance.
 - Next release: a candidate whose exact commit has independent human review
   and retained acceptance evidence for its deployment scope, as the

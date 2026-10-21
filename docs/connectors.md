@@ -236,7 +236,7 @@ do not raise a connector's live-acceptance or field-evaluation status.
 
 Connector availability is not production acceptance. This summary describes
 published evidence, not private tenant work or guarantees for a deployment.
-The release status was refreshed on 2026-10-09 against the published 0.1.2
+The release status was refreshed on 2026-11-20 against the published 0.1.3
 release; the field and tenant evidence remains subject to the limits below.
 Unreleased changes require a new final-revision review and acceptance evidence.
 
@@ -246,6 +246,7 @@ Unreleased changes require a new final-revision review and acceptance evidence.
 | `cloud.aws`, `saas.slack` | Offline replay, stubbed API/SDK tests, and a read-only canary runner for exact tenant scopes. | Canary-capable; no live tenant acceptance is recorded. |
 | Other built-in connectors | Per-connector unit, fixture, and mocked-provider coverage at varying depth; no connector-specific live acceptance receipts are published. | Regression-tested; live acceptance is unestablished. |
 | Cross-connector field accuracy | No fresh, independently sampled and human-double-labeled representative holdout is published. The bundled AI-labeled corpus does not satisfy this requirement. | Not field-evaluated. |
+| Published 0.1.3 | [Release, wheel and sdist evidence](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.3), plus a [non-author approval on the release source tree](https://github.com/aisecnomad/Nexus-ShadowScan/pull/279#pullrequestreview-5594183875). | Published alpha; this does not approve a later candidate or establish field accuracy. |
 | Published 0.1.2 | [Release and wheel evidence](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.2), plus a [non-author approval on the release source tree](https://github.com/aisecnomad/Nexus-ShadowScan/pull/160#pullrequestreview-5459628229). | Published alpha; this does not approve a later candidate or establish field accuracy. |
 
 Use these labels literally:

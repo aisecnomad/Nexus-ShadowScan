@@ -2,7 +2,7 @@
 
 ## From PyPI
 
-The published alpha `0.1.2` supports Python 3.11–3.13. Use a fresh virtual
+The published alpha `0.1.3` supports Python 3.11–3.14. Use a fresh virtual
 environment:
 
 ```bash
@@ -23,10 +23,10 @@ The 0.1.2 wheel was attested before the repository was renamed; verify it with `
 A plain `pip install` resolves dependencies from the live index. For a
 deployment, prefer the hash-locked install.
 
-The current source branch includes unreleased changes, including Python 3.14
-support and newer commands. Those changes are not installed by the PyPI command
-above; use a reviewed source revision below, or consult the
-[0.1.2 documentation](https://github.com/aisecnomad/Nexus-ShadowScan/blob/v0.1.2/README.md)
+The current source branch can include changes made after the release. The
+PyPI command above does not install them; use a reviewed source revision
+below, or consult the
+[0.1.3 documentation](https://github.com/aisecnomad/Nexus-ShadowScan/blob/v0.1.3/README.md)
 for the published command set.
 
 ## From a reviewed revision (hash-locked)
