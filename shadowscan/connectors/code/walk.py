@@ -2121,7 +2121,7 @@ class TreeWalker:
         The file scanner, which holds the text, decides this: a template that
         parses once its placeholders are filled in
         (``template_source.rendered_template``) is a ``parse`` defect; JSON
-        whose repeated keys neither reading makes MCP configuration
+        whose repeated keys no reading makes MCP configuration
         (``mcp_config.json_readings_declare_mcp``) an ``integrity`` defect. Only
         a gap of the same kind recorded for ``rel`` afterwards is charged to the
         budget (``_template_source_gap``); any other gap the file has is judged
@@ -2502,7 +2502,7 @@ class TreeWalker:
         read, or one longer than the bytes it reads, may declare servers too.
 
         A JSON file of at most ``_MCP_STRUCTURE_BYTES`` whose bytes name a key
-        is then decided by its structure, under both readings of a repeated
+        is then decided by its structure, under every reading of a repeated
         key (``json_readings_declare_mcp``): an OpenAPI snapshot that describes
         an ``mcp_servers`` field holds no server table. One that does not
         parse as UTF-8 JSON keeps the byte check's answer.
@@ -2686,8 +2686,12 @@ _MCP_CHECK_OVERLAP = 4096
 
 
 # Bytes of an oversize JSON file parsed to decide by its structure whether it
-# holds a server table (``_file_may_declare_mcp``); a larger one keeps the byte check's answer.
-_MCP_STRUCTURE_BYTES = 8 * 1024 * 1024
+# holds a server table (``_file_may_declare_mcp``); a larger one keeps the byte
+# check's answer. ``json.loads`` cannot be interrupted, so this bound and the
+# container bound of ``json_readings`` are what cap the parse's time and
+# memory; the API snapshots that motivated the structural check are under
+# 2 MiB.
+_MCP_STRUCTURE_BYTES = 4 * 1024 * 1024
 
 
 def _json_holds_no_server_table(fh: BinaryIO, kept: bytearray, read: int) -> bool:

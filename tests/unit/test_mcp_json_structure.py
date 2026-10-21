@@ -12,11 +12,12 @@ that does not parse still fail the scan.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
 
-from shadowscan.connectors.code.mcp_config import json_readings_declare_mcp, mcp_server_holders
+from shadowscan.connectors.code.mcp_config import json_readings, json_readings_declare_mcp, mcp_server_holders
 
 SNAPSHOT = {
     "openapi": "3.1.0",
@@ -229,3 +230,78 @@ def test_a_server_named_like_a_schema_keyword_is_still_a_server(server):
         "properties": {"mcpServers": {server: {"command": "npx", "args": ["-y", "x"]}}},
     }
     assert mcp_server_holders(document)[0]
+
+
+@pytest.mark.parametrize(
+    "server", ["properties", "patternProperties", "items", "not", "additionalProperties"]
+)
+def test_a_server_behind_a_mapping_keyword_is_still_a_server(server):
+    # A keyword that takes a mapping accepts a server record; a field map holds
+    # schemas and the schema-taking keywords hold a schema's keywords only.
+    document = {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {"mcpServers": {server: {"command": "npx", "args": ["-y", "x"]}}},
+    }
+    assert mcp_server_holders(document)[0]
+    # A real field map and a real nested schema still describe values, not servers.
+    schema = {
+        "type": "object",
+        "properties": {"mcp_servers": {"properties": {"url": {"type": "string"}}}},
+    }
+    assert mcp_server_holders(schema) == ([], False)
+
+
+def test_an_exact_mcp_key_with_a_variant_servers_key_is_undecided():
+    # Go's and .NET's decoders match keys without regard to case: either name
+    # of the pair may carry the variant, not only the outer one.
+    assert json_readings_declare_mcp(json.dumps({"mcp": {"Servers": {"s": {"command": "x"}}}})) is None
+    assert json_readings_declare_mcp(json.dumps({"MCP": {"servers": {"s": {"command": "x"}}}})) is None
+    # The exact pair is read by the walk itself, not a variant.
+    assert json_readings_declare_mcp(json.dumps({"mcp": {"servers": {"s": {"command": "x"}}}})) is True
+
+
+def test_a_variant_case_servers_section_with_a_repeated_key_still_fails(tmp_path, run_connector):
+    hidden = '{"mcp": {"Servers": {"s": {"command": "evil"}}}, "a": 1, "a": 2}'
+    _project(tmp_path, {"config/tools.json": hidden})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+
+
+# ------------------------------------------------------- resource bounds
+
+
+def test_a_document_without_a_repeated_key_is_one_reading():
+    # One parse decides a file without repeats; the readings differ only on repeats.
+    assert json_readings('{"a": {"b": 1}}') == [{"a": {"b": 1}}]
+    assert json_readings('{"a": 1, "a": 2}') == [{"a": 2}, {"a": 1}, {"a": [1, 2]}]
+    assert json_readings("{bad") is None
+
+
+def test_container_dense_text_is_left_undecided_quickly():
+    # json.loads cannot be interrupted, so text that opens more than
+    # _MAX_JSON_CONTAINERS containers is undecided before anything is parsed —
+    # a reading drops a repeated key's other values, so only the text's own
+    # brackets bound what every reading could rebuild.
+    dense = '{"a": 1, "a": 2, "data": [' + "{}," * 100_001 + "{}]}"
+    started = time.thread_time()
+    assert json_readings(dense) is None
+    assert json_readings_declare_mcp(dense) is None
+    assert time.thread_time() - started < 5.0
+    # The repeated huge value a last-wins reading drops still counts.
+    hidden = '{"pad": [' + "[]," * 100_001 + '[]], "pad": 1}'
+    assert json_readings(hidden) is None
+
+
+def test_an_oversize_container_dense_json_stays_blinding(tmp_path, run_connector):
+    # Within the container bound this schema is one budgeted gap
+    # (test_an_oversize_openapi_snapshot_is_one_budgeted_gap); past it the
+    # repeated key is undecided and the gap keeps the byte check's answer.
+    dense = (
+        '{"components": {"schemas": {"T": {"type": "object", "properties":'
+        ' {"mcp_servers": {"anyOf": []}}}}}, "pad": [' + "[]," * 100_001 + '[]], "pad": 1}'
+    )
+    _project(tmp_path, {"deploy/tools.json": dense})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, max_file_size=4_000)
+    assert ctx.stats.incomplete
+    assert [kind for _, kind, _ in _gaps(ctx)] == ["blinding"]

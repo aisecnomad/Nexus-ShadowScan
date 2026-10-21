@@ -484,7 +484,7 @@ applied in this order:
    still evidence. Only a parse failure is explained this way: a repeated
    JSON key, a redaction limit or any other gap under a template-named
    directory is judged as anywhere else. A plain JSON data file with a
-   repeated key is charged to the budget when neither reading of the key (first
+   repeated key is charged to the budget when no reading of the key (first
    value kept, last value kept, repeated objects merged) holds an MCP server
    table and no structured detector reads it as agent configuration; a
    manifest, a lockfile and agent configuration never are. Agent configuration there is

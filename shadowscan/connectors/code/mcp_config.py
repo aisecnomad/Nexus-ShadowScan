@@ -160,6 +160,16 @@ def _embedded_workflow_mcp(workflow: Any, errors: list[str]) -> dict[str, Any]:
 #: container levels below the root, and entries read per container.
 MCP_WALK_DEPTH = 12
 MCP_WALK_BREADTH = 256
+
+# Containers a text may open before its readings are left undecided
+# (``json_readings``), counted as its ``{`` and ``[`` characters, string
+# contents included, so the count can only overstate what a parse would
+# build: a few megabytes of three-byte containers parse to over a million
+# dicts and lists, and the readings and their exhaustive walks would
+# multiply that cost. A text past this bound stays what its byte check said
+# it may be. Real configuration and the catalogs and API contracts the
+# readings decide sit far below it.
+_MAX_JSON_CONTAINERS = 100_000
 # Fields a server record in a server list carries (Continue's ``mcpServers:
 # [{name, command}]``) and a session transcript's status record does not.
 _SERVER_RECORD_KEYS = frozenset({"command", "url", "args", "type", "transport"})
@@ -223,12 +233,34 @@ def _field_schema(value: Any) -> bool:
     that keyword takes (``_KEYWORD_TYPES``), and at least one keyword that
     takes a typed value. A server table whose servers are named like keywords
     (``{"type": {"command": ...}}``, ``{"default": {...}}``) fails the test:
-    a server's record is a mapping where a keyword takes a string or a list.
+    a server's record is a mapping where a keyword takes a string or a list,
+    a field map holds schemas and never a record's launch fields
+    (``{"properties": {"command": "npx"}}``), and ``items``, ``not`` and
+    ``additionalProperties`` hold a schema's keywords only
+    (``{"items": {"command": "npx"}}``). One level decides: a record deeper
+    down is not a server of the table a client would read here.
     """
     if not isinstance(value, dict) or not value or not _SCHEMA_KEYWORDS.issuperset(value):
         return False
     typed = [key for key in value if key in _KEYWORD_TYPES]
-    return bool(typed) and all(_keyword_typed(value[key], _KEYWORD_TYPES[key]) for key in typed)
+    if not typed or not all(_keyword_typed(value[key], _KEYWORD_TYPES[key]) for key in typed):
+        return False
+    for key in typed:
+        inner = value[key]
+        if key in _SCHEMA_FIELD_MAPS and not all(_schema_leaf(item) for item in inner.values()):
+            return False
+        if (
+            key in ("items", "not", "additionalProperties")
+            and isinstance(inner, dict)
+            and not _SCHEMA_KEYWORDS.issuperset(inner)
+        ):
+            return False
+    return True
+
+
+def _schema_leaf(item: Any) -> bool:
+    """Whether a field map's value is what a schema holds: a boolean, or a mapping of schema keywords."""
+    return isinstance(item, bool) or (isinstance(item, dict) and _SCHEMA_KEYWORDS.issuperset(item))
 
 
 def _keyword_typed(value: Any, expected: type | tuple[type, ...]) -> bool:
@@ -347,14 +379,38 @@ def _merged(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def json_readings(text: str) -> list[Any] | None:
-    """What ambiguous JSON reads as under each way parsers treat a repeated key; None if it does not parse.
+    """What ambiguous JSON reads as under each way parsers treat a repeated key; None if it is not decided.
 
     Most parsers keep a repeated key's last value, some its first, and Go's
-    decoder merges repeated objects into one. ``text`` is bounded by its
-    caller's size limit.
+    decoder merges repeated objects into one. ``json.loads`` cannot be
+    interrupted, so before anything is parsed the text's opening brackets
+    bound the containers a parse could build (``_MAX_JSON_CONTAINERS``): text
+    past the bound is None, undecided like text that does not parse, and its
+    gap keeps the byte check's answer. Within it, ``text`` is parsed once,
+    with a hook that records whether any object repeats a key: a document
+    without a repeat reads the same under every treatment, so that one
+    reading is returned, and the extra readings are built only over a
+    repeat. ``text`` is bounded by its caller's size limit.
     """
-    documents = []
-    for hook in (None, _first_wins, _merged):
+    if text.count("{") + text.count("[") > _MAX_JSON_CONTAINERS:
+        return None
+    repeated = False
+
+    def last_wins(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        nonlocal repeated
+        obj = dict(pairs)
+        if len(obj) != len(pairs):
+            repeated = True
+        return obj
+
+    try:
+        document = json.loads(text, object_pairs_hook=last_wins)
+    except (ValueError, RecursionError):
+        return None
+    if not repeated:
+        return [document]
+    documents = [document]
+    for hook in (_first_wins, _merged):
         try:
             documents.append(json.loads(text, object_pairs_hook=hook))
         except (ValueError, RecursionError):
@@ -389,14 +445,21 @@ def _variant_server_key(document: Any) -> bool:
 
 
 def _variant_key(key: str, value: Any) -> bool:
-    """Whether ``key`` spells ``mcpServers``, or an ``mcp`` section holding ``servers``, in another case."""
+    """Whether ``key`` spells ``mcpServers``, or an ``mcp`` section holding ``servers``, in another case.
+
+    Either name may carry the variant case (``McpServers``, ``MCP.Servers``,
+    ``mcp.Servers``); only the exact pair ``mcp.servers``, which the walk
+    reads itself, is no variant.
+    """
     if _SERVER_KEY_VARIANT.fullmatch(key):
         return True
     return (
-        key != "mcp"
-        and key.lower() == "mcp"
+        key.lower() == "mcp"
         and isinstance(value, dict)
-        and any(isinstance(inner, str) and inner.lower() == "servers" for inner in value)
+        and any(
+            isinstance(inner, str) and inner.lower() == "servers" and (key, inner) != ("mcp", "servers")
+            for inner in value
+        )
     )
 
 
@@ -404,11 +467,12 @@ def json_readings_declare_mcp(text: str) -> bool | None:
     """Whether any reading of ambiguous JSON holds an MCP server table; None when that is not known.
 
     Each reading (``json_readings``) is walked in full (``mcp_server_holders``
-    with ``exhaustive``: every caller bounds ``text`` by its size first), so a
-    duplicate cannot hide a table from one reading that another holds, and a
-    deep API contract is decided rather than left undecided. None when the
-    text does not parse, or names a server table key in a spelling the walk
-    does not match (``_variant_server_key``).
+    with ``exhaustive``: every caller bounds ``text`` by its size first, and
+    the readings bound the containers walked), so a duplicate cannot hide a
+    table from one reading that another holds, and a deep API contract is
+    decided rather than left undecided. None when the text does not parse,
+    holds more containers than the readings decide, or names a server table
+    key in a spelling the walk does not match (``_variant_server_key``).
     """
     documents = json_readings(text)
     if documents is None:

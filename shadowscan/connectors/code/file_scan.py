@@ -2359,7 +2359,7 @@ def _content_declares_mcp(rel: str, text: str, document: Any) -> bool:
     if not _text_may_declare_mcp(text):
         return False
     if rel.endswith(".json") and json_readings_declare_mcp(text) is False:
-        # JSON the integrity checks refused (a repeated key): neither reading holds a table.
+        # JSON the integrity checks refused (a repeated key): no reading holds a table.
         return False
     if rel.endswith(_YAML_SUFFIXES):
         declared = _yaml_declares_mcp(text)
