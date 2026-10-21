@@ -248,7 +248,32 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
    [aggregate score](https://github.com/ossf/scorecard#aggregate-score)
    also weights other checks by risk; an overall score above 8.5 requires an
    observed Scorecard result and is not promised by this workflow.
-8. **Open the next candidate.** Bump the version (for example to `0.1.4`) and
+8. **Record the publication.** Until this step lands, the repository
+   describes the candidate as prepared, not published. In one reviewed change
+   on `main`, update every place that names the published release, with the
+   day the tag and the upload happened:
+   - `README.md` and `docs/reference/product-guide.md`: the **Release state**
+     bullet (published version, tag, PyPI and GitHub release links), the
+     "PyPI requirements" note under **Install** (the Python range of the
+     published wheel) and the link to the published alpha's documentation.
+   - `docs/getting-started/install.md`: the published version, its Python
+     range and the attestation `--repo` note.
+   - `docs/connectors.md`: the release-status refresh date and the
+     "Published" row of the evidence table (release page and the non-author
+     approval of the release source tree).
+   - `docs/operations/openssf-best-practices.md`: the `version_tags` row and
+     the `release_notes` evidence; `docs/operations/reviewer-packet.md`: the
+     version string that must not be read as published.
+   - `ROADMAP.md` (the "Done" release bullet) and `SECURITY.md`
+     (supported versions).
+   - `CHANGELOG.md`, `RELEASE_NOTES.md`, `docs/engineering-log.md` and
+     `CITATION.cff`: the release date, when the tag landed on another day
+     than the headings say.
+   - `tests/test_repository_consistency.py`: the pins that name the published
+     version and its Python range, so the tests keep guarding the new text.
+
+   `make policy` and `make docs` must pass on that change.
+9. **Open the next candidate.** Bump the version (for example to `0.1.4`) and
    add a new unreleased section to the changelog and release notes.
 
 ## Renaming the repository
