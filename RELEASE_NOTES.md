@@ -158,7 +158,7 @@ and the
   hard dependency on `python-pkcs11` 0.9.4, a native extension with wheels for
   CPython 3.11-3.14 on Linux and macOS. Rebuild images from the hash locks
   rather than upgrading packages in place. See the
-  [pending migration notes](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production-migrations.md).
+  [migration notes for 0.1.3](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production-migrations.md).
 
 ### What changes in scan results
 

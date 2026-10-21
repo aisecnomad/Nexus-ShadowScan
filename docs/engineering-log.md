@@ -13,6 +13,31 @@ Counts and figures quoted in an entry are those of its date.
 
 ## 0.1.3 — 2026-11-20
 
+### Release readiness review (October 21)
+
+- `tools/release/assets.py` looked up the release with `releases/tags/{tag}`,
+  which GitHub serves for published releases only, so the documented flow of
+  attaching evidence to a draft before publishing it failed with a 404. It now
+  finds the one release naming the tag in the release listing, which includes
+  drafts for a token with push access, rereads it by ID and refuses an absent
+  or ambiguous match. The test double served drafts by tag, which hid the
+  defect; it now behaves like the API, and the old lookup fails six tests.
+- The TestPyPI smoke test in `docs/operations/publishing.md` ran
+  the `python -m shadowscan.signatures.validate` and
+  `python -m shadowscan.mappings.validate` checks from the checkout, which imports the source tree
+  ahead of the installed wheel. It now leaves the checkout first, as
+  `release.yml` and CI already do.
+- Dating the 0.1.3 headings ahead of publication had moved the repository
+  consistency checks' history boundary to the top of each log, so the 0.1.3
+  release notes, changelog and engineering-log sections were no longer checked
+  for stale counts or the former repository name. The newest section, dated or
+  `## Unreleased`, is now treated as current; contributor guidance names that
+  section instead of `## Unreleased`.
+- The README, product guide and security policy say 0.1.3 is planned for
+  TestPyPI and then PyPI on 2026-11-20 and that 0.1.2 remains the latest
+  published release. The README is the PyPI project description, so its wording
+  stays accurate on the 0.1.3 project page after publication.
+
 ### Lock the sample Dockerfile's CLI dependency graph (October 20)
 
 The post-merge Scorecard report still found an unpinned global npm installation
