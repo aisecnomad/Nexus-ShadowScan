@@ -50,15 +50,29 @@ Counts and figures quoted in an entry are those of its date.
     link paths; past that a link stays blinding, so many links to one large
     directory cannot multiply the walk.
   - Each credential was reported twice, at the real path and at the link
-    path, which would show as new findings after an upgrade. A credential the
-    real path already reports is dropped at the link path. A budgeted gap of
-    the same weight is charged once per real file (`_ledger_gap`): a partly
-    broken notebook in an aliased skills directory (#300) made a scan within
-    budget exceed it.
+    path. A budgeted gap of the same weight is now charged once per real
+    file (`_ledger_gap`): a partly broken notebook in an aliased skills
+    directory (#300) made a scan within budget exceed it. (A first fix also
+    dropped a credential at the link path when the real path reported it; see
+    the third review below.)
   - The alias target was listed by its path after the walk. Before listing,
     the target is checked again: not a link, the same device and inode as
     when the link was classified, the same real path. A target swapped since
     then stays blinding instead of having outside names listed.
+- A third review found a fail-open: an alias entry reached the file scanner
+  with its target's on-disk path, and the scanner decided by that path's
+  name and suffix (what is analyzed, what is a notebook, which file is a
+  `SKILL.md`). A link named unlike its target was read at neither path:
+  `.vscode/settings.json -> config/settings.json.example` (a shell MCP
+  server with an inline key), `.mcp.json -> nb/servers.ipynb` and
+  `.claude/skills/evil/SKILL.md -> docs/howto.md` completed with no
+  findings, where main fails closed. The scanner now decides by the path
+  a client reads (`rel`; `_SourceFile.name` and `ext` too) and reads by the
+  on-disk path. The review also found that dropping a credential at the
+  link path kept a documentation- or test-only finding and lost the live
+  one (`--fail-on high` passed a docs-linked `.claude/skills`): credentials
+  are reported at both paths again. An exclude below an aliased directory
+  now holds at the link path too.
 
 ### Release readiness review (October 21)
 

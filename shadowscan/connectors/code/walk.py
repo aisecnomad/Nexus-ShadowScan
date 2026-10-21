@@ -960,7 +960,7 @@ class TreeWalker:
         # Files of the current root's walk -> the project root it assigned them,
         # which decides whether the ci profile declares a gap there (``_declared_omission``).
         self._entry_projects: dict[str, str] = {}
-        # Files the current root's walk reads at a link path -> their real path (``alias_real_path``),
+        # Files the current root's walk reads at a link path -> their real path (``_alias_entry``),
         # and the path first charged a partial gap for each real file (``_ledger_gap``).
         self._alias_real: dict[str, str] = {}
         self._charged_gaps: dict[tuple[str, str, bool], str] = {}
@@ -1648,7 +1648,11 @@ class TreeWalker:
     def _alias_directory_entries(
         self, root: Path, resolved_root: Path, rel: str, real: Path, proj: str, walk: _WalkCounters
     ) -> Generator[tuple[str, Path, str, int], None, bool]:
-        """Yield the files below directory ``real`` at the link path ``rel``; False to stop the walk."""
+        """Yield the files below directory ``real`` at the link path ``rel``; False to stop the walk.
+
+        What an exclude leaves out at its real path stays out at the link path
+        too: the operator excluded that content, wherever a link shows it.
+        """
 
         def walk_error(exc: OSError) -> None:
             self._gap(
@@ -1659,10 +1663,11 @@ class TreeWalker:
         for dirpath, dirnames, filenames in _walk_directories(real, walk_error, budget=walk.budget):
             below = os.path.relpath(dirpath, real).replace(os.sep, "/")
             rel_dir = rel if below == "." else f"{rel}/{_report_name(below)}"
+            real_dir = _report_name(os.path.relpath(dirpath, root).replace(os.sep, "/"))
             kept = self._walked_directories(root, resolved_root, dirpath, rel_dir, dirnames, walk)
             if kept is None:
                 return False
-            dirnames[:] = kept
+            dirnames[:] = [name for name in kept if not self._excluded(f"{real_dir}/{name}", name)]
             # As the walk assigns projects (_iter_entries): the alias directory itself may be one.
             here = _nearest_root(rel_dir, roots) if rel_dir != rel else proj
             included_names = (name for name in filenames if self.included(f"{rel_dir}/{name}"))
@@ -1674,6 +1679,8 @@ class TreeWalker:
                 if walk.alias_files >= MAX_ALIAS_FILES:
                     self._unread_alias_gap(rel, f"{MAX_ALIAS_FILES:,} files already read at link paths")
                     return True
+                if self._excluded_file(f"{real_dir}/{_report_name(fn)}"):
+                    continue
                 entry = self._file_entry(
                     root,
                     resolved_root,
@@ -1696,10 +1703,6 @@ class TreeWalker:
         walk.alias_files += 1
         self._alias_real[entry[0]] = _report_name(os.path.relpath(entry[1], root).replace(os.sep, "/"))
         return entry
-
-    def alias_real_path(self, rel: str) -> str | None:
-        """The real path of a file the current root's walk reads at link path ``rel``, else None."""
-        return self._alias_real.get(rel)
 
     def _unread_alias_gap(self, rel: str, why: str) -> None:
         """Record a link that stands for agent configuration and is not read at its link path."""
@@ -2637,10 +2640,11 @@ class TreeWalker:
         """
         if self._content_mcp is not None:
             return self._content_mcp
-        if not _guessed_mcp_name(rel, path.name):
+        name = PurePosixPath(rel).name  # a link read at its link path is judged by the link's name
+        if not _guessed_mcp_name(rel, name):
             return False
         on_disk = PurePosixPath(path.relative_to(scan.base).as_posix()) if scan.base else PurePosixPath(rel)
-        return self._file_may_declare_mcp(on_disk, scan.root_fd)
+        return self._file_may_declare_mcp(on_disk, scan.root_fd, name)
 
     def _oversize_gap(self, rel: str, name: str, on_disk: PurePosixPath, root_fd: int) -> None:
         """Record a file over ``max_file_size``: blinding when it hides agent configuration, else one entry.
@@ -2665,7 +2669,7 @@ class TreeWalker:
         """
         named = self._agent_configuration(rel, name)
         by_content = (
-            not named and _guessed_mcp_name(rel, name) and self._file_may_declare_mcp(on_disk, root_fd)
+            not named and _guessed_mcp_name(rel, name) and self._file_may_declare_mcp(on_disk, root_fd, name)
         )
         selected = named or by_content or (self.scan_secrets and _dotenv_name(name))
         if not selected and not self.scan_secrets and self._discounted_test_gap(rel):
@@ -2689,7 +2693,7 @@ class TreeWalker:
         )
 
     @staticmethod
-    def _file_may_declare_mcp(on_disk: PurePosixPath, root_fd: int) -> bool:
+    def _file_may_declare_mcp(on_disk: PurePosixPath, root_fd: int, name: str | None = None) -> bool:
         """Whether a file's bytes may name an MCP server table key (``_may_declare_mcp``), unanalyzed.
 
         The file is opened as the reader opens it, confined below the scan root,
@@ -2699,8 +2703,9 @@ class TreeWalker:
         analyzed or excerpted. An MCP registry manifest (``server.json``)
         declares its server without such a key, and a file the check cannot
         read, or one longer than the bytes it reads, may declare servers too.
+        ``name`` is the file's name where a client reads it (a link's own name).
         """
-        if on_disk.name.lower() == "server.json":
+        if (name or on_disk.name).lower() == "server.json":
             return True
         try:
             with open_confined_file(on_disk, label="file", dir_fd=root_fd) as (fh, _):

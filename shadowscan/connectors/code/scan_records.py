@@ -154,11 +154,12 @@ class _SourceFile:
 
     @property
     def name(self) -> str:
-        return self.path.name
+        # The path a client reads: an agent-configuration link is read at its own name.
+        return PurePosixPath(self.rel).name
 
     @property
     def ext(self) -> str:
-        return self.path.suffix.lower()
+        return PurePosixPath(self.rel).suffix.lower()
 
 
 @dataclass

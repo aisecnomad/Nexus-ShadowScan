@@ -167,14 +167,9 @@ class ProjectFindings:
                     models=scan.infra_models.get(rel, []),
                 )
         for rel, hits in scan.secret_hits.items():
-            # A file read again at a link path (an agent-configuration alias) holds the
-            # credentials of its real path: each is reported once, at the real path.
-            real = self.walker.alias_real_path(rel)
-            if real is not None and real in scan.secret_hits:
-                seen = {(m.signature_id, m.value) for m, _ in scan.secret_hits[real]}
-                hits = [(m, snippet) for m, snippet in hits if (m.signature_id, m.value) not in seen]
-                if not hits:
-                    continue
+            # A file read again at a link path (an agent-configuration alias) reports its
+            # credentials at both paths: the real path may be documentation or test code,
+            # judged at lower weight, while the link path is configuration a client reads.
             with isolated(self.walker, rel, "credential analysis"):
                 f = self._secret_finding(
                     label,

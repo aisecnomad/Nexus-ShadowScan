@@ -49,8 +49,12 @@ that are never silent:
   link path, where a client reads it as configuration. Its files count
   toward `max_files`, and at most 5,000 files a root are read at link paths.
   Below such an alias, a file link is read at its own link path and a
-  directory link is judged as a link, not read again. A credential found at
-  both paths is reported once, at the real path, and a budgeted gap of such
+  directory link is judged as a link, not read again. A file read at its
+  link path is judged by the link's own name (`.vscode/settings.json` linked
+  to `settings.json.example` is a settings file), an exclude that leaves a
+  file out at its real path leaves it out at the link path too, a credential
+  found at both paths is reported at both (the real path may be
+  documentation, the link path is configuration), and a budgeted gap of such
   a file is charged once. A link to an excluded or unselected target stays
   blinding. So does a directory behind a link named like a configuration
   file (`CLAUDE.md -> docs`), which no client reads as that file, and a link
