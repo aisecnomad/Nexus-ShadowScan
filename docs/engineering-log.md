@@ -31,6 +31,7 @@ nothing, and a duplicate key in the manifest is refused. Its first run named
 CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
 20260909-r3, which the pinned base image's package set did not yet carry; the
 `bundle` command's stderr contract (no line starts with `::`) is unchanged.
+
 ### Repository hygiene after the companion move (October 21)
 
 - `.gitattributes`, `.editorconfig`, `.gitignore`, `.pre-commit-config.yaml`
@@ -54,6 +55,7 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   records that its #107 precondition was satisfied by #123; and
   `.github/dependabot.yml` says why the companion gitlink and the fixture
   manifests are not tracked.
+
 ### Companion pin to Nexus-ShadowBench 1ce0eee (October 21)
 
 - `benchmark-suite` moves from `e027b98` to `1ce0eee`, which adds the
@@ -70,6 +72,7 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   the new pin, as the consistency test requires; the linked reports are
   byte-identical at both commits. Checkouts the old companion `fetch` made
   should be fetched again.
+
 ### Unclosed credential calls and a faster call lexer (October 21)
 
 - The 8,192-step call bound could not tell an argument list that never
@@ -100,6 +103,7 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   values the old extension emitted and main withheld, and none after the
   fix. The lexer also skips the run pattern at a character that cannot start
   a run, which brings delimiter-dense text back to main's cost.
+
 ### Faster local start: deferred pattern compilation, no HTTP stack on import (October 21)
 
 - Every process compiled all ~1,600 built-in patterns with the bounded engine
@@ -118,6 +122,7 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   utils.http`. The scope and policy helpers a local scan needs move to
   `utils.http_scope`; `tests/unit/test_startup_imports.py` pins that a local
   scan imports none of them.
+
 ### Dispatch verdicts resolved only where a selected call reaches (October 21)
 
 - The dispatch inventory was consulted for every imported name a consumer
@@ -139,6 +144,7 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   re-export did not count before this change either.
   `test_only_provider_consumers_add_nested_dispatch_deferral` now expects a
   litellm-only consumer not to be queued.
+
 ### MCP structure in JSON: repeated keys, schemas, oversize files (October 21)
 
 - BerriAI/litellm's `provider_endpoints_support.json` lists one provider
@@ -247,6 +253,7 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   any parse failure under `${env}/`, so a module of newer Python syntax
   there completed; it now needs Jinja syntax in the directory name and in
   the file's own text (`TreeWalker.note_template_syntax`).
+
 ### Notebooks no longer leave llama_index incomplete (October 21)
 
 - A default scan of run-llama/llama_index exited 3 on 40 notebook and data
@@ -303,6 +310,7 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
     (bracket depth zero, no backslash continuation), for every escape form.
   - `%time`, `%timeit` and `%prun` without options lost the statement they
     run; only the magic's name is masked now (`0;` and blanks).
+
 ### Analysis bounds sized for real modules; redaction's own allowance (October 21)
 
 - BerriAI/litellm's `proxy/proxy_server.py` (90,611 nodes), `router.py`
@@ -341,6 +349,7 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   keeps the search linear. `separate_budget` also checks its own allowance
   when the work returns, so redaction that ran out between periodic checks
   still withholds the file's excerpts.
+
 ### Automatic filesystem deadline sized by bytes as well as entries (October 21)
 
 - run-llama/llama_index (13,499 entries, 480 MB of supported `uv.lock` files)
