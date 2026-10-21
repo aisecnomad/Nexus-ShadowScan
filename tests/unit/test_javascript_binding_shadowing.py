@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import random
 import re
 import time
 
 import pytest
 import regex
-from click.testing import CliRunner
 
-from shadowscan.cli import main
 from shadowscan.connectors.code.source_semantics import (
     SourceBudgetExceeded,
     _Binding,
@@ -117,19 +114,19 @@ def test_statement_starts_that_never_close_do_not_exhaust_the_pattern_budget():
     assert _kept(text, "OpenAI")
 
 
-def test_a_large_typescript_file_keeps_its_analysis(tmp_path):
-    # 5,000 unclosed calls: the original check timed out here, and the whole scan takes a fraction of a second.
+def test_a_large_typescript_file_keeps_its_analysis(tmp_path, run_connector):
+    # 5,000 unclosed calls: the original check timed out here. The file's own budget is
+    # raised so only that check is under test: redacting this file's excerpts is most of
+    # its 2 s allowance under coverage tracing, which made the default budget flaky.
     (tmp_path / "big.ts").write_text(
         'import OpenAI from "openai";\n'
         "const client = new OpenAI();\n"
         'await client.chat.completions.create({ model: "gpt-4o", messages: [] });\n' + "f(\n" * 5_000,
         encoding="utf-8",
     )
-    result = CliRunner().invoke(main, ["code", str(tmp_path), "--format", "json"])
-    report = json.loads(result.stdout)
-    errors = [error for stat in report["stats"] for error in stat["errors"]]
-    assert not [error for error in errors if "TimeoutError" in error], errors
-    assert any("provider.openai" in finding["model_providers"] for finding in report["findings"])
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_timeout=10)
+    assert not [error for error in ctx.stats.errors if "TimeoutError" in error], ctx.stats.errors
+    assert any("provider.openai" in finding.model_providers for finding in findings)
 
 
 def test_windowed_check_agrees_with_the_original_pattern_on_more_generated_source():
