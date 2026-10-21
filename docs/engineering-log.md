@@ -13,6 +13,27 @@ Counts and figures quoted in an entry are those of its date.
 
 ## 0.1.3 — 2026-11-20
 
+### Automatic filesystem deadline sized by bytes as well as entries (October 21)
+
+- run-llama/llama_index (13,499 entries, 480 MB of supported `uv.lock` files)
+  ended at the connector deadline on main 939d416: the entry-sized deadline
+  (one default per 12,000 entries) does not see that a supported lockfile is
+  parsed and swept for credentials, at about 0.17 s of CPU per MB, or that
+  source analysis costs 1.9-6.6 s per MB on a contended runner. The probe now
+  also sums the sizes of the files the reader will analyse (only files at or
+  under `max_file_size`, `max_notebook_size` for a notebook) and the proposal
+  is the larger of the entry scale and one default per 12 MB of source plus
+  one per 240 MB of anything else read. The byte term can only lengthen the
+  deadline; the probe's 180,000-entry, one-second bounds and the engine's
+  1800 s ceiling are unchanged, and a byte-padded tree is pinned at that
+  ceiling by a regression test. `docs/scanning.md` tells operators scanning
+  untrusted repositories to set an explicit or job deadline.
+- When the deadline ends a walk, the walk now stops early enough to leave
+  time for re-export binding and finding emission (5 ms per scanned file, up
+  to a quarter of the window), so the report keeps its "after N of M files"
+  accounting; emission that still runs into the deadline records how many
+  project findings it did not emit instead of dropping them silently.
+
 ### Release readiness review (October 21)
 
 - `tools/release/assets.py` looked up the release with `releases/tags/{tag}`,
