@@ -647,6 +647,35 @@ class TestPostWalkReserve:
         assert 0 < stats["objects_examined"] < 2_001
         assert any("connector deadline reached after" in e and " of 2001 files" in e for e in stats["errors"])
 
+    def test_the_post_walk_reserve_counts_only_files_the_walk_read(
+        self, tmp_path, index, monkeypatch
+    ) -> None:
+        # Thousands of never-read assets sort first and reserve nothing; counting them
+        # raised the margin to its cap before the first source file, so a tree that
+        # completed on main stopped at 75% of its window instead of 95%.
+        from shadowscan.connectors.base import ConnectorContext
+        from shadowscan.connectors.code import walk
+
+        root = tmp_path / "repo"
+        (root / "assets").mkdir(parents=True)
+        for i in range(2_000):
+            (root / "assets" / f"img{i}.png").write_bytes(b"x")
+        for i in range(3):
+            (root / f"m{i}.py").write_text(f"VALUE = {i}\n", encoding="utf-8")
+        counts: list[int] = []
+        margin = walk.deadline_margin
+
+        def recorded(remaining: float, read: int = 0) -> float:
+            counts.append(read)
+            return margin(remaining, read)
+
+        monkeypatch.setattr(walk, "deadline_margin", recorded)
+        ctx = ConnectorContext(config={"path": str(root), "use_git": False}, index=index)
+        ctx.deadline = time.monotonic() + 600.0
+        FilesystemConnector(ctx).run()
+        assert counts and max(counts) <= 3, max(counts)
+        assert not ctx.stats.incomplete, ctx.stats.errors
+
     def test_emission_past_the_deadline_names_what_it_left_out(self, tmp_path, index, monkeypatch) -> None:
         from shadowscan.connectors.base import ConnectorContext
         from shadowscan.connectors.code.file_scan import FileScanner
