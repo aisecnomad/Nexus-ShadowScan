@@ -303,6 +303,44 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
     (bracket depth zero, no backslash continuation), for every escape form.
   - `%time`, `%timeit` and `%prun` without options lost the statement they
     run; only the magic's name is masked now (`0;` and blanks).
+### Analysis bounds sized for real modules; redaction's own allowance (October 21)
+
+- BerriAI/litellm's `proxy/proxy_server.py` (90,611 nodes), `router.py`
+  (74,983) and `llms/custom_httpx/llm_http_handler.py` (56,791) were past
+  the 50,000-node bound and kept lexical evidence only; one was past 512
+  bound source calls. Python syntax-tree bounds rise to 200,000 nodes
+  (`max_ast_nodes`, the MCP tool and source-identity walks alike) and bound
+  calls to 2,048: the three modules bind in 2-3.5 s of CPU and about 100 MB
+  each; 1,024 calls sufficed for all three. The provider tool-loop flow walk
+  allows four steps per accepted node (800,000; `test_common_request_processing.py`
+  needs 201,156, in 2.7 s), still checked against the CPU budget every 256 steps.
+- litellm's 940 KB `tests/unit/proxy/_experimental/mcp_server/test_mcp_server_manager.py`
+  finished detection inside its 8 s allowance and then spent about 6 s
+  redacting its excerpts, charged to the same allowance and checked as it
+  closed. Excerpt redaction runs once detection is done; it now runs on a
+  CPU allowance of its own of the same size (`matcher.separate_budget`),
+  whose CPU time is given back to the file's budget
+  (`_ScanBudget.extend_cpu`). The wall deadline is the file's own and does
+  not move: it carries the walker's clamp to the connector deadline, which
+  an earlier draft's fresh window could pass (found in review). A file
+  costs at most twice its CPU allowance and never runs past its wall cap. A
+  redaction that exhausts its own allowance withholds the file's excerpts
+  (a sanitization-limit gap, an error outside discounted test code), never
+  a finding.
+- Significant-Gravitas/AutoGPT's 66,573-byte `.claude/skills/pr-test/SKILL.md`
+  was past the skill audit's 64 KiB. The audit is linear in its lines (about
+  40 ms at 512 KiB) and the instruction-content inspector already reads the
+  same files to 512 KiB; the audit now does too.
+- Review of that change found that `endpoint.mcp` passes MCP tool
+  descriptions through the same audit, so its window rose with it, and the
+  endpoint's tool-poisoning search, whose verb suffix was an unbounded
+  `\w*`, is quadratic on long runs of word characters (7.9 s for 64 KiB on
+  main). Tool descriptions keep a 64 KiB window of their own
+  (`runtime.MAX_DESCRIPTION_BYTES`, passed to `audit_skill_text` as
+  `max_bytes`), and the verb suffix is bounded to 32 word characters, which
+  keeps the search linear. `separate_budget` also checks its own allowance
+  when the work returns, so redaction that ran out between periodic checks
+  still withholds the file's excerpts.
 
 ### Release readiness review (October 21)
 

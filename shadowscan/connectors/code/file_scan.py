@@ -160,9 +160,11 @@ from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import (
     MAX_SECRETS_PER_SIGNAL,
     SOURCE_EXTENSIONS,
+    MatchTimeoutError,
     _finditer,
     language_for_path,
     reported_credential,
+    separate_budget,
 )
 from shadowscan.utils.git import LFS_POINTER_MAX_BYTES, LFS_POINTER_PREFIX
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
@@ -787,8 +789,11 @@ class FileScanner:
                 # Match locations count LF only. Other separators can occur
                 # inside literals (Go raw imports may contain CR) and must not
                 # shift excerpts. _excerpt strips a CR left by a CRLF ending.
-                source.safe_lines = _redacted_source(source.text or "", source.structure).split("\n")
-            except (YAMLResourceLimitError, SanitizationLimitError) as exc:
+                with separate_budget():
+                    source.safe_lines = _redacted_source(source.text or "", source.structure).split("\n")
+            except (YAMLResourceLimitError, SanitizationLimitError, MatchTimeoutError) as exc:
+                # Redaction runs once detection is done (``_settle_excerpts``) under an
+                # allowance of its own: exhausting it withholds the excerpts, never a finding.
                 self._withhold_excerpts(source.rel, exc)
                 source.structure = None
                 source.safe_lines = []

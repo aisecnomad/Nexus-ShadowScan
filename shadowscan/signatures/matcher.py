@@ -51,6 +51,42 @@ DEFAULT_SCAN_BUDGET_SECONDS = 2.0
 WALL_BUDGET_FACTOR = 4.0
 
 
+@contextmanager
+def separate_budget() -> Iterator[None]:
+    """Run work that follows an input's analysis on a CPU allowance of its own, within its wall deadline.
+
+    Redacting a file for its excerpts runs once detection is done and has its
+    own work bound; charged to the input's CPU budget, it made a 940 KB test
+    file whose detection took 4 s of an 8 s allowance time out on 6 s of
+    redaction. The work here gets a fresh CPU allowance of the active budget's
+    size, under the budgets that enclose it, and its CPU time is then given
+    back to the active budget (``_ScanBudget.extend_cpu``), so an input costs at
+    most twice its CPU allowance. The wall deadline is the active budget's own,
+    unchanged: it holds the walker's clamp to the connector deadline, so no
+    file runs past it. Exhausting either raises ``MatchTimeoutError``, also when
+    the work returns. Without an active budget nothing changes.
+    """
+    active = _SCAN_BUDGET.get()
+    if active is None:
+        yield
+        return
+    cpu = time.thread_time()
+    separate = _ScanBudget(active.cpu_seconds, active.wall_seconds, active.outer)
+    separate.wall_deadline, separate.wall_seconds, separate.wall_started = (
+        active.wall_deadline,
+        active.wall_seconds,
+        active.wall_started,
+    )
+    token = _SCAN_BUDGET.set(separate)
+    try:
+        yield
+    finally:
+        _SCAN_BUDGET.reset(token)
+        active.extend_cpu(time.thread_time() - cpu)
+    if separate.remaining() <= 0:
+        raise MatchTimeoutError(separate.exhausted())
+
+
 # A briefly busy worker can exhaust several regex wall-clock attempts before
 # this thread has used its own 100 ms CPU allowance. Keep retries finite and
 # inside the original per-pattern CPU and per-input wall deadlines.

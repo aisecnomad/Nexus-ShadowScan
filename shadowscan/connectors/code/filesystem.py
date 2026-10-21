@@ -692,7 +692,7 @@ class FilesystemConnector(BaseConnector):
             "left out, and are a coverage gap when their text alone is over max_file_size"
         ),
         "max_ast_nodes": (
-            "Python syntax-tree nodes analyzed per file for import-bound evidence (default 50000); a larger "
+            "Python syntax-tree nodes analyzed per file for import-bound evidence (default 200000); a larger "
             "file keeps its lexical evidence and is reported as partially analyzed: a warning under test "
             "paths, an error elsewhere"
         ),

@@ -79,6 +79,22 @@ class _ScanBudget:
             budget.wall_deadline += wall
             budget = budget.outer
 
+    def extend_cpu(self, cpu: float) -> None:
+        """Give this budget back CPU time spent on work that was not its input's.
+
+        Unlike ``credit``, which returns time that was no budget's work to every
+        enclosing budget, this returns CPU time that was still this scan's work
+        (``matcher.separate_budget``) to this budget only. The CPU window moves, so
+        a later diagnostic still measures only the input's work, never past an
+        enclosing budget's CPU deadline. The wall deadline does not move: it
+        carries the walker's clamp to the connector deadline (``wall_seconds``),
+        which no allowance may pass.
+        """
+        self.cpu_started += cpu
+        self.cpu_deadline += cpu
+        if self.outer is not None:
+            self.cpu_deadline = min(self.cpu_deadline, self.outer.cpu_deadline)
+
 
 _SCAN_BUDGET: ContextVar[_ScanBudget | None] = ContextVar("signature_scan_budget", default=None)
 

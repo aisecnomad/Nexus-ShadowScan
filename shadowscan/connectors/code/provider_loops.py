@@ -33,7 +33,10 @@ from collections.abc import Callable, Iterator
 
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
 
-MAX_FLOW_STEPS = 100_000
+# Four steps per syntax-tree node the binder accepts (source_semantics.MAX_AST_NODES):
+# litellm's 487 KB test_common_request_processing.py takes 201,156 in 2.7 s of CPU.
+# The per-input CPU budget is checked every 256 steps as well.
+MAX_FLOW_STEPS = 800_000
 
 
 class _Imports(dict[str, str]):

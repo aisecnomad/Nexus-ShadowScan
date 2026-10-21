@@ -52,6 +52,12 @@ explain operator migrations. Earlier per-change entries are preserved in the
   without their base64 output data, a notebook in which only some tutorial
   cells do not parse is one budgeted gap, and repeated model-identifier
   literals count once toward the per-file bound.
+- Large real modules are analyzed in full: the Python syntax-tree bound rises
+  from 50,000 to 200,000 nodes (`max_ast_nodes`), bound source calls from 512
+  to 2,048 and tool-loop flow steps to 800,000. Excerpt redaction runs under
+  an allowance of its own, so a file whose detection finished in its budget
+  no longer times out redacting its excerpts, and skill files are audited up
+  to 512 KiB.
 
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the

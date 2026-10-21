@@ -8,9 +8,9 @@ bindings remain supporting framework evidence. No scanned code is imported or ex
 Provider SDK instances may cross an unescaped module helper parameter only
 when every direct call supplies the same constructed, annotation-resolved SDK type.
 
-Python AST work and JavaScript literal-branch tokens are capped at 50,000 per
-file; JavaScript statement nesting is bounded to 128 levels and source calls to
-512 per file. Call expressions are bounded to 8 KiB. A Python file whose imports provably
+Python AST work is capped at 200,000 nodes and JavaScript literal-branch tokens
+at 50,000 per file; JavaScript statement nesting is bounded to 128 levels and
+source calls to 2,048 per file. Call expressions are bounded to 8 KiB. A Python file whose imports provably
 cannot resolve to any signature skips the binder at any size, since it could
 yield no evidence (``_python_bindable``, linear in the file and bounded to 4,096
 statement matches). Regex operations share the scanner's per-input deadline.
@@ -82,8 +82,8 @@ from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout, re
 from shadowscan.utils.redaction import sanitize_text
 from shadowscan.utils.text import line_counter, python_source_lines
 
-MAX_AST_NODES = 50_000
-MAX_BOUND_CALLS = 512
+MAX_AST_NODES = 200_000
+MAX_BOUND_CALLS = 2048
 # Agent constructions carry their instructions and tool definitions inline, and
 # real ones pass 8 KiB (a realtime agent's prompt, a streamText call with its
 # tools): read only that far, their options were unread and the scan was

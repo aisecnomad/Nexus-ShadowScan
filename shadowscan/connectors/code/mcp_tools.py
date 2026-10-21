@@ -24,7 +24,7 @@ from shadowscan.connectors.code.source_ranges import noncode_ranges
 from shadowscan.signatures.matcher import pattern_timeout
 
 MAX_TOOLS_PER_FILE = 100
-MAX_MCP_AST_NODES = 50_000
+MAX_MCP_AST_NODES = 200_000
 _NAME = r"([A-Za-z][A-Za-z0-9_.-]{0,63})"
 _VALID_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}\Z")
 
