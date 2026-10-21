@@ -28,6 +28,12 @@ Counts and figures quoted in an entry are those of its date.
   `max_files` and the entry budget; a link below the alias is judged as a
   link and never read again, so a loop cannot multiply the walk. A link to
   an excluded or unselected target, or outside the tree, stays blinding.
+- AutoGPT's two analysis limits were its 66,573-byte
+  `.claude/skills/pr-test/SKILL.md` (read at both paths once the link was),
+  past the skill audit's 64 KiB. The audit is linear in its lines (about
+  40 ms at 512 KiB) and the instruction-content inspector already reads the
+  same files to 512 KiB; the audit now does too. (Its model-literal limit on
+  `autogpt-characters/manifest.json` cleared with the distinct-literal bound.)
 - continuedev/continue exited 3 on `textmate-syntaxes/fsharp.json`, a grammar
   that repeats a repository key. October 21's repeated-key rule covers it:
   neither reading holds an MCP server table, so its two integrity gaps are

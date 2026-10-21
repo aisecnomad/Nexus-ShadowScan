@@ -1287,7 +1287,7 @@ line start or after sentence punctuation), so an instruction in its middle is
 reported. A single sentence over 4,096 characters is audited in its first and
 last 4,096 characters; its middle is not, so the audit is marked
 `partial: true` (status `partial` when nothing was found) and the scan stays
-complete. Text over 64 KiB, malformed
+complete. Text over 512 KiB (the instruction-content bound), malformed
 or oversized YAML front matter and an unclosed fence make the audit and the
 scan incomplete.
 
