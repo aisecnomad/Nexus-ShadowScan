@@ -55,7 +55,7 @@ concurrency:
 jobs:
   build:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -200,7 +200,7 @@ jobs:
 
   attest:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # No source checkout or package execution in this job with signing rights.
     permissions:
@@ -254,7 +254,7 @@ jobs:
 
   publication-input:
     needs: [build, attest]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # This job deliberately has no OIDC token and does not publish. The publish
     # job below consumes this artifact's exact attested bytes; it never checks
@@ -308,7 +308,7 @@ jobs:
   publication-gate:
     needs: publication-input
     if: inputs.publish != 'none' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Reads the release tag through the API. No checkout and no OIDC token.
     permissions:
@@ -360,7 +360,7 @@ jobs:
   publish:
     needs: [publication-input, publication-gate]
     if: inputs.publish != 'none' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     # The only job that uploads. It waits for approval in the protected
     # environment named by `publish`, whose trusted publisher on the package
@@ -403,7 +403,7 @@ jobs:
   release-assets:
     needs: [publication-input, publish]
     if: inputs.attach_github_release && inputs.publish == 'pypi' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     # Separate approval and token from package publishing; no OIDC permission.
     # Only the stdlib verification helper from the reviewed source is executed.

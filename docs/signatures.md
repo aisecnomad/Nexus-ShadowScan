@@ -249,6 +249,14 @@ values) fail loading. Lists must contain strings; booleans cannot be strings.
 Overrides are allowed only between separate pack directories, in the order
 configured.
 
+Custom packs are checked this way every time they load. A scan compiles a
+built-in pattern only when an input first needs it, because the literal
+prefilter runs few of them on a small input: a three-file staged scan used 11
+of about 1,600. `python -m shadowscan.signatures.validate`, which CI runs on
+every push and pull request, compiles and checks every built-in pattern, so
+the shipped packs are never used unchecked. The first compile of a pattern is
+not charged to the execution budget of the input that needs it.
+
 The schema also pins the closed vocabularies the matcher and the risk engine
 key on, so a typo fails loading instead of silently never matching:
 

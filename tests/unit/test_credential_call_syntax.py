@@ -164,10 +164,10 @@ def _call_lexer_work(source: str, monkeypatch: pytest.MonkeyPatch) -> int:
     ticks = 0
     tick = redaction._CallLexer.tick
 
-    def counted(self: redaction._CallLexer) -> None:
+    def counted(self: redaction._CallLexer, steps: int = 1) -> None:
         nonlocal ticks
-        ticks += 1
-        tick(self)
+        ticks += steps
+        tick(self, steps)
 
     monkeypatch.setattr(redaction._CallLexer, "tick", counted)
     redaction._redact_credential_calls(source)
@@ -220,3 +220,311 @@ def test_a_credential_callee_named_inside_a_comment_still_reads_the_call_after_i
     source = f'x = build  # wraps AzureKeyCredential\n# more\n("{SYNTHETIC}")'
     safe = sanitize_text(source)
     assert SYNTHETIC not in safe and REDACTED in safe
+
+
+# The step bound cannot tell a long argument list from one that never closes.
+# Prose naming a credential type ('`ClientSession(`' in markdown, a comment that
+# quotes 'credential (') reached it and withheld every excerpt of the file.
+_PROSE = "Prose (with an aside) and ordinary words follow here.\n" * 400
+
+
+@pytest.mark.parametrize(
+    "opening",
+    [
+        "Match `ClientSession(` and `Server(` here; a stray ` tick.\n",
+        "# The rule read the operator as the credential ('bearer\n# [REDACTED]> S'), then.\n",
+        "    # 'builder().apiKey(', '\\n    .apiKey(', 'client?.token('. The leading\n",
+    ],
+)
+def test_an_unclosed_credential_named_call_in_prose_is_read_to_its_end(opening):
+    # Read to its end, the call is unclosed: the text no longer fails closed (main
+    # withheld every excerpt of the file); the text from the call on is withheld,
+    # the line before it is kept, and every line keeps its number.
+    source = "Intro line kept.\n" + opening + _PROSE
+    safe = sanitize_text(source)
+    assert safe.count("\n") == source.count("\n")
+    assert safe.startswith("Intro line kept.\n") and "with an aside" not in safe
+
+
+def test_a_long_credential_constructor_still_withholds_its_literal():
+    source = 'HTTPBasicAuth("user", ' + "a, " * 5000 + f'"{SYNTHETIC}")\nprint("visible")\n'
+    safe = sanitize_text(source)
+    assert SYNTHETIC not in safe and REDACTED in safe
+    assert safe.count("\n") == source.count("\n")
+    unclosed = sanitize_text(source.replace('")\nprint', '"\nprint'))
+    assert SYNTHETIC not in unclosed and REDACTED in unclosed
+
+
+def test_a_long_call_pairing_a_credential_key_still_withholds_its_value():
+    source = 'os.environ.setdefault("OPENAI_API_KEY", (' + "a + " * 4000 + f'"{SYNTHETIC}"))\n'
+    safe = redaction._redact_credential_calls(source)
+    assert SYNTHETIC not in safe and REDACTED in safe
+
+
+def test_reading_past_the_step_bound_shares_one_budget_and_fails_closed(monkeypatch):
+    # Every credential call past the step bound draws on one budget per text,
+    # linear in its length; once it is spent the call fails closed as before.
+    monkeypatch.setattr(redaction, "_MAX_CALL_STEPS", 64)
+    monkeypatch.setattr(redaction, "_CALL_EXTENSION_PER_CHAR", 2)
+    tail = "plain line of 'text'\n" * 2000
+    assert redaction._redact_credential_calls("#getToken(\n" + tail).count("\n") == tail.count("\n") + 1
+    with pytest.raises(SanitizationLimitError, match="credential call length limit"):
+        redaction._redact_credential_calls("#getToken(\n" * 3 + tail)
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        'os.environ.setdefault(default="{value}", key="OPENAI_API_KEY", ',
+        'settings.get("providers.openai.api_key", default="{value}", ',
+    ],
+    ids=["key-after-value", "setting-path"],
+)
+def test_an_extension_cut_short_keeps_the_longer_reading_and_fails_closed(monkeypatch, call):
+    # With the shared budget spent, extending a call could stop before the step-bound
+    # reading did. Judging that shorter reading lost the credential key it held, so
+    # the call was not sensitive and its value reached the excerpt (main fails closed).
+    monkeypatch.setattr(redaction, "_MAX_CALL_STEPS", 64)
+    monkeypatch.setattr(redaction, "_CALL_EXTENSION_PER_CHAR", 0)
+    text = call.format(value="synthetic-value-4f9c2a") + "more " * 200 + ")\n"
+    with pytest.raises(SanitizationLimitError, match="credential call length limit"):
+        sanitize_text(text)
+
+
+def test_reading_past_the_step_bound_stays_linear(monkeypatch):
+    # Credential-named and ordinary callees cost the same up to the step bound;
+    # the credential ones then read on only within the text's extension budget.
+    tail = "plain line of text here\n" * 40_000
+    ticks = 0
+    tick = redaction._CallLexer.tick
+
+    def counted(self: redaction._CallLexer, steps: int = 1) -> None:
+        nonlocal ticks
+        ticks += steps
+        tick(self, steps)
+
+    monkeypatch.setattr(redaction._CallLexer, "tick", counted)
+
+    def work(source):
+        nonlocal ticks
+        ticks = 0
+        try:
+            redaction._redact_credential_calls(source)
+        except SanitizationLimitError:
+            pass  # the budget ran out: the call fails closed
+        return ticks
+
+    # Each '# ]' is a comment under one reading and ends the other at a mismatched
+    # bracket, so neither reading closes the call or reaches the nesting bound.
+    source = "'x'\n" + "#getToken(\n# ]\n" * 200 + tail
+    extra = work(source) - work(source.replace("getToken", "getThing"))
+    assert 0 < extra <= redaction._CALL_EXTENSION_PER_CHAR * len(source) + 64
+
+
+def test_a_completed_call_that_never_closes_withholds_the_rest_of_the_text():
+    # Read to its end, the call is still open: whether its literal past the bound is
+    # terminated or runs to the end of its line, nothing after the call's start
+    # reaches the excerpt.
+    def call(arguments: int, value: str) -> str:
+        return 'HTTPBasicAuth("user", ' + "a, " * arguments + value + '\nafter = "trailing"\n'
+
+    for value in (f'"{SYNTHETIC}",', f'"{SYNTHETIC}'):
+        long_safe = sanitize_text(call(5000, value))
+        assert SYNTHETIC not in long_safe and "trailing" not in long_safe
+        assert long_safe.count("\n") == call(5000, value).count("\n")
+
+
+def test_nesting_found_while_completing_a_call_still_fails_closed():
+    # The completed reading keeps the nesting bound of the first one.
+    source = 'HTTPBasicAuth("user", ' + "a, " * 5000 + "(" * 40 + f'"{SYNTHETIC}"' + ")" * 41 + "\n"
+    with pytest.raises(SanitizationLimitError, match="credential call nesting limit"):
+        redaction._redact_credential_calls(source)
+
+
+# '#', '//' and '/*' start comments only in some languages. Past the step bound
+# the reading under comment rules and the one with the markers as text can split
+# a call differently, and each can leave the credential mid-argument; main failed
+# closed on every such call, so a completed one withholds what either reading holds.
+_LONG_ARGUMENTS = "".join(f"    0.{n % 10}, 0.{n % 7},\n" for n in range(1200))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # A comma in a real comment, and floor division hiding the ')' from the comment reading.
+        f'cred = make_credential(  # key, endpoint, then weights\n    "{SYNTHETIC}", "https://example.invalid/", [\n'
+        + _LONG_ARGUMENTS
+        + "    ], shards // 2)\n",
+        # A JavaScript private field read as a comment, after a comment holding a comma.
+        f'const cred = new AzureKeyCredential(  // key, from the portal\n  "{SYNTHETIC}", {{\n'
+        + "".join(f"    o{n}: this.#cfg.v{n},\n" for n in range(1200))
+        + "    retry: this.#retry})\n",
+        # A key/value pairing whose value the comment-split reading would move.
+        f'os.environ.setdefault("OPENAI_API_KEY",  # name, value\n    "{SYNTHETIC}",\n'
+        + "".join(f"    arg{n},\n" for n in range(1200))
+        + "  # )\n",
+    ],
+    ids=["floor-division", "private-field", "pairing"],
+)
+def test_a_completed_call_withholds_what_either_comment_reading_holds(source):
+    safe = sanitize_text(source)
+    assert SYNTHETIC not in safe and REDACTED in safe
+    assert safe.count("\n") == source.count("\n")
+
+
+def test_a_completed_call_no_longer_pairing_its_key_still_fails_closed():
+    # At the step bound the key argument runs on and reads as a literal key; read
+    # to its end it is a computed expression. The call keeps failing closed rather
+    # than emitting a value the step-bound reading paired with a credential key.
+    source = 'os.environ.setdefault("OPENAI_API_KEY"' + "".join(f" + p{n}" for n in range(2500))
+    source += f', "{SYNTHETIC}")\n'
+    with pytest.raises(SanitizationLimitError, match="credential call length limit"):
+        redaction._redact_credential_calls(source)
+
+
+def test_a_completed_call_fails_closed_when_either_reading_stops_at_a_bound():
+    # With the markers as text, each '#getToken(' opens a bracket past the nesting bound.
+    source = "'x'\n" + "#getToken(\n" * 200 + "plain line of text here\n" * 2000
+    with pytest.raises(SanitizationLimitError, match="credential call nesting limit"):
+        redaction._redact_credential_calls(source)
+
+
+# Both readings can misplace every argument start: a false marker hides a comma under
+# the comment reading (`this.#cfg,`, `shards // 2,`) while the real comment holds an
+# unbalanced bracket or a stray triple quote under the other. Neither reading then
+# places the credential at an argument start, so a call whose readings split it
+# differently withholds every string literal it holds.
+_FILL = "    0.1, 0.2,\n" * 1200
+
+
+@pytest.mark.parametrize(
+    "opening",
+    [
+        "const cred = new AzureKeyCredential(  // see the docs (portal\n  this.#cfg,\n",
+        "cred = make_credential(  # see the docs (vault\n    shards // 2,\n",
+        'cred = make_credential(  # the value is a """ literal\n    shards // 2,\n',
+        "const cred = new AzureKeyCredential(  // weights[0..n\n  this.#cfg,\n",
+        "const genAI = new GoogleGenerativeAI(  // see the docs (portal\n  this.#cfg,\n",
+    ],
+    ids=["js-bracket", "py-bracket", "py-triple-quote", "js-index", "sdk-position"],
+)
+def test_a_completed_call_both_of_whose_readings_misplace_its_arguments_withholds_its_literals(opening):
+    source = opening + f'    "{SYNTHETIC}",\n' + _FILL + ")\n"
+    try:
+        safe = sanitize_text(source)
+    except SanitizationLimitError:
+        return  # failing closed is safe too
+    assert SYNTHETIC not in safe and REDACTED in safe
+    assert safe.count("\n") == source.count("\n")
+
+
+def test_a_completed_call_withholds_the_rest_of_the_text_and_keeps_the_text_before_it():
+    # Nothing from a completed credential call on reaches the excerpt, as under main;
+    # the lines before it do, and every line keeps its number.
+    source = (
+        "before = 1\n"
+        + 'cred = make_credential(\n    "vault-endpoint-name",\n'
+        + _FILL
+        + f'    "{SYNTHETIC}")\nafter = 1\n'
+    )
+    safe = sanitize_text(source)
+    assert SYNTHETIC not in safe and "vault-endpoint-name" not in safe and "after = 1" not in safe
+    assert safe.startswith("before = 1\ncred = make_credential(") and safe.count("\n") == source.count("\n")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # The key the call pairs is the context a later pass withholds the value after it by.
+        "WithAPIKey(cfg,/* ' */,\n"
+        + _FILL
+        + f',key="OPENAI_API_KEY","v")endpointdefault="{SYNTHETIC}", ")\n',
+        # A value after the call, in an outer call that never closes, withheld by a later
+        # pass only within reach of the outer call's credential key.
+        'cfg.get(client.set(x, "x-api-key", Header(key="OPENAI_API_KEY",'
+        + " " * 20000
+        + f',"v")"gpt-4o", default="{SYNTHETIC}"a, (,[,\n    0\n,"w")\n',
+    ],
+    ids=["key-context-after-the-call", "outer-call-after-the-call"],
+)
+def test_a_completed_call_keeps_no_text_after_it(source):
+    # Kept, the text after a completed call lost the credential key withheld with the call,
+    # and a later pass no longer withheld the value it names: shown where main fails closed.
+    try:
+        safe = sanitize_text(source)
+    except SanitizationLimitError:
+        return  # failing closed is safe too
+    assert SYNTHETIC not in safe
+    assert safe.count("\n") == source.count("\n")
+
+
+def test_a_call_opening_inside_a_withheld_literal_still_withholds_the_rest_of_the_text():
+    # The literal '"setBearerToken("' is withheld, and the call it opens is read past the
+    # bound and completed. Its span starts inside that literal, so the output assembly
+    # dropped it and showed the rest of the text, where main fails closed.
+    source = (
+        'AzureKeyCredential("user", "setBearerToken(")\n'
+        + "a,\n" * 3500
+        + f'y = make(raw ? "{SYNTHETIC}" : raw)\n'
+    )
+    try:
+        safe = sanitize_text(source)
+    except SanitizationLimitError:
+        return  # failing closed is safe too
+    assert SYNTHETIC not in safe
+    assert safe.startswith('AzureKeyCredential("user", ') and safe.count("\n") == source.count("\n")
+
+
+def test_a_completed_call_pairing_a_credential_key_withholds_its_other_literals():
+    # Main fails closed on every call past the step bound. Completed, a call that pairs a
+    # credential key withheld only the paired value, so its other strings (a positional
+    # password the value rules do not classify) reached the excerpt main withheld.
+    other = "plain" + "pass12345leakvalueZ"
+    source = f'configure("api_key", "{SYNTHETIC}", "{other}", ' + "0, " * 4500 + "0)\n"
+    try:
+        safe = sanitize_text(source)
+    except SanitizationLimitError:
+        return  # failing closed is safe too
+    assert SYNTHETIC not in safe and other not in safe
+
+
+def test_the_call_lexers_own_source_completes():
+    # Its docstrings name split calls in prose. Reading each one's literals by lexing the rest
+    # of the text spent the extension budget, so the repository's self-scan failed closed;
+    # the literals are now listed once per text.
+    from pathlib import Path
+
+    from shadowscan.utils import redaction_calls
+
+    source = Path(redaction_calls.__file__).read_text(encoding="utf-8")
+    assert sanitize_text(source).count("\n") == source.count("\n")
+
+
+# The lexer knows no regex literal and lexes a call from its own start, so its quote
+# pairing can differ from the text's real one, and a credential can sit mid-argument.
+# Nothing from a completed credential call on is shown, so none of these reaches an excerpt.
+_LONG = "    item,\n" * 1200
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # The call starts inside a comment and a template literal the text opened before it.
+        f'// `x os.environ.setdefault("OPENAI_API_KEY", """\n#""", `" "{SYNTHETIC}"\nzz\n`, '
+        + "aaaa " * 2000
+        + ")\n",
+        # A quote in a regex literal shifts every later pairing.
+        f'cache.set("api_key", value, [\n{_LONG}],\n  /^"/.test(raw) ? "{SYNTHETIC}" : raw,\n  opts)\n',
+        # A credential mid-argument of a credential constructor, with agreeing readings.
+        f'cred = AzureKeyCredential(\n x + "{SYNTHETIC}",\n' + " a,\n" * 3500 + " b)\n",
+        f'new AzureKeyCredential(\n  raw ? "{SYNTHETIC}" : raw, [\n{_LONG}])\n',
+    ],
+    ids=["call-in-comment-and-template", "regex-quote", "mid-argument", "js-conditional"],
+)
+def test_nothing_inside_a_completed_credential_call_reaches_the_excerpt(source):
+    try:
+        safe = sanitize_text(source)
+    except SanitizationLimitError:
+        return  # failing closed is safe too
+    assert SYNTHETIC not in safe
+    assert safe.count("\n") == source.count("\n")

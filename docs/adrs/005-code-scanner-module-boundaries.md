@@ -48,7 +48,8 @@ together.
 Rules for the migration:
 
 1. **Sequence after #107.** That pull request changes `filesystem.py` in
-   several places; moving code first would make it unmergeable.
+   several places; moving code first would make it unmergeable. (Satisfied:
+   #107 closed unmerged, and its tree landed in #123, merged on 2026-10-02.)
 2. **One pull request per group,** moving code without changing behaviour.
 3. **Prove "no behaviour change" with output equality:** identical JSON reports
    (ignoring timestamps) on every evaluation corpus, the offline demo, and a

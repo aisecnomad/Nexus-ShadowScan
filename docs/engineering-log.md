@@ -13,6 +13,593 @@ Counts and figures quoted in an entry are those of its date.
 
 ## 0.1.3 — 2026-11-20
 
+### Blocking container vulnerabilities named as check annotations (October 21)
+
+`container-security` failed on `main` from 08:01 UTC with no Dockerfile or
+lock change, and the check-run annotations said only "Process completed with
+exit code 1": the verifier prints the blocking findings to the job log, and
+the retained artifact holds them, neither of which a reader without log or
+artifact access can open. `python -m tools.container.verify annotations` now
+runs after a failed scan step, before the evidence upload, and prints one
+`::error` workflow command per blocking finding from the written
+`container-evidence.json` (vulnerability, severity, package type and name,
+installed and fixed version, status), at most ten, the last counting the
+rest. Field text keeps the verifier's printable-ASCII bound and is escaped
+with the workflow-command encoding, so report text can neither end the title
+nor start a command; a job that failed before the manifest exists names
+nothing, and a duplicate key in the manifest is refused. Its first run named
+CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
+20260909-r3, which the pinned base image's package set did not yet carry; the
+`bundle` command's stderr contract (no line starts with `::`) is unchanged.
+
+### Repository hygiene after the companion move (October 21)
+
+- `.gitattributes`, `.editorconfig`, `.gitignore`, `.pre-commit-config.yaml`
+  and the repository consistency tests still named benchmark corpora, artifacts,
+  results and harnesses that moved to the pinned `benchmark-suite/` companion,
+  and two tests that no longer exist. No tracked file matched those entries; they
+  are removed. The former-name and Markdown checks now cover `benchmarks/README.md`,
+  the only remaining file there, which passes.
+- Every workflow job runs on `ubuntu-24.04` instead of `ubuntu-latest`, which
+  GitHub is moving to a newer Ubuntu release, so a runner image change is a
+  reviewed edit. The macOS test leg keeps `macos-latest` until its current image
+  is confirmed.
+- The evaluation corpora that `make evaluate` names in its reports no longer use
+  the former project name. No digest binds those names.
+- `GOVERNANCE.md` still said the 2026-10-10 bypass actors applied until removed;
+  it now cites the 2026-10-18 readback, which lists none, as
+  `docs/operations/merge-policy.md` already did.
+- Wording: `make test-fast` excludes the slow timed sweeps; the pull request
+  template matches CONTRIBUTING on when to write `Fixes #NNN`; the #284
+  adaptation names that pull request as closed, unmerged and unreviewed; ADR 005
+  records that its #107 precondition was satisfied by #123; and
+  `.github/dependabot.yml` says why the companion gitlink and the fixture
+  manifests are not tracked.
+
+### Companion pin to Nexus-ShadowBench 1ce0eee (October 21)
+
+- `benchmark-suite` moves from `e027b98` to `1ce0eee`, which adds the
+  companion's documentation and standards, an append-only `AMENDMENTS.json`
+  ledger for migrated harness code (aisecnomad/Nexus-ShadowBench#2), a
+  code-surface `fetch` that delegates to the hardened cases fetcher, certifi
+  2026.10.19 with a CI `pip-audit` step, and errata for stale statements in
+  preserved files.
+- `tools/benchmark_evidence.json` was regenerated with
+  `tools.benchmark_suite.extract`. Only `companion_modules.tools.verify_migration`
+  changed (its SHA-256); the migration manifest digest and every metrics and
+  corpus digest are unchanged, so no published number moves.
+- The benchmark-section permalinks in `README.md` and the product guide name
+  the new pin, as the consistency test requires; the linked reports are
+  byte-identical at both commits. Checkouts the old companion `fetch` made
+  should be fetched again.
+
+### Unclosed credential calls and a faster call lexer (October 21)
+
+- The 8,192-step call bound could not tell an argument list that never
+  closes from one that is merely long. Prose and comments that name a
+  credential-typed call without closing it reached the bound, and every
+  excerpt of the file was withheld (a sanitization-limit gap). A call past
+  the bound that would fail closed is now read again to its end; all such
+  reads in one text share `_CALL_EXTENSION_PER_CHAR` work units per
+  character, so they stay linear in its length, and a call past that budget
+  still fails closed.
+- The lexer crosses runs of characters that cannot open or close a string,
+  comment or bracket in one step, charged their length. A run is matched no
+  further than the step after the bound and the shared work bound: an
+  earlier draft let a run cross a whole text, so 200 unclosed calls over a
+  960 KB tail each scanned to its end (quadratic), which
+  `test_reading_past_the_step_bound_stays_linear` caught. Over 4,500 corpus
+  and adversarial texts the output and exceptions are identical to the
+  per-character lexer, in 17.9 s against 29.7 s.
+- Review found a fail-open in the extension: with the shared budget nearly
+  spent, an extended reading could stop before the step-bound reading had,
+  and it replaced that reading. A call pairing a credential key with a
+  value (`setdefault(default=..., key="OPENAI_API_KEY", ...)`) was then
+  judged on the shorter reading, which no longer held the key, and the
+  value reached the excerpt where main fails closed. An extension that
+  stops for length is now discarded, and the call keeps its step-bound
+  reading and fails closed. A differential fuzz (8,000 texts, step bound 64,
+  extension budgets 0-8 per character, a credential-shaped value) found 781
+  values the old extension emitted and main withheld, and none after the
+  fix. The lexer also skips the run pattern at a character that cannot start
+  a run, which brings delimiter-dense text back to main's cost.
+- Review of the integration branch found a second fail-open in the
+  extension. `#`, `//` and `/*` start comments only in some languages, and
+  the extension kept whichever of its two readings (comment rules, or the
+  markers as text) closed. The two can split one call differently (a comma
+  in a real comment, a `this.#field` read as a comment), and either can
+  leave the credential mid-argument, where neither the literal rule nor the
+  key/value pairing reaches it: the value reached the excerpt of a scan
+  reported complete, where main fails closed. An extension that skipped a
+  marker now keeps both readings, and the call withholds what either holds.
+  It still fails closed when either reading stops at a bound, and when the
+  step-bound reading paired a credential key that no completed reading does
+  (a key literal that, read to its end, is a computed expression). Five
+  regression tests in `test_credential_call_syntax.py` fail on the earlier
+  extension and pass now; the linearity test keeps its bound with input that
+  neither reading closes or nests.
+- A parallel review of that fix found that both readings can misplace every
+  argument start: a false marker hides a comma under the comment reading
+  while the real comment holds an unbalanced bracket or a stray triple quote
+  under the other, so neither places the credential at an argument start and
+  the union withheld nothing. A call whose readings split it differently now
+  withholds every string literal it holds; readings that agree keep the
+  exact rules, and prose naming a credential-typed call still completes. The
+  literals are listed once per text, from its start under both comment rules
+  (`_CallLexer._literal_index`), and each split call takes those overlapping
+  it: a first version lexed the rest of the text per call against the
+  extension budget, which three prose mentions in `redaction_calls.py`'s own
+  docstrings spent, so the repository's self-scan failed closed
+  (`test_the_call_lexers_own_source_completes`). Six regression tests: five such shapes fail on the union
+  and pass now, and a control keeps the other literals of an unambiguous call.
+  The same review noted that a completed call pairing a credential key
+  withheld only the paired value, so its other strings (a positional
+  password the value rules do not classify) reached the excerpt main
+  withheld by failing closed; such a call now withholds every literal too.
+- An adversarial pass over that rule found literal-picking unsafe in itself:
+  the call lexer knows no regex literal or heredoc, so a quote inside one
+  shifts every literal boundary after it, and a credential mid-argument (a
+  conditional or concatenation) is no literal start under any reading.
+  Withholding the call's whole region instead was tried and not carried: a
+  differential fuzz (9,592 texts from the review's generators) found the
+  text after the region losing context a later pass needs, since the region
+  withholds a credential key that `_redact_extended` withholds the value
+  after the call by (`key="OPENAI_API_KEY", "v")default="..."` on one line).
+  Main fails closed on every such call, so a completed credential-relevant
+  call (credential-named, an SDK client, or pairing a credential key) now
+  withholds the text from its first argument to the end of the text, with
+  the line count kept, and the text before it keeps its excerpts and the
+  scan completes; `_literal_index` and the per-call literal lookup are gone.
+  Against main with each fail-closed raise in the call pass replaced by that
+  same withholding, the fuzz finds nothing shown that main's own rules do
+  not show, and 6 texts withheld more. A value main's per-call rules show in
+  the text before such a call (a pairing key past the step bound of a call
+  main does not complete, or a line rule out of reach) is now shown where
+  main withheld the file; that is main's rule for the same text without the
+  call. Six regression shapes (a call in a comment and a template, a regex
+  quote, a mid-argument value, a JavaScript conditional, a key that is the
+  context after the call, a value after it in an unclosed outer call) fail
+  on the earlier rules and pass now; prose naming `ClientSession(` keeps the
+  lines before it, and the self-scan still completes.
+- The same pass found the output assembly dropping a withheld span that
+  starts inside an earlier one: a credential constructor's literal
+  `"setBearerToken("` was withheld, the call it opens was read to the end,
+  and its span, starting inside the literal, was skipped, so the rest of the
+  text was shown where main fails closed. A span that runs past the one
+  before it now withholds the rest
+  (`test_a_call_opening_inside_a_withheld_literal_still_withholds_the_rest_of_the_text`).
+  Spans that nest are unchanged; partly overlapping ones only withhold more.
+
+### Faster local start: deferred pattern compilation, no HTTP stack on import (October 21)
+
+- Every process compiled all ~1,600 built-in patterns with the bounded engine
+  (0.3-0.45 s of CPU on the measured runner, about half of a staged
+  pre-commit scan) before reading a file. Built-in packs, which
+  `python -m shadowscan.signatures.validate` compiles and checks in full
+  before release, now defer each pattern to its first use
+  (`signatures.budget.DeferredPattern`); the compile time is credited back to
+  the input whose matching first needs it, so no input's budget pays for it.
+  Organization packs are still compiled and checked when they load. A
+  credential pattern is deferred in the linear assignment form `compile`
+  runs (`Signal.bounded_patterns`); deferring the pack source instead made
+  `test_generic_credential_patterns_bound_hostile_identifier_work` time out.
+- `import shadowscan.cli` loaded `requests`, `urllib3`, `charset_normalizer`,
+  `http.client` and `ssl` (97 modules) through `config -> triage ->
+  utils.http`. The scope and policy helpers a local scan needs move to
+  `utils.http_scope`; `tests/unit/test_startup_imports.py` pins that a local
+  scan imports none of them.
+- Review follow-ups: crediting a first compile back moved the input's wall
+  deadline too, which carries the walker's clamp to the connector deadline;
+  only CPU time is credited now (`_ScanBudget.credit(cpu)`), and the wall
+  cap, four times the allowance, leaves room for a compile. The Python
+  source-semantics pass now compiles a deferred pattern (`ready`) before
+  timing its search, as the matcher does.
+
+### Dispatch verdicts resolved only where a selected call reaches (October 21)
+
+- The dispatch inventory was consulted for every imported name a consumer
+  held, so an unrelated import past the inventory's cut raised
+  `DispatchLimitError` and left the consumer incomplete. Verdicts are now
+  resolved inside `_selected_dispatcher`, after the call-shape and
+  import-ordering checks: a limit is raised only for a module a selected
+  (function name, arguments) call actually reaches. Limits are not cached and
+  still fail closed; every numeric bound is unchanged.
+- The nested re-export and dispatch queue admitted any consumer importing a
+  provider or `platform.litellm` signature. litellm's requests never reach
+  `provider_tool_loop_lines`, the only reader of the nested dispatch verdict,
+  so scanning BerriAI/litellm filled the scan-wide 16 MiB queue with
+  consumers that cannot use it. The predicate keeps
+  `signature.category == "provider"` (all 38 provider signatures, wider than
+  the OpenAI and Anthropic requests that reader binds) and drops the litellm
+  clause. It reads the consumer's own imports: an aliased provider import
+  counts, and a consumer that reaches a provider client only through a local
+  re-export did not count before this change either.
+  `test_only_provider_consumers_add_nested_dispatch_deferral` now expects a
+  litellm-only consumer not to be queued.
+
+### MCP structure in JSON: repeated keys, schemas, oversize files (October 21)
+
+- BerriAI/litellm's `provider_endpoints_support.json` lists one provider
+  twice. A JSON file the integrity checks refuse for a repeated key is now
+  parsed under every reading (first value kept, last value kept, repeated
+  objects merged; `mcp_config.json_readings_declare_mcp`). When none holds
+  an MCP server table, a plain data file's integrity gaps are charged to the
+  coverage budget (`TreeWalker.budget_defects`) and it is not treated as MCP
+  configuration. A repeated key that hides a table from any reading still
+  fails, and so does one in a manifest or lockfile (npm keeps the last of
+  two `dependencies` keys, hiding the first from a reader that keeps it) or
+  in agent configuration. continuedev/continue's F# TextMate grammar is the
+  same case.
+- litellm's 1.86 MB `proxy/_lazy_openapi_snapshot.json` was a blinding
+  oversize gap because its bytes name `mcp_servers`: an OpenAPI schema
+  field. The server-table walk no longer takes a field of a JSON Schema
+  object's `properties` whose value holds schema keywords only for a server
+  table (a value with any other key, a server name included, still is), and
+  an oversize JSON file of up to 4 MiB whose bytes name a key is parsed to
+  decide by its structure; one that does not parse stays blinding.
+- openai/openai-agents-python's 1.15 MB
+  `tests/fixtures/released_api_contract.json` nests past the server-table
+  walk's 12 levels, so the structural check could not rule a table out.
+  `json_readings_declare_mcp` walks every level and entry of every reading
+  (`mcp_server_holders(..., exhaustive=True)`); every caller bounds the text
+  by size first and the walk visits each container once, so its cost is
+  linear (0.08 s for the contract). A table at any depth is still found.
+- Review found the structural check's resource envelope too wide: three
+  full `json.loads` passes, two through pure-Python hooks, over up to
+  8 MiB, plus exhaustive walks of all three documents, peaked at hundreds
+  of MiB and tens of seconds on container-dense JSON, and `json.loads`
+  cannot be interrupted, so a handful of such files could exhaust the
+  connector deadline or OOM a small CI container. `json_readings` now
+  bounds the containers a parse could build before parsing anything, by the
+  text's `{` and `[` characters (string contents included, so the count
+  only overstates): text past 100,000 (`_MAX_JSON_CONTAINERS`) is
+  undecided, so its gap keeps the byte check's answer (fails closed, never
+  budgeted). A reading drops a repeated key's other values, so a parsed
+  document's containers would miss what another reading rebuilds; the text
+  bound covers every reading. Within the bound the text is parsed once,
+  with a hook that records whether any object repeats a key: without a
+  repeat that one reading is every reading, and the extra readings are
+  built only over a repeat. `_MCP_STRUCTURE_BYTES` drops from 8 MiB to
+  4 MiB; the motivating snapshots are 1.15 and 1.86 MB. Regression tests
+  pin the single-reading fast path, the bound's undecided answer end to
+  end, and its time envelope.
+- Review follow-ups. An independent review found four gaps in the first
+  version, each now a regression test: an exported n8n workflow with one
+  harmless repeated key lost its agent finding (a data file is now budgeted
+  only when the structured detectors find nothing in any reading); Go's
+  decoder merges repeated objects, so a table neither first-wins nor
+  last-wins sees was hidden (a third, merged reading is walked); an oversize
+  `McpServers` or `mcp-servers` key, which the byte check matched without
+  regard to case, became a budgeted gap (a variant spelling now leaves the
+  answer undecided, so the gap stays blinding); and a server named like a
+  schema keyword (`default`, `type`) under a schema's `properties` was taken
+  for a field description (a field schema's keywords must now hold values
+  of the types they take).
+- Review of the integration branch found that a budgeted repeated-key file
+  is analyzed without a parse, and that only two detectors were asked about
+  its readings. One harmless repeated key (`Description`, `family`) then
+  hid a CloudFormation template's Bedrock agent (the template need not name
+  its format version, and without a parse the structural check fell back to
+  that name) and an ECS task definition's LLM usage (without a parse it read
+  as a catalog), and a structured detector's alias limit (an ambiguous
+  Workato step) was dropped as an empty answer; each scan completed where
+  main fails it. Every reading is now also put to the manifest parser and to
+  the configuration-document check under each possible project root, and a
+  detector's errors and limits keep the file a gap. The case-variant guard
+  read only the merged reading and compared `servers` with `str.lower`: a
+  repeated `"MCP": null` section or a Unicode-folding `ſervers` (which Go
+  matches) slipped past it. Every reading is now checked, a repeated
+  section is judged in each of its values, and names are compared as
+  Unicode folds them. The merged reading's cost was not linear: nesting
+  repeats copied the widest object again at every level (a 4 MB file took
+  about 34 s of uninterruptible parse). Keys copied are now charged to a
+  budget of the text's length, past which the text is undecided (66 s to
+  3 s end to end on that file), and the answer is cached per text. Seven
+  regression tests fail on the earlier check and pass now.
+
+### Unparsed-input triage and unrendered template source (October 21)
+
+- Three misjudgements made ordinary repositories exit 3. A Continue
+  `mcpServers` block reference (`{uses, with?, override?}`, Continue's own
+  schema) was an input defect; it is now an `mcp-server` finding whose
+  `override` is projected as the server's fields
+  (`docs/production-migrations.md`). An empty or whitespace-only manifest,
+  agent manifest or MCP configuration fails its parser without hiding a byte;
+  it is a file note, which strict accounting still counts. Under
+  `--profile ci` a directory whose manifest names its project with template
+  syntax is judged a template, as one whose manifest does not parse.
+- microsoft/autogen exited 3 on
+  `python/templates/new-package/{{cookiecutter.package_name}}/pyproject.toml`,
+  whose `{%- if cookiecutter.depends_on_core -%}` block is not TOML. A file
+  that does not parse under a directory whose name holds template syntax is
+  now one partial gap charged to the coverage budget at a whole entry.
+- crewAIInc/crewAI exited 3 on six templates `crewai create` renders, kept
+  under ordinary names (`templates/crew/crew.py` declares
+  `class {{crew_name}}():`, `templates/crew/pyproject.toml` a
+  `{{folder_name}} = ...` key). A Python, TOML or JSON file that fails its
+  parser, holds Jinja placeholders or tags, and parses once each placeholder
+  is replaced by a stand-in and each one-line tag is dropped is now
+  unrendered template source too (`connectors/code/template_source.py`). The
+  file scanner records the verdict against the path
+  (`TreeWalker.budget_defects`) and the walker charges the gap. A file broken
+  in any other way still fails; agent configuration, strict accounting and
+  MCP configuration found by structure keep the gap, and a tree of templates
+  exhausts the budget. The scanner analyzes the rendering itself: a
+  templated manifest's dependencies are inventoried from it and a templated
+  module is bound from it (crewAI's `crew.py` is then an agent), so a
+  placeholder added to a deployed file cannot hide what surrounds it.
+- Review follow-ups. An independent review found that the first version
+  budgeted every gap of a file under a template-named directory, a repeated
+  JSON key under `deploy/${env}/` included, and that adding `{{ x }}` to a
+  deployed `pyproject.toml` dropped its dependency findings while the scan
+  completed. The directory rule and the content rule now explain only parse
+  failures (`_discounted_gap(defect="parse")`, a registry scoped by kind),
+  and the rendering is analyzed as above.
+- A second review found that a placeholder or tag span could cross string
+  delimiters and swallow structure: a root `package.json` whose
+  `dependencies` (with a JSON5 trailing comma) sat between `"{%` and `%}"`
+  on one line rendered as valid JSON without them, so a scan main reports
+  incomplete completed with no findings. A placeholder now holds a Jinja
+  expression without quotes, separators, brackets, `=`, `:`, `;` or `#`, and
+  a tag must be a whole line with no `%}` before its end. The same seven
+  corpus files are recognized as before. The directory rule also budgeted
+  any parse failure under `${env}/`, so a module of newer Python syntax
+  there completed; it now needs Jinja syntax in the directory name and in
+  the file's own text (`TreeWalker.note_template_syntax`).
+- Review of the integration branch found three more ways the rules let a
+  scan complete with less read than main, which failed it:
+  - An analysis limit (AST nodes, recursion, time) reached while binding a
+    rendering was dropped with the template's own gap. Ordinary source that
+    reaches it fails the scan, so a placeholder line added to a large
+    agent module turned that failure into one budgeted gap and lost the
+    module's agent proof. The limit now fails the scan for a rendering too.
+  - The directory rule took `{{` anywhere in the text, a prompt string's
+    included. Python runs a module under such a directory as written, and a
+    newer interpreter than the scanner's parses grammar it cannot, so a
+    module of 3.12 syntax there completed as a template. Python source and
+    notebooks are now templates only by the content rule.
+  - The rendering kept lines but not character offsets: a 14-character
+    stand-in and dropped tags shifted the binder's spans against the file's
+    lexical matches, so a templated tool lost its `code-exec` capability.
+    Each stand-in is now as long as its placeholder and each tag line is
+    blanked.
+  A placeholder or tag also no longer spans a bare CR, which ends a Python
+  line, and a CRLF tag line is recognized. Renderings are cached, and Python
+  is rendered with the identifier stand-in only, so a failing 1 MB module
+  that holds `{{` costs 3 compiles rather than 7 (main: 1). Five regression
+  tests in `test_template_source.py` fail on the earlier rules and pass now.
+
+### Notebooks no longer leave llama_index incomplete (October 21)
+
+- A default scan of run-llama/llama_index exited 3 on 40 notebook and data
+  diagnostics. Measured cause by cause, then fixed or recalibrated.
+- IPython syntax the binder did not emulate (12 cells): a line magic spelled
+  with a space (`% pip install x`, recognised by a line magic's own name so a
+  continued `% name` modulo stays Python), lines a backslash continues after
+  a magic or shell line, and an assigned shell escape or magic
+  (`files = !ls`, which keeps its target). These join #285's per-cell,
+  string-aware masking; the masked command keeps its line breaks, so a
+  continued magic's lines become blank lines and every line keeps its
+  number. Bare package-manager automagic still applies only to a
+  single-line cell. `%%ngql`, `%%cypher`, `%%gremlin`, `%%sparql`, `%%kql`,
+  `%%kusto`, `%%graphql`, `%%mermaid` and `%%dot` join the cell magics whose
+  body is not Python.
+- Notebooks over `max_file_size` (18): their size is base64 output data.
+  Outputs are scanned for credentials with every value under a binary MIME
+  key emptied (`image/*` except SVG, `audio/*`, `video/*`,
+  `application/pdf`, in outputs and markdown attachments): 1.1-3.1 MB
+  notebooks become 11-37 KB, every line at its number, in 30-80 ms. A
+  notebook whose text outputs alone exceed the limit is one oversize gap of
+  the budget at a whole entry; never declared by the `ci` profile. A value
+  is found in the document by its JSON encoding, and a miss scans to the
+  document's end, so after 8 misses the rebuild stops: a hostile notebook
+  spelling every value with escapes no writer emits (`iVBOR...`) keeps
+  its oversize gap instead of buying a document-length scan per value.
+  A second review found the base64 check per line and on the first 64
+  characters only: a padded PNG header line followed by a key spelled in
+  the base64 alphabet was emptied. The value is now judged whole: its lines
+  joined, every line but the last of one width, padding only at its end,
+  and all of it decoding (`validate`) before its signature is read.
+- Cells that are not Python (14, in 10 notebooks): placeholders
+  (`<YOUR API KEY>`), a pasted `export` line, typos. Jupyter runs cells one
+  at a time and the binder already read the others, so such a notebook is
+  one partial gap of the budget at a whole entry. A notebook none of whose
+  cells parse stays a full gap, as does every one under strict accounting.
+- `llama_index/core/command_line/mappings.json` names 1,111 literals carrying
+  the `llama` vendor stem, 580 distinct, past the 400-literal bound. A
+  literal's matches depend on its value alone, so each distinct value is
+  matched once; the bound is 2,000 distinct values and 20,000 occurrences
+  (about 0.2 s a file at most).
+- Review of these changes found:
+  - The output view emptied every string under a binary MIME key at any depth,
+    by the key's name: plaintext under `"image/png"` or `"application/pdf"`,
+    or in metadata, was not read, where main reported the notebook as an
+    oversize gap. Only `outputs[*].data` and `attachments.*` bundles are
+    considered now, and only strict base64 that decodes to an image, audio,
+    video or PDF signature is emptied. The strings are collected from the
+    notebook's own parse and found by their JSON encoding: no token loop, so
+    an 18.9 MB notebook takes 0.16 s and 21 MB (the token loop took 5.5 s and
+    410 MB). A notebook that is not valid JSON is not rebuilt (a stray bracket
+    raised `IndexError`, reported as reason `other`).
+  - A broken cell beside blank, comment-only, magic-only or foreign cells was
+    a budgeted partial gap ("the other cells were analyzed"). Only parsed
+    Python cells holding a statement other than a constant count.
+  - A spaced line magic was masked inside brackets: Black's
+    `'%.3f'\n    % precision` inside parentheses stopped the cell parsing.
+    As in IPython, an escape counts only at the start of a logical line
+    (bracket depth zero, no backslash continuation), for every escape form.
+  - `%time`, `%timeit` and `%prun` without options lost the statement they
+    run; only the magic's name is masked now (`0;` and blanks).
+- Review of the integration branch found that a key spelled in the base64
+  alphabet can sit in a value that is still strict base64 of an image (on
+  its own line, or after a `/`). A notebook small enough is read whole, so
+  its key is reported, but an oversize one emptied the value and completed
+  with a note, where main fails it. Each value is now read for credentials
+  in overlapping 4 KiB windows before it is emptied (0.5 s for 20 MiB of
+  image data, no matches on random data), and a value the credential pass
+  matches is kept: read with the text outputs, or, when that puts them over
+  `max_file_size`, the notebook's recorded oversize gap.
+- The integration review's fidelity pass found that the partly-parsed
+  notebook budget skipped the agent-configuration guard every other gap
+  site applies: a notebook in an agent definition directory (`.cursor/rules/`) with
+  one cell that does not parse completed, where main fails it and a Python
+  file beside it still does. Agent configuration is never budgeted now.
+
+### Analysis bounds sized for real modules; redaction's own allowance (October 21)
+
+- BerriAI/litellm's `proxy/proxy_server.py` (90,611 nodes), `router.py`
+  (74,983) and `llms/custom_httpx/llm_http_handler.py` (56,791) were past
+  the 50,000-node bound and kept lexical evidence only; one was past 512
+  bound source calls. Python syntax-tree bounds rise to 200,000 nodes
+  (`max_ast_nodes`, the MCP tool and source-identity walks alike) and bound
+  calls to 2,048: the three modules bind in 2-3.5 s of CPU and about 100 MB
+  each; 1,024 calls sufficed for all three. The provider tool-loop flow walk
+  allows four steps per accepted node (800,000; `test_common_request_processing.py`
+  needs 201,156, in 2.7 s), still checked against the CPU budget every 256 steps.
+- litellm's 940 KB `tests/unit/proxy/_experimental/mcp_server/test_mcp_server_manager.py`
+  finished detection inside its 8 s allowance and then spent about 6 s
+  redacting its excerpts, charged to the same allowance and checked as it
+  closed. Excerpt redaction runs once detection is done; it now runs on a
+  CPU allowance of its own of the same size (`matcher.separate_budget`),
+  whose CPU time is given back to the file's budget
+  (`_ScanBudget.extend_cpu`). The wall deadline is the file's own and does
+  not move: it carries the walker's clamp to the connector deadline, which
+  an earlier draft's fresh window could pass (found in review). A file
+  costs at most twice its CPU allowance and never runs past its wall cap. A
+  redaction that exhausts its own allowance withholds the file's excerpts
+  (a sanitization-limit gap, an error outside discounted test code), never
+  a finding.
+- Significant-Gravitas/AutoGPT's 66,573-byte `.claude/skills/pr-test/SKILL.md`
+  was past the skill audit's 64 KiB. The audit is linear in its lines (about
+  40 ms at 512 KiB) and the instruction-content inspector already reads the
+  same files to 512 KiB; the audit now does too.
+- Review of that change found that `endpoint.mcp` passes MCP tool
+  descriptions through the same audit, so its window rose with it, and the
+  endpoint's tool-poisoning search, whose verb suffix was an unbounded
+  `\w*`, is quadratic on long runs of word characters (7.9 s for 64 KiB on
+  main). Tool descriptions keep a 64 KiB window of their own
+  (`runtime.MAX_DESCRIPTION_BYTES`, passed to `audit_skill_text` as
+  `max_bytes`), and the verb suffix is bounded to 32 word characters, which
+  keeps the search linear. `separate_budget` also checks its own allowance
+  when the work returns, so redaction that ran out between periodic checks
+  still withholds the file's excerpts.
+- Review of the integration branch found that a constant `if` in a tool
+  loop continues on its branch with a copy of the rest of the body, and
+  nesting such guards copied it again at every level without charging the
+  flow budget. With the raised bounds a 939 KB file reached that recursion
+  and peaked at about 1.4 GiB before failing closed (main: 259 MiB, refused
+  at its old node bound). Each copied statement now costs a flow step, so
+  the same file fails closed at 227 MiB in 0.6 s.
+
+### Automatic filesystem deadline sized by bytes as well as entries (October 21)
+
+- run-llama/llama_index (13,499 entries, 480 MB of supported `uv.lock` files)
+  ended at the connector deadline on main 939d416: the entry-sized deadline
+  (one default per 12,000 entries) does not see that a supported lockfile is
+  parsed and swept for credentials, at about 0.17 s of CPU per MB, or that
+  source analysis costs 1.9-6.6 s per MB on a contended runner. The probe now
+  also sums the sizes of the files the reader will analyse (only files at or
+  under `max_file_size`, `max_notebook_size` for a notebook) and the proposal
+  is the larger of the entry scale and one default per 12 MB of source plus
+  one per 240 MB of anything else read. The byte term can only lengthen the
+  deadline; the probe's 180,000-entry, one-second bounds and the engine's
+  1800 s ceiling are unchanged, and a byte-padded tree is pinned at that
+  ceiling by a regression test. `docs/scanning.md` tells operators scanning
+  untrusted repositories to set an explicit or job deadline.
+- When the deadline ends a walk, the walk now stops early enough to leave
+  time for re-export binding and finding emission (5 ms per file read, up
+  to a quarter of the window), so the report keeps its "after N of M files"
+  accounting; emission that still runs into the deadline records how many
+  project findings it did not emit instead of dropping them silently.
+- Review follow-ups: the tree probe sized every file of one directory
+  before checking its limits, so one flat directory of 400,000 files took
+  1.7-2.4 s against the documented "180,000 entries or one second" (main:
+  0.3 s); the limits are now checked every 1,024 entries of a listing.
+  `.mts` and `.cts` count as source, the documented margin names its 250 ms
+  floor, and the emission diagnostic says it counts projects, whose project,
+  agent and tool findings were left out.
+- A second review found that the post-walk reserve counted every examined
+  entry, never-read assets included. They sort first and reserve nothing,
+  so 6,000 one-byte images raised the margin to its cap (a quarter of the
+  window) before the first source file: with a 16 s deadline a tree main
+  completes exited 3 after 6,058 of 6,061 files with about 6 s left. Only
+  the files the walk reads count now (`test_the_post_walk_reserve_counts_only_files_the_walk_read`).
+
+### Agent-configuration links read at their link path (October 21)
+
+- Every link the walk does not follow was reported as one "whose target is
+  unavailable or unscanned", false for in-tree aliases. The diagnostic now
+  says what the target was found to be: missing or a loop, outside the tree
+  (never echoing an outside path), or an in-tree path walked at its own path
+  but not assessed as the link path, or one the walk does not scan.
+- Significant-Gravitas/AutoGPT exited 3 on two such links:
+  `.agents/skills -> ../.claude/skills` and
+  `docs/content/forge/components/agents.md`, a lowercase `agents.md`
+  pointing at a README. Both targets were walked at their own paths, where
+  they are not configuration for the client that reads the link path. A
+  link that stands for agent configuration whose in-tree target the walk
+  scans is now read a second time at the link path (`_alias_entries`): the
+  link is never followed, the target is opened by its real path with the
+  same confined opens as every file, and its findings name the link path.
+  Its files count toward `max_files` and the entry budget; a link below the
+  alias is judged as a link and never read again, so a loop cannot multiply
+  the walk; a file link below an alias is read at its own link path (a file
+  cannot loop). An aliased file belongs to the project its link path lies
+  in (`_project_root`): review found that the walk's stack of project roots
+  holds only its last branch by the time aliases are read, which reported
+  `services/a/CLAUDE.md` as the repository root's. A link to an excluded or
+  unselected target, or outside the tree,
+  stays blinding, and so does a directory behind a link named like a
+  configuration file (`CLAUDE.md -> docs`). The per-file loop of
+  `_iter_entries` moves verbatim into `_file_entry` / `_regular_entry`, which
+  the alias walk reuses.
+- A second review found:
+  - A link inside its own target (`pkg0/.agents/skills -> ../../`) was read
+    at the link path, walking the whole tree again below it: 16 entries
+    became 112, with fabricated paths such as
+    `pkg0/.agents/skills/.claude/skills/deploy/SKILL.md`. Such a link stays
+    blinding now. At most `MAX_ALIAS_FILES` (5,000) files a root are read at
+    link paths; past that a link stays blinding, so many links to one large
+    directory cannot multiply the walk.
+  - Each credential was reported twice, at the real path and at the link
+    path. A budgeted gap of the same weight is now charged once per real
+    file (`_ledger_gap`): a partly broken notebook in an aliased skills
+    directory (#300) made a scan within budget exceed it. (A first fix also
+    dropped a credential at the link path when the real path reported it; see
+    the third review below.)
+  - The alias target was listed by its path after the walk. Before listing,
+    the target is checked again: not a link, the same device and inode as
+    when the link was classified, the same real path. A target swapped since
+    then stays blinding instead of having outside names listed.
+- A third review found a fail-open: an alias entry reached the file scanner
+  with its target's on-disk path, and the scanner decided by that path's
+  name and suffix (what is analyzed, what is a notebook, which file is a
+  `SKILL.md`). A link named unlike its target was read at neither path:
+  `.vscode/settings.json -> config/settings.json.example` (a shell MCP
+  server with an inline key), `.mcp.json -> nb/servers.ipynb` and
+  `.claude/skills/evil/SKILL.md -> docs/howto.md` completed with no
+  findings, where main fails closed. The scanner now decides by the path
+  a client reads (`rel`; `_SourceFile.name` and `ext` too) and reads by the
+  on-disk path. The review also found that dropping a credential at the
+  link path kept a documentation- or test-only finding and lost the live
+  one (`--fail-on high` passed a docs-linked `.claude/skills`): credentials
+  are reported at both paths again. An exclude below an aliased directory
+  now holds at the link path too.
+- Review of the integration branch found three more gaps at link paths.
+  A diff-scoped scan filtered entries by the link path alone, but Git
+  records a link as its target string: a change to the target, or a new
+  directory link, put no file read at the link path in the diff, so the
+  scan completed where main fails it on the link. Every entry read at a
+  link path is now kept in diff mode. An alias left unread (the
+  `MAX_ALIAS_FILES` cap, a target that changed, a failed `lstat`) no longer
+  recorded its settings files as unread, so the approval gate read tighter
+  than main reports it; their paths (`posture.settings_paths_at`) are noted
+  now. And import provenance applied the link path's project to the
+  target's real path, probing an unrelated ancestor of the real file for
+  local modules, where a decoy module hid a provider import at the link
+  path; a file outside its link project on disk is judged from its own
+  directory now. Four regression tests fail on the earlier walk.
+
 ### Release readiness review (October 21)
 
 - `tools/release/assets.py` looked up the release with `releases/tags/{tag}`,
@@ -37,6 +624,43 @@ Counts and figures quoted in an entry are those of its date.
   TestPyPI and then PyPI on 2026-11-20 and that 0.1.2 remains the latest
   published release. The README is the PyPI project description, so its wording
   stays accurate on the 0.1.3 project page after publication.
+
+### Repository hygiene after the 0.1.3 candidate (October 21)
+
+- The publishing runbook gains step 8, "Record the publication": the list of
+  files that still describe 0.1.3 as prepared rather than published (README
+  and product-guide release state and PyPI Python-range note, the
+  installation guide, the connectors release-status table, the OpenSSF
+  criteria rows, the reviewer packet, roadmap, security policy, the dated
+  release headings and the consistency-test pins), to be updated in one
+  reviewed change on the day of the tag and upload. Opening the next
+  candidate becomes step 9. Neither PyPI nor TestPyPI serves 0.1.3 at the
+  time of this entry; nothing was tagged or uploaded.
+- `CONTRIBUTING.md` says why a branch is brought up to date locally with
+  `git merge --signoff`: GitHub's **Update branch** button and other web-flow
+  merges carry no trailer and fail the DCO check (the `CI gate` went red on
+  #286 for that reason on October 21), and the repository does not offer the
+  button. It also records that a clean merge of `main` keeps a pull request's
+  approvals while a conflict-resolving merge dismisses them, as observed while
+  #285, #283, #286 and #289 were merged in sequence.
+- `codespell` 2.4.3 runs as a pinned pre-commit hook with its skips and
+  accepted words in `pyproject.toml`. A sweep of the prose, comments and
+  shipped code found no misspelling; every hit was an identifier, a regex
+  stem, a file suffix or a deliberate foreign-language placeholder, and the
+  accepted-word list names each of them with its reason. The hook is not a
+  CI gate: adding it there would need the tool in the hash-locked CI set.
+- The consistency test that pins the in-sample benchmark disclosure read only
+  the newest changelog section, so opening the next candidate's `## Unreleased`
+  section (runbook step 9) would have failed it. It now reads from the newest
+  heading through the 0.1.3 section, where the disclosure stays.
+- Repository state, not tracked files: the labels `github_actions` (unused)
+  and `javascript` (one closed Dependabot pull request) were deleted because
+  `.github/labels.yml` does not declare them and the label workflow never
+  deletes. An inventory of the 255 remote branches found 112 whose pull
+  request merged, 90 whose pull request closed unmerged and 52 without a
+  pull request; their deletion, turning on deletion of merged branches, and
+  the non-provider-pattern and validity-check options of secret scanning are
+  maintainer actions and were not performed.
 
 ### Lock the sample Dockerfile's CLI dependency graph (October 20)
 
@@ -243,8 +867,8 @@ The proposal stays open; these tests do not claim live DNS acceptance.
 
 ### Repository scan completion and bounded processing (October 20)
 
-Adapted reviewed changes from
-[PR #284](https://github.com/aisecnomad/Nexus-ShadowScan/pull/284) onto the
+Adapted selected changes from the closed, unmerged
+[PR #284](https://github.com/aisecnomad/Nexus-ShadowScan/pull/284), which had no recorded review, onto the
 existing staged-scan and readiness workflows. The filesystem probe counts up to
 180,000 entries within its unchanged one-second bound and proposes at most
 1800 seconds at the 120-second default. The existing rate of 12,000 entries per

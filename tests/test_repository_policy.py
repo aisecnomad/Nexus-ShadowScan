@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 import yaml
 
-from tools.container.verify import verify_bundle, verify_database
+from tools.container.verify import blocking_annotations, verify_bundle, verify_database
 from tools.coverage_gate import MIN_CONNECTOR_COVERAGE
 from tools.fuzz.harness import TARGET_NAMES as FUZZ_TARGETS
 
@@ -1436,6 +1436,9 @@ def test_container_scan_uses_verified_tool_fresh_database_and_exact_image() -> N
     assert '--scan-exit "$scan_exit" --os-type wolfi' in script
     assert not any("cache@" in step.get("uses", "") for step in steps)
     assert not any(step.get("continue-on-error") for step in steps)
+    annotate = steps[-2]
+    assert annotate["if"] == "failure()"
+    assert annotate["run"] == 'python -m tools.container.verify annotations "$CONTAINER_EVIDENCE"'
     upload = steps[-1]
     assert upload["if"] == "always()"
     assert upload["with"]["if-no-files-found"] == "error"
@@ -1898,6 +1901,52 @@ def test_container_evidence_cli_retains_blocked_results_and_fails_the_job(
             "  CVE-TEST-0001 CRITICAL wolfi:login?::error::forged 1:4.17.4-2 status=affected" in result.stderr
         )
         assert not any(line.startswith("::") for line in result.stderr.splitlines())
+
+
+def test_container_annotations_name_each_blocking_vulnerability_on_one_escaped_line(tmp_path: Path) -> None:
+    # A job that failed before the scan wrote its manifest has nothing to name.
+    assert blocking_annotations(tmp_path) == []
+    findings = [
+        {
+            "vulnerability": f"CVE-TEST-{index:04d}",
+            "severity": "HIGH",
+            "package": "python-3.12" if index == 0 else "login\n::error::forged,%0A",
+            "installed_version": "3.12.15-r0",
+            "fixed_version": "3.12.15-r3" if index == 0 else "",
+            "status": "fixed" if index == 0 else "affected",
+            "package_type": "wolfi",
+        }
+        for index in range(12)
+    ]
+    (tmp_path / "container-evidence.json").write_text(json.dumps({"blocking_vulnerabilities": findings}))
+    result = subprocess.run(
+        [sys.executable, "-m", "tools.container.verify", "annotations", str(tmp_path)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert lines == blocking_annotations(tmp_path)
+    # GitHub keeps ten error annotations per step: nine findings and a count of the rest.
+    assert len(lines) == 10
+    assert lines[0] == (
+        "::error title=CVE-TEST-0000 HIGH in wolfi%3Apython-3.12::"
+        "wolfi:python-3.12 3.12.15-r0 status=fixed fixed=3.12.15-r3"
+    )
+    # Report text can neither end the title property nor start another workflow command.
+    assert lines[1].startswith(
+        "::error title=CVE-TEST-0001 HIGH in wolfi%3Alogin?%3A%3Aerror%3A%3Aforged%2C%250A::"
+    )
+    assert lines[-1] == (
+        "::error title=Container scan blocked::3 more blocking vulnerabilities in container-evidence.json"
+    )
+    (tmp_path / "container-evidence.json").write_text(
+        '{"blocking_vulnerabilities": [], "blocking_vulnerabilities": []}'
+    )
+    with pytest.raises(ValueError, match="duplicate evidence key"):
+        blocking_annotations(tmp_path)
 
 
 @pytest.mark.parametrize(

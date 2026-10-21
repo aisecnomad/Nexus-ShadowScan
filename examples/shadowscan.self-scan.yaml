@@ -31,20 +31,8 @@ connectors:
       # Report content only; the scan completes without it. Sample repositories built to look like
       # shadow AI agents (the scanner's test inputs), whose planted findings would fill the report.
       - tests/fixtures
-      # Needed for a complete scan. Credential-form redaction vectors: call-shaped text without
-      # a closing parenthesis exceeds the call-lexing budget, which ends the file's analysis with
-      # a SanitizationLimitError (credential call length limit).
-      - tests/unit/test_credential_form_redaction.py
-      # Needed for a complete scan. Implements that call lexer; its comments and regular
-      # expressions hold the same shapes, so it trips the same budget.
-      - shadowscan/utils/redaction_calls.py
-      # Needed for a complete scan. The signature-authoring guide quotes the call shapes it
-      # tells authors to match (`ClientSession(`, `chat.completions.create(`) without a
-      # closing parenthesis, and the call lexer's budget ends the file's analysis on them.
-      - docs/signatures.md
       # Needed for a complete scan. The engineering log quotes the credential-shaped inputs of
-      # every review, far more than the five per format the credential quota discloses, and
-      # call shapes without a closing parenthesis that exceed the call-lexing budget.
+      # every review, far more than the five per format the credential quota discloses.
       - docs/engineering-log.md
       # Needed for a complete scan. Hundreds of synthetic credential inputs, each with its
       # expected outcome; more than the five per format the credential quota discloses.

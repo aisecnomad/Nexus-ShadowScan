@@ -746,12 +746,14 @@ def test_percent_continuation_lines_in_a_notebook_are_python(tmp_path, run_conne
 )
 def test_one_broken_notebook_cell_does_not_hide_the_others(tmp_path, run_connector, broken):
     # Jupyter runs each cell on its own: a cell that does not parse fails alone.
+    # The notebook is one partial gap of the budget, which a one-file tree exceeds.
     (tmp_path / "agent.ipynb").write_text(_notebook(broken, _LANGCHAIN_AGENT))
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
-    assert not ctx.stats.errors and ctx.stats.incomplete
+    assert ctx.stats.incomplete
+    assert all("over the 2.0% budget" in error for error in ctx.stats.errors), ctx.stats.errors
     assert ctx.stats.warnings == [
         "code.filesystem: agent.ipynb: import-bound analysis skipped for notebook cell 1, which does not "
-        "parse; lexical evidence retained"
+        "parse; lexical evidence retained; the other cells were analyzed; coverage gap"
     ]
     assert any(finding.kind == Kind.AGENT for finding in findings)
 
@@ -803,7 +805,8 @@ def test_a_broken_notebook_cell_keeps_its_own_construction(tmp_path, run_connect
     broken = "executor = AgentExecutor(agent=a, tools=[])\nresult = (\n"
     (tmp_path / "agent.ipynb").write_text(_notebook(setup, broken))
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
-    assert not ctx.stats.errors and ctx.stats.incomplete
+    assert ctx.stats.incomplete
+    assert all("over the 2.0% budget" in error for error in ctx.stats.errors), ctx.stats.errors
     assert any("notebook cell 2" in warning for warning in ctx.stats.warnings)
     # The construction in the unread cell stays lexical evidence, with no semantic promotion.
     assert findings and all(finding.kind == Kind.FRAMEWORK_USAGE for finding in findings)

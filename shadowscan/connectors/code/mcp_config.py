@@ -9,9 +9,13 @@ any record leaves this module.
 
 from __future__ import annotations
 
+import functools
+import json
 import re
+import sys
 import tomllib
-from typing import Any
+from collections.abc import Callable
+from typing import Any, NamedTuple
 
 import yaml
 
@@ -158,6 +162,16 @@ def _embedded_workflow_mcp(workflow: Any, errors: list[str]) -> dict[str, Any]:
 #: container levels below the root, and entries read per container.
 MCP_WALK_DEPTH = 12
 MCP_WALK_BREADTH = 256
+
+# Containers a text may open before its readings are left undecided
+# (``json_readings``), counted as its ``{`` and ``[`` characters, string
+# contents included, so the count can only overstate what a parse would
+# build: a few megabytes of three-byte containers parse to over a million
+# dicts and lists, and the readings and their exhaustive walks would
+# multiply that cost. A text past this bound stays what its byte check said
+# it may be. Real configuration and the catalogs and API contracts the
+# readings decide sit far below it.
+_MAX_JSON_CONTAINERS = 100_000
 # Fields a server record in a server list carries (Continue's ``mcpServers:
 # [{name, command}]``) and a session transcript's status record does not.
 _SERVER_RECORD_KEYS = frozenset({"command", "url", "args", "type", "transport"})
@@ -181,15 +195,105 @@ def _server_table(value: Any, listed: bool) -> bool:
     )
 
 
-def _holds_server_table(node: dict[Any, Any], listed: bool) -> bool:
-    """Whether mapping ``node`` holds a server table: ``mcpServers``, ``mcp_servers`` or ``mcp.servers``."""
-    if any(key in node and _server_table(node[key], listed) for key in ("mcpServers", "mcp_servers")):
+# JSON Schema keywords. A schema that describes a configuration names its
+# fields in ``properties`` (an OpenAPI component's ``mcp_servers: {anyOf,
+# title}``); such a field holds the description of a value, not servers.
+_SCHEMA_KEYWORDS = frozenset(
+    {
+        "$ref", "$id", "$schema", "$comment", "type", "title", "description", "default", "examples",
+        "anyOf", "oneOf", "allOf", "not", "enum", "const", "items", "properties", "required",
+        "additionalProperties", "patternProperties", "nullable", "format", "deprecated", "readOnly",
+        "writeOnly", "minItems", "maxItems", "uniqueItems", "minProperties", "maxProperties",
+    }
+)  # fmt: skip
+_SCHEMA_FIELD_MAPS = ("properties", "patternProperties")
+
+
+def _schema_object(node: dict[Any, Any]) -> bool:
+    """Whether ``node`` is a JSON Schema object schema: ``type: object`` or a ``$schema``, with field maps."""
+    return (node.get("type") == "object" or "$schema" in node) and any(
+        isinstance(node.get(key), dict) for key in _SCHEMA_FIELD_MAPS
+    )
+
+
+# The JSON type each keyword's value takes in a schema (``_field_schema``). ``default``,
+# ``const`` and ``examples`` take any value, so they cannot tell a schema from a server.
+_KEYWORD_TYPES: dict[str, type | tuple[type, ...]] = {
+    "$ref": str, "$id": str, "$schema": str, "$comment": str, "title": str, "description": str,
+    "format": str, "type": (str, list), "anyOf": list, "oneOf": list, "allOf": list, "enum": list,
+    "required": list, "not": (dict, bool), "items": (dict, list, bool), "properties": dict,
+    "patternProperties": dict, "additionalProperties": (dict, bool), "nullable": bool,
+    "deprecated": bool, "readOnly": bool, "writeOnly": bool, "uniqueItems": bool, "minItems": int,
+    "maxItems": int, "minProperties": int, "maxProperties": int,
+}  # fmt: skip
+
+
+def _field_schema(value: Any) -> bool:
+    """Whether ``value``, a field of a schema's ``properties``, is a schema rather than a server table.
+
+    It is a mapping of schema keywords only, each holding a value of the type
+    that keyword takes (``_KEYWORD_TYPES``), and at least one keyword that
+    takes a typed value. A server table whose servers are named like keywords
+    (``{"type": {"command": ...}}``, ``{"default": {...}}``) fails the test:
+    a server's record is a mapping where a keyword takes a string or a list,
+    a field map holds schemas and never a record's launch fields
+    (``{"properties": {"command": "npx"}}``), and ``items``, ``not`` and
+    ``additionalProperties`` hold a schema's keywords only
+    (``{"items": {"command": "npx"}}``). One level decides: a record deeper
+    down is not a server of the table a client would read here.
+    """
+    if not isinstance(value, dict) or not value or not _SCHEMA_KEYWORDS.issuperset(value):
+        return False
+    typed = [key for key in value if key in _KEYWORD_TYPES]
+    if not typed or not all(_keyword_typed(value[key], _KEYWORD_TYPES[key]) for key in typed):
+        return False
+    for key in typed:
+        inner = value[key]
+        if key in _SCHEMA_FIELD_MAPS and not all(_schema_leaf(item) for item in inner.values()):
+            return False
+        if (
+            key in ("items", "not", "additionalProperties")
+            and isinstance(inner, dict)
+            and not _SCHEMA_KEYWORDS.issuperset(inner)
+        ):
+            return False
+    return True
+
+
+def _schema_leaf(item: Any) -> bool:
+    """Whether a field map's value is what a schema holds: a boolean, or a mapping of schema keywords."""
+    return isinstance(item, bool) or (isinstance(item, dict) and _SCHEMA_KEYWORDS.issuperset(item))
+
+
+def _keyword_typed(value: Any, expected: type | tuple[type, ...]) -> bool:
+    """Whether ``value`` is of the JSON type a schema keyword takes (a boolean is not an integer)."""
+    if expected is int:
+        return isinstance(value, int) and not isinstance(value, bool)
+    return isinstance(value, expected)
+
+
+def _holds_server_table(node: dict[Any, Any], listed: bool, *, fields: bool = False) -> bool:
+    """Whether mapping ``node`` holds a server table: ``mcpServers``, ``mcp_servers`` or ``mcp.servers``.
+
+    ``fields`` says ``node`` is the field map of an object schema
+    (``_schema_object``): there a key whose value is a schema of keywords
+    only (``_field_schema``) describes a field and holds no server. A value
+    with any other key, a server name included, is still a server table.
+    """
+    if any(
+        key in node and _server_table(node[key], listed) and not (fields and _field_schema(node[key]))
+        for key in ("mcpServers", "mcp_servers")
+    ):
         return True
     mcp = node.get("mcp")
+    if fields and _field_schema(mcp):
+        return False
     return isinstance(mcp, dict) and "servers" in mcp and _server_table(mcp["servers"], listed)
 
 
-def mcp_server_holders(document: Any, *, first: bool = False) -> tuple[list[dict[Any, Any]], bool]:
+def mcp_server_holders(
+    document: Any, *, first: bool = False, exhaustive: bool = False
+) -> tuple[list[dict[Any, Any]], bool]:
     """The mappings of a parsed document that hold an MCP server table, and whether the bounds cut the walk.
 
     The table may sit at the top level, nested within a client's section, or
@@ -199,32 +303,216 @@ def mcp_server_holders(document: Any, *, first: bool = False) -> tuple[list[dict
     levels and ``MCP_WALK_BREADTH`` entries of each, so a hostile document
     cannot make it expensive; the flag says a container it did not read in
     full holds containers, where a table may sit. ``first`` stops at the first
-    holder. A holder's own table is not searched further.
+    holder. A holder's own table is not searched further. ``exhaustive``
+    lifts both bounds, for a caller whose document is already bounded by its
+    size (``json_readings_declare_mcp``): the walk is iterative and visits
+    each container once, so its cost is linear in the document.
     """
+    depth_limit = sys.maxsize if exhaustive else MCP_WALK_DEPTH
+    breadth = sys.maxsize if exhaustive else MCP_WALK_BREADTH
     holders: list[dict[Any, Any]] = []
     truncated = False
-    stack: list[tuple[Any, int, bool]] = [(document, 0, False)]
+    # Each entry: a node, its depth, whether a list holds it, whether it is a schema's field map.
+    stack: list[tuple[Any, int, bool, bool]] = [(document, 0, False, False)]
     while stack and not (first and holders):
-        node, depth, listed = stack.pop()
+        node, depth, listed, fields = stack.pop()
         if isinstance(node, dict):
-            if _holds_server_table(node, listed):
+            if _holds_server_table(node, listed, fields=fields):
                 holders.append(node)
                 continue
             children = list(node.values())
+            field_maps = (
+                {id(node[key]) for key in _SCHEMA_FIELD_MAPS if isinstance(node.get(key), dict)}
+                if _schema_object(node)
+                else set()
+            )
         elif isinstance(node, list):
-            children, listed = node, True
+            children, listed, field_maps = node, True, set()
         else:
             continue
         # Only a container that holds something can hold a table.
-        containers = [
-            child for child in children[:MCP_WALK_BREADTH] if isinstance(child, dict | list) and child
-        ]
-        dropped = any(isinstance(child, dict | list) and child for child in children[MCP_WALK_BREADTH:])
-        if dropped or (containers and depth >= MCP_WALK_DEPTH):
+        containers = [child for child in children[:breadth] if isinstance(child, dict | list) and child]
+        dropped = any(isinstance(child, dict | list) and child for child in children[breadth:])
+        if dropped or (containers and depth >= depth_limit):
             truncated = True
-        if depth < MCP_WALK_DEPTH:
-            stack.extend((child, depth + 1, listed) for child in reversed(containers))
+        if depth < depth_limit:
+            stack.extend(
+                (child, depth + 1, listed, id(child) in field_maps) for child in reversed(containers)
+            )
     return holders, truncated
+
+
+def _first_wins(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """A JSON object in which a repeated key keeps its first value."""
+    obj: dict[str, Any] = {}
+    for key, value in pairs:
+        obj.setdefault(key, value)
+    return obj
+
+
+class _Repeated(list[Any]):
+    """Every value a repeated key held where the values were not all objects (``_merged``)."""
+
+
+class _MergeLimitError(ValueError):
+    """Merging a document's repeated objects took more work than its text bounds."""
+
+
+def _merge_into(kept: Any, value: Any, work: list[int]) -> Any:
+    """``value`` merged into ``kept``, in place: objects key by key, anything else kept side by side.
+
+    Each key copied is charged to ``work[0]``, the merges left; past it the merge stops.
+    """
+    if isinstance(kept, dict) and isinstance(value, dict):
+        work[0] -= len(value)
+        if work[0] < 0:
+            raise _MergeLimitError("merged reading past its work bound")
+        for key, item in value.items():
+            kept[key] = _merge_into(kept[key], item, work) if key in kept else item
+        return kept
+    if isinstance(kept, _Repeated):
+        kept.append(value)
+        return kept
+    return _Repeated([kept, value])
+
+
+def _merged(budget: int) -> Callable[[list[tuple[str, Any]]], dict[str, Any]]:
+    """A hook building JSON objects whose repeated keys' objects merge, as Go's decoder fills a struct.
+
+    Every value any reading could take stays in the document: a repeated
+    key whose values are not all objects keeps them all, side by side. Each
+    object is merged in place, but an object merged into a repeated key is
+    copied key by key, and nesting such repeats copies one object again at
+    every level. The keys copied are therefore charged to ``budget`` (the
+    text's length), past which the hook raises ``_MergeLimitError`` and the
+    reading is undecided, as text that does not parse is.
+    """
+    work = [budget]
+
+    def merged(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        obj: dict[str, Any] = {}
+        for key, value in pairs:
+            obj[key] = _merge_into(obj[key], value, work) if key in obj else value
+        return obj
+
+    return merged
+
+
+def json_readings(text: str) -> list[Any] | None:
+    """What ambiguous JSON reads as under each way parsers treat a repeated key; None if it is not decided.
+
+    Most parsers keep a repeated key's last value, some its first, and Go's
+    decoder merges repeated objects into one. ``json.loads`` cannot be
+    interrupted, so before anything is parsed the text's opening brackets
+    bound the containers a parse could build (``_MAX_JSON_CONTAINERS``): text
+    past the bound is None, undecided like text that does not parse, and its
+    gap keeps the byte check's answer. Within it, ``text`` is parsed once,
+    with a hook that records whether any object repeats a key: a document
+    without a repeat reads the same under every treatment, so that one
+    reading is returned, and the extra readings are built only over a
+    repeat; merging repeated objects copies at most as many keys as ``text``
+    has characters (``_merged``), past which the text is undecided too.
+    ``text`` is bounded by its caller's size limit.
+    """
+    if text.count("{") + text.count("[") > _MAX_JSON_CONTAINERS:
+        return None
+    repeated = False
+
+    def last_wins(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        nonlocal repeated
+        obj = dict(pairs)
+        if len(obj) != len(pairs):
+            repeated = True
+        return obj
+
+    try:
+        document = json.loads(text, object_pairs_hook=last_wins)
+    except (ValueError, RecursionError):
+        return None
+    if not repeated:
+        return [document]
+    documents = [document]
+    for hook in (_first_wins, _merged(len(text))):
+        try:
+            documents.append(json.loads(text, object_pairs_hook=hook))
+        except (ValueError, RecursionError):
+            return None
+    return documents
+
+
+# A server table key in any spelling a case-insensitive or lenient client may accept.
+_SERVER_KEY_VARIANT = re.compile(r"mcp[-_.]?servers", re.IGNORECASE)
+_EXACT_SERVER_KEYS = frozenset({"mcpServers", "mcp_servers"})
+_MCP_KEY = re.compile(r"mcp", re.IGNORECASE)
+_SERVERS_KEY = re.compile(r"servers", re.IGNORECASE)
+
+
+def _variant_server_key(document: Any) -> bool:
+    """Whether ``document`` spells a server table key other than exactly (``McpServers``, ``MCP.Servers``).
+
+    A client that matches keys without regard to case (Go's and .NET's JSON
+    decoders) reads such a table, which the structural walk, matching keys
+    exactly, does not. Every container is visited once.
+    """
+    stack = [document]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(key, str) and key not in _EXACT_SERVER_KEYS and _variant_key(key, value):
+                    return True
+                if isinstance(value, dict | list):
+                    stack.append(value)
+        elif isinstance(node, list):
+            stack.extend(item for item in node if isinstance(item, dict | list))
+    return False
+
+
+def _variant_key(key: str, value: Any) -> bool:
+    """Whether ``key`` spells ``mcpServers``, or an ``mcp`` section holding ``servers``, in another case.
+
+    Either name may carry the variant case (``McpServers``, ``MCP.Servers``,
+    ``mcp.Servers``, ``mcp.ſervers``: Go folds names as Unicode does); only
+    the exact pair ``mcp.servers``, which the walk reads itself, is no
+    variant. A section a repeated key held more than once is judged in each
+    of its values.
+    """
+    if _SERVER_KEY_VARIANT.fullmatch(key):
+        return True
+    sections = value if isinstance(value, _Repeated) else [value]
+    return _MCP_KEY.fullmatch(key) is not None and any(
+        isinstance(inner, str) and _SERVERS_KEY.fullmatch(inner) and (key, inner) != ("mcp", "servers")
+        for section in sections
+        if isinstance(section, dict)
+        for inner in section
+    )
+
+
+@functools.lru_cache(maxsize=4)
+def json_readings_declare_mcp(text: str) -> bool | None:
+    """Whether any reading of ambiguous JSON holds an MCP server table; None when that is not known.
+
+    Each reading (``json_readings``) is walked in full (``mcp_server_holders``
+    with ``exhaustive``: every caller bounds ``text`` by its size first, and
+    the readings bound the containers walked), so a duplicate cannot hide a
+    table from one reading that another holds, and a deep API contract is
+    decided rather than left undecided. None when the text does not parse,
+    holds more containers than the readings decide, or names a server table
+    key in a spelling the walk does not match (``_variant_server_key``).
+    The file scanner asks this of one text more than once, so recent answers
+    are kept.
+    """
+    documents = json_readings(text)
+    if documents is None:
+        return None
+    holds = False
+    for document in documents:
+        holders, _ = mcp_server_holders(document, first=True, exhaustive=True)
+        holds = holds or bool(holders)
+    # A variant one reading's value of a repeated key spells is judged in that reading.
+    if not holds and any(_variant_server_key(document) for document in documents):
+        return None
+    return holds
 
 
 def _merged_server_tables(holders: list[dict[Any, Any]], errors: list[str]) -> dict[str, Any]:
@@ -430,6 +718,11 @@ def _mcp_server_record(
     if not isinstance(cfg, dict):
         errors.append("MCP server entry must be an object")
         return None
+    entry = cfg
+    reference = _block_reference(cfg, errors)
+    if reference is not None:
+        # A Continue block reference: the override is the part of the launch it configures here.
+        cfg = reference.override
     if any(sum(alias in cfg for alias in aliases) > 1 for aliases in _MCP_FIELD_ALIASES):
         # Which spelling a client honors is not knowable here; picking one
         # could hide the credentials or endpoint the other one configures.
@@ -447,7 +740,12 @@ def _mcp_server_record(
     if command is not None and not isinstance(command, str):
         errors.append("MCP command must be a string")
         command = None
-    if not (command and command.strip()) and not (url and url.strip()) and not _has_mcp_package(cfg):
+    if (
+        not (command and command.strip())
+        and not (url and url.strip())
+        and not _has_mcp_package(cfg)
+        and reference is None
+    ):
         if cfg.get("disabled") is not True and cfg.get("enabled") is not False:
             errors.append("MCP server entry has no command, URL, or valid package")
         return None
@@ -457,13 +755,14 @@ def _mcp_server_record(
         errors.append("MCP args must be an array of strings")
         args = []
         launch_unreadable = True
-    inline_locations = _inline_secret_locations(env, headers)
+    inline_locations = _inline_secret_locations(env, headers, reference.inputs if reference else {})
     transport = _mcp_alias(cfg, ("type", "transport"), "stdio" if command else ("http" if url else "unknown"))
     if not isinstance(transport, str):
         errors.append("MCP transport must be a string")
         transport = "unknown"
-    # Project only after sanitizing with the entire config: a credential in
-    # env/headers may be repeated as an otherwise unrecognizable argument.
+    # Project only after sanitizing with the entire config (a block reference's whole entry,
+    # ``with`` included): a credential in env/headers may be repeated as an otherwise
+    # unrecognizable argument.
     field_names = (
         "name",
         "transport",
@@ -477,7 +776,7 @@ def _mcp_server_record(
     )
     clean_values = sanitize(
         (
-            cfg,
+            entry,
             [
                 str(name),
                 transport,
@@ -513,6 +812,17 @@ def _mcp_server_record(
         safe["packages"] = _manifest_packages(cfg.get("packages"), errors)
     if command and launch_unreadable:
         safe["launch_unidentified"] = True
+    if reference is not None:
+        # The referenced block defines the launch; an override changes part of it.
+        # Sanitized with the whole entry, as every other field is, so userinfo, a query token or
+        # a credential repeated from ``with`` never reaches the report.
+        block = sanitize((entry, reference.uses))[1]
+        safe["block_reference"] = block
+        safe["launch_unidentified"] = True
+        if block != reference.uses:
+            inline_locations.append("uses")
+            safe["secrets_inline"] = True
+            safe["secret_locations"] = inline_locations
     raw = {
         "command": command,
         "args": args,
@@ -617,11 +927,21 @@ def _has_mcp_package(cfg: dict[str, Any]) -> bool:
     )
 
 
-def _inline_secret_locations(env: dict[Any, Any], headers: dict[Any, Any]) -> list[str]:
-    """Name the tables that hold a credential-looking literal rather than a reference."""
+def _inline_secret_locations(
+    env: dict[Any, Any], headers: dict[Any, Any], inputs: dict[Any, Any] | None = None
+) -> list[str]:
+    """Name the tables that hold a credential-looking literal rather than a reference.
+
+    ``inputs`` is a Continue block reference's ``with`` table: the referenced block reads its
+    values as it would ``env`` values, so a literal key passed there is just as inline.
+    """
     return [
         location
-        for location, items in (("env", env.items()), ("headers", headers.items()))
+        for location, items in (
+            ("env", env.items()),
+            ("headers", headers.items()),
+            ("with", (inputs or {}).items()),
+        )
         if any(
             isinstance(value, str)
             and value
@@ -644,3 +964,34 @@ def _mcp_disabled(cfg: dict[str, Any], errors: list[str]) -> bool:
         # Unknown activation state cannot substantiate an active server.
         return True
     return disabled or not enabled
+
+
+_BLOCK_REFERENCE_KEYS = frozenset({"uses", "with", "override"})
+
+
+class _BlockReference(NamedTuple):
+    uses: str
+    inputs: dict[Any, Any]
+    override: dict[str, Any]
+
+
+def _block_reference(cfg: dict[str, Any], errors: list[str]) -> _BlockReference | None:
+    """A Continue block reference (``uses`` with optional ``with`` and ``override``), or None.
+
+    Continue's schema allows exactly these keys on an ``mcpServers`` entry that names a hub
+    block or a local block file. Any other key, or a ``uses`` that is not a non-empty string,
+    is not a reference, and the entry is judged as a server (and reported when it is not one).
+    The referenced block is never fetched or followed: a local block inside the scanned tree
+    is scanned on its own.
+    """
+    uses = cfg.get("uses")
+    if not isinstance(uses, str) or not uses.strip() or not set(cfg) <= _BLOCK_REFERENCE_KEYS:
+        return None
+    inputs = _mcp_mapping(cfg.get("with"), "block reference with", errors)
+    override = cfg.get("override")
+    if override is None:
+        override = {}
+    elif not isinstance(override, dict):
+        errors.append("MCP block reference override must be an object")
+        override = {}
+    return _BlockReference(uses, inputs, override)

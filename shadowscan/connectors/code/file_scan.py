@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 from bisect import bisect_right
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import replace
 from functools import partial
@@ -43,6 +43,7 @@ from shadowscan.connectors.code.javascript_imports import (
     JavascriptToolResolver,
     has_javascript_tool_import,
 )
+from shadowscan.connectors.code.json_data import ambiguous_data_file
 from shadowscan.connectors.code.lockfiles import LOCKFILE_NAMES, LockInventory
 from shadowscan.connectors.code.manifests import (
     Artifact,
@@ -51,7 +52,7 @@ from shadowscan.connectors.code.manifests import (
     manifest_comment_projection,
     parse_manifest,
 )
-from shadowscan.connectors.code.mcp_config import _parse_mcp_servers
+from shadowscan.connectors.code.mcp_config import _parse_mcp_servers, json_readings_declare_mcp
 from shadowscan.connectors.code.mcp_tools import MCPToolLimitError, mcp_tool_names
 from shadowscan.connectors.code.model_artifacts import (
     ARTIFACT_SUFFIXES,
@@ -64,6 +65,7 @@ from shadowscan.connectors.code.model_identifiers import (
     _MODEL_QUOTED_RE,
     _MODEL_ROUTE_PREFIXES,
     _MODEL_STEMS,
+    MAX_MODEL_LITERAL_OCCURRENCES,
     MAX_MODEL_LITERALS_PER_FILE,
     MAX_MODEL_MATCHES_PER_SIGNATURE,
     _has_model_stem,
@@ -93,6 +95,7 @@ from shadowscan.connectors.code.scan_records import (
     _UndecodableFile,
 )
 from shadowscan.connectors.code.scan_records import _ENV_TEMPLATE_WORDS as _ENV_TEMPLATE_WORDS
+from shadowscan.connectors.code.semantic_config import AMBIGUOUS_DATA as _AMBIGUOUS_DATA
 from shadowscan.connectors.code.semantic_config import (
     agent_manifest_kind,
     is_agent_config_path,
@@ -130,6 +133,7 @@ from shadowscan.connectors.code.source_text import (
     _without_xml_comments,
     foreign_cell,
 )
+from shadowscan.connectors.code.template_source import rendered_template
 from shadowscan.connectors.code.tool_attribution import ToolRegions
 from shadowscan.connectors.code.walk import (
     _AGENT_DEFINITION_DIRS,
@@ -157,9 +161,11 @@ from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import (
     MAX_SECRETS_PER_SIGNAL,
     SOURCE_EXTENSIONS,
+    MatchTimeoutError,
     _finditer,
     language_for_path,
     reported_credential,
+    separate_budget,
 )
 from shadowscan.utils.git import LFS_POINTER_MAX_BYTES, LFS_POINTER_PREFIX
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
@@ -170,6 +176,7 @@ from shadowscan.utils.text import (
     BINARY_CONTENT_ERROR,
     line_counter,
     notebook_to_source,
+    notebook_without_binary_data,
     read_credential_text,
     read_text,
     redact,
@@ -181,6 +188,10 @@ if TYPE_CHECKING:  # filesystem imports this module
 
 # Registered MCP tool names retained per project.
 _MAX_MCP_TOOLS = 200
+# A notebook's binary output values are read for credentials in windows this long,
+# overlapping by more than any credential's length.
+_CREDENTIAL_WINDOW = 4096
+_CREDENTIAL_OVERLAP = 256
 # Server constructions listed under metadata.mcp_server; the capability does not
 # depend on the list, so the bound is disclosed on the finding, not a coverage gap.
 _MAX_MCP_SERVER_CONSTRUCTIONS = 50
@@ -279,7 +290,15 @@ class FileScanner:
         self.cross_file = CrossFileSources(self)
 
     def scan_file(self, scan: _ScanState, rel: str, path: Path, proj_root: str) -> None:
-        """Run every analysis pass over one file of the walk."""
+        """Run every analysis pass over one file of the walk.
+
+        ``path`` is where the file is read; ``rel`` is where a client reads it,
+        and decides everything by name. They differ for an agent-configuration
+        link read at its link path (``TreeWalker._alias_entries``):
+        ``.vscode/settings.json`` linked to ``config/settings.json.example`` is
+        a settings file, whatever its target is called.
+        """
+        name, suffix = PurePosixPath(rel).name, PurePosixPath(rel).suffix.lower()
         proj = scan.projects.setdefault(proj_root, _Project(proj_root))
         scan.reexports.note_path(proj_root, rel)
         scan.python_dispatches.note_path(proj_root, rel)
@@ -289,7 +308,7 @@ class FileScanner:
         if lang:
             proj.languages.add(lang)
 
-        if self.walker.model_artifact_name(path.name):
+        if self.walker.model_artifact_name(name):
             on_disk = (
                 PurePosixPath(path.relative_to(scan.base).as_posix()) if scan.base else PurePosixPath(rel)
             )
@@ -345,19 +364,19 @@ class FileScanner:
                 finding.recompute_confidence()
                 scan.inventory_findings.append(finding)
             # Extensionless text can still be a source/configuration file.
-            if path.suffix.lower() in ARTIFACT_SUFFIXES or result is not None:
+            if suffix in ARTIFACT_SUFFIXES or result is not None:
                 return
 
         # 1. file-name signals (config files of agents / MCP / A2A ...)
         file_matches = self.index.match_file(rel)
-        by_name = _analyzed_by_name(path.name)
+        by_name = _analyzed_by_name(name)
         if not (by_name or file_matches):
             return
-        if self.triage and not file_matches and path.suffix.lower() in SOURCE_EXTENSIONS:
+        if self.triage and not file_matches and suffix in SOURCE_EXTENSIONS:
             # Triage never reads plain source files; the per-root warning
             # already discloses the skipped stages.
             return
-        credential_file = path.name.lower() in CREDENTIAL_FILE_NAMES
+        credential_file = name.lower() in CREDENTIAL_FILE_NAMES
         if credential_file:
             # Only the credential pass reads a tool credential file, but its name is evidence
             # in every mode: '.codex/.netrc' configures Codex as '.codex/config.toml' does.
@@ -374,7 +393,7 @@ class FileScanner:
             _note_unread_settings(proj, rel)
             return
         text, raw_notebook, cells, foreign = loaded
-        if credential_file or path.name.lower() in LOCKFILE_NAMES:
+        if credential_file or name.lower() in LOCKFILE_NAMES:
             read = _SourceFile(
                 rel=rel,
                 path=path,
@@ -390,7 +409,7 @@ class FileScanner:
                 self._scan_lockfile(scan, read)
             return
         nul_text = None
-        if "\x00" in text and path.suffix.lower() != ".ipynb":
+        if "\x00" in text and suffix != ".ipynb":
             # Bash drops NUL bytes from a script, so `api.open<NUL>ai.com` runs as api.openai.com: names
             # are matched without them. Node and PHP keep them, so a source file is also lexed as it was
             # read (``_match_source``). Lines do not move.
@@ -402,7 +421,7 @@ class FileScanner:
             proj=proj,
             text=text,
             nul_text=nul_text,
-            lang="python" if path.suffix.lower() == ".ipynb" else lang,
+            lang="python" if suffix == ".ipynb" else lang,
             file_matches=file_matches,
             raw_notebook=raw_notebook,
             cells=cells,
@@ -417,7 +436,7 @@ class FileScanner:
                 # own few literals are cheaper than the union.
                 file.literals = self.index.literal_scan(text, file.lang)
             self._record_file_matches(file)
-            if path.name == "SKILL.md":
+            if name == "SKILL.md":
                 audit = audit_skill_text(text)
                 proj.skill_audits[rel] = audit
                 if audit.incomplete:
@@ -488,7 +507,7 @@ class FileScanner:
         on_disk = PurePosixPath(path.relative_to(base).as_posix()) if base is not None else PurePosixPath(rel)
         text = read_text(
             on_disk,
-            self.walker.size_limit(path.name),
+            self.walker.size_limit(PurePosixPath(rel).name),
             read_errors,
             dir_fd=root_fd,
             analyzable_name=named,
@@ -506,7 +525,7 @@ class FileScanner:
             elif self.strict_coverage:
                 self.ctx.error(f"code.filesystem: {rel}: {issue}", reason=_read_issue_reason(issue))
             elif issue == "file exceeds max_file_size":
-                self.walker._oversize_gap(rel, path.name, on_disk, root_fd)
+                self.walker._oversize_gap(rel, PurePosixPath(rel).name, on_disk, root_fd)
             else:
                 self.walker._unreadable_gap(rel, issue)
         if text is None:
@@ -520,9 +539,18 @@ class FileScanner:
             else:
                 self.walker._gap(rel, message, reason="unscanned-input")
             return None
-        if path.suffix.lower() != ".ipynb":
+        if "{{" in text or "{%" in text:
+            self.walker.note_template_syntax(rel)  # read by _template_source_gap
+        if PurePosixPath(rel).suffix.lower() != ".ipynb":
             return text, None, (), ()
         return self._notebook_source(rel, text)
+
+    def _holds_credential(self, value: str) -> bool:
+        """Whether the credential pass matches anything in ``value``, read in overlapping windows."""
+        return any(
+            self.index.match_secrets(value[max(0, start - _CREDENTIAL_OVERLAP) : start + _CREDENTIAL_WINDOW])
+            for start in range(0, len(value), _CREDENTIAL_WINDOW)
+        )
 
     def _notebook_source(
         self, rel: str, document: str
@@ -540,7 +568,8 @@ class FileScanner:
         raw_notebook = None if oversized_notebook else document
         sources: list[str] = []
         language: list[str] = []
-        text = notebook_to_source(document, notebook_errors, cells=sources, language=language)
+        binary: list[str] = []
+        text = notebook_to_source(document, notebook_errors, cells=sources, language=language, binary=binary)
         self.file_errors(rel, dict.fromkeys(notebook_errors), defect=True)
         python_kernel = not language or language[0] in {"python", "python3", "ipython", "ipython3"}
         # The cells are joined by one line break each.
@@ -559,12 +588,39 @@ class FileScanner:
         if len(text) > self.max_file_size:
             gap = f"code.filesystem: {rel}: skipped, notebook code cells exceed max_file_size"
         elif oversized_notebook and self.scan_secrets:
-            # Code cells are analyzed as usual. Saved outputs are
-            # read only for credentials, and not at this size.
-            gap = (
-                f"code.filesystem: {rel}: notebook over max_file_size; code cells analyzed, "
-                "saved outputs not scanned for credentials"
-            )
+            # Code cells are analyzed as usual. Saved outputs are read only for
+            # credentials: their text, once the base64 images, audio, video and
+            # PDFs that make a notebook large are emptied, when that fits. A
+            # notebook that did not parse whole is not rebuilt.
+            outputs, removed = document, 0
+            if not notebook_errors:
+                # A credential spelled in the base64 alphabet can sit in a valid image's
+                # value: a value the credential pass matches is kept and read with the text.
+                binary = [part for part in binary if not self._holds_credential(part)]
+                outputs, removed = notebook_without_binary_data(document, binary)
+            if len(outputs) <= self.max_file_size:
+                raw_notebook = outputs
+                self.walker.note_file(
+                    rel,
+                    f"notebook over max_file_size; {removed:,} characters of base64 image, audio, video "
+                    "and PDF output data not read, every text output scanned for credentials",
+                )
+            elif self.strict_coverage:
+                gap = (
+                    f"code.filesystem: {rel}: notebook over max_file_size; code cells analyzed, "
+                    "saved outputs not scanned for credentials"
+                )
+            else:
+                # Its code is analyzed, and its text outputs are data like any other
+                # oversize file's: one whole entry of the budget (``_oversize_gap``).
+                self.walker._budgeted_gap(
+                    rel,
+                    f"code.filesystem: {rel}: notebook over max_file_size; code cells analyzed, "
+                    "text outputs over max_file_size not scanned for credentials; coverage gap",
+                    full_weight=True,
+                    reason="oversize-file",
+                    unread_credentials=True,
+                )
         if gap is not None:
             self.walker._gap(
                 rel, gap, error=self.strict_coverage, reason="oversize-file", unread_credentials=True
@@ -594,6 +650,12 @@ class FileScanner:
             # Detection still runs, but without an established
             # structured context none of this file's excerpts can
             # safely be emitted.
+            if isinstance(exc, JSONIntegrityError) and ambiguous_data_file(
+                self.index, rel, text, self.walker._agent_configuration
+            ):
+                self.walker.budget_defects(
+                    rel, "ambiguous JSON data no reading makes configuration", kind="integrity"
+                )
             self._withhold_excerpts(rel, exc, "parsing")
             return None, False
 
@@ -621,6 +683,7 @@ class FileScanner:
             rel,
             f"code.filesystem: {rel}: structured {stage} incomplete ({failure}); excerpts withheld",
             reason="unparsed-input" if integrity else "sanitization-limit",
+            defect="integrity" if integrity else None,
         )
 
     def _input_defect(self, rel: str, issue: str, *, full_weight: bool = False) -> None:
@@ -641,6 +704,7 @@ class FileScanner:
             suffix=False,
             full_weight=full_weight,
             reason="unparsed-input",
+            defect="parse",
         )
 
     # Syntax/shape defects get a distinct diagnostic so operators can find
@@ -653,6 +717,24 @@ class FileScanner:
         "invalid agent manifest syntax",
         "MCP servers must be an object or array",
     )
+
+    def _declaration_errors(
+        self, file: _SourceFile, issues: Collection[str], empty_note: str, *, full_weight: bool = False
+    ) -> bool:
+        """Record a declaring file's parser issues as input defects; False when the file is blank.
+
+        A manifest, agent manifest or MCP configuration that holds only whitespace (and a
+        byte-order mark) fails its parser, yet no byte of it went unread and no parser reads a
+        declaration from it: it is noted (``empty_note``), which strict accounting still counts,
+        rather than recorded as a gap. A file with a NUL byte never reaches this as text.
+        """
+        if issues and _blank(file.text):
+            self.walker.note_file(file.rel, empty_note)
+            return False
+        if issues:
+            self._note_template(file)
+        self.file_errors(file.rel, issues, defect=True, full_weight=full_weight)
+        return True
 
     def file_errors(
         self, rel: str, issues: Iterable[str], *, defect: bool = False, full_weight: bool = False
@@ -685,6 +767,7 @@ class FileScanner:
                     f"code.filesystem: {rel}: {issue}",
                     full_weight=full_weight,
                     reason="unparsed-input" if category == "other" else category,
+                    defect="integrity" if issue == _AMBIGUOUS_DATA else None,
                 )
 
     def _redacted_lines(self, file: _SourceFile) -> list[str]:
@@ -703,8 +786,11 @@ class FileScanner:
                 # Match locations count LF only. Other separators can occur
                 # inside literals (Go raw imports may contain CR) and must not
                 # shift excerpts. _excerpt strips a CR left by a CRLF ending.
-                source.safe_lines = _redacted_source(source.text or "", source.structure).split("\n")
-            except (YAMLResourceLimitError, SanitizationLimitError) as exc:
+                with separate_budget():
+                    source.safe_lines = _redacted_source(source.text or "", source.structure).split("\n")
+            except (YAMLResourceLimitError, SanitizationLimitError, MatchTimeoutError) as exc:
+                # Redaction runs once detection is done (``_settle_excerpts``) under an
+                # allowance of its own: exhausting it withholds the excerpts, never a finding.
                 self._withhold_excerpts(source.rel, exc)
                 source.structure = None
                 source.safe_lines = []
@@ -747,7 +833,7 @@ class FileScanner:
         file.card_kind = agent_manifest_kind(file.rel)
         if file.card_kind:
             validation = parse_agent_manifest(file.rel, file.text, file.card_kind)
-            self.file_errors(file.rel, validation.errors, defect=True)
+            self._declaration_errors(file, validation.errors, "empty agent manifest; it declares no agent")
             file.card_valid = validation.valid
             file.card_incomplete = validation.incomplete
         for m in file.file_matches:
@@ -842,7 +928,7 @@ class FileScanner:
             code=code,
             limited=limited,
             placeholder=placeholder_reason,
-            env_file=not code and _env_values_file(file.path.name),
+            env_file=not code and _env_values_file(file.name),
         )
         for m in matches:
             if (m.signature_id, m.value) in skip_values:
@@ -884,7 +970,12 @@ class FileScanner:
             mcp_errors: list[str] = []
             file.mcp_servers = _parse_mcp_servers(file.rel, file.text, mcp_errors, document)
             # An MCP configuration is reported at full weight in test code, so its defects are gaps there.
-            self.file_errors(file.rel, dict.fromkeys(mcp_errors), defect=True, full_weight=True)
+            self._declaration_errors(
+                file,
+                dict.fromkeys(mcp_errors),
+                "empty MCP configuration; it declares no server",
+                full_weight=True,
+            )
             dedicated = file.name.lower() in _DEDICATED_MCP_CONFIG_NAMES
             if not file.mcp_servers and not mcp_errors and not dedicated:
                 # The content heuristic (an "mcp" and a "servers" key anywhere
@@ -990,7 +1081,14 @@ class FileScanner:
         manifest = parse_manifest(rel, file.text, self._parsed_document(file, (".json",), strict=True))
         if not manifest:
             return
-        self.file_errors(rel, dict.fromkeys(manifest.errors), defect=True)
+        if not self._declaration_errors(
+            file, dict.fromkeys(manifest.errors), "empty manifest; it declares nothing"
+        ):
+            return
+        if manifest.errors and (rendered := rendered_template(rel, file.text)) is not None:
+            # Unrendered template source (its gap is recorded above): the manifest a
+            # generator renders from it declares these dependencies, placeholders aside.
+            manifest = parse_manifest(rel, rendered) or manifest
         for dep in manifest.deps:
             file.proj.deps.append(dep)
             for m in self.index.match_dependency(dep.ecosystem, dep.name):
@@ -1276,8 +1374,9 @@ class FileScanner:
         ``model_literal`` (weight capped at emit time) and, outside source
         files, ``data_mention``: a model id in a data file names a model as a
         domain names a host, so it anchors nothing and keeps a pricing table a
-        catalog. At most ``MAX_MODEL_LITERALS_PER_FILE`` literals with a
-        vendor stem are read per pass (ordinary strings are skipped in the match
+        catalog. At most ``MAX_MODEL_LITERAL_OCCURRENCES`` literals with a
+        vendor stem are read per pass, and ``MAX_MODEL_LITERALS_PER_FILE`` distinct
+        ones matched (ordinary strings are skipped in the match
         iterator and do not count) and ``MAX_MODEL_MATCHES_PER_SIGNATURE``
         matches kept per signature; unread candidates leave coverage incomplete.
         """
@@ -1297,27 +1396,37 @@ class FileScanner:
             _MODEL_QUOTED_RE,
             content_text,
             "model identifiers",
-            MAX_MODEL_LITERALS_PER_FILE + 1,
+            MAX_MODEL_LITERAL_OCCURRENCES + 1,
             in_comment if starts else None,
             lambda m: _has_model_stem(m.group(2)),
         )
-        limited = len(quoted) > MAX_MODEL_LITERALS_PER_FILE
-        literals.extend((m.start(2), m.group(2)) for m in quoted[:MAX_MODEL_LITERALS_PER_FILE])
+        limited = len(quoted) > MAX_MODEL_LITERAL_OCCURRENCES
+        literals.extend((m.start(2), m.group(2)) for m in quoted[:MAX_MODEL_LITERAL_OCCURRENCES])
         if not source:
             keyed = _finditer(
                 _MODEL_KEY_VALUE_RE,
                 content_text,
                 "model identifiers",
-                MAX_MODEL_LITERALS_PER_FILE + 1,
+                MAX_MODEL_LITERAL_OCCURRENCES + 1,
                 selected=lambda m: _has_model_stem(m.group(1)),
             )
-            limited = limited or len(keyed) > MAX_MODEL_LITERALS_PER_FILE
-            literals.extend((m.start(1), m.group(1)) for m in keyed[:MAX_MODEL_LITERALS_PER_FILE])
+            limited = limited or len(keyed) > MAX_MODEL_LITERAL_OCCURRENCES
+            literals.extend((m.start(1), m.group(1)) for m in keyed[:MAX_MODEL_LITERAL_OCCURRENCES])
+        # A literal's matches depend on its value alone, and a repeat was never
+        # recorded twice (``seen`` below): each distinct value is matched once, at
+        # its first offset, and the bound counts distinct values. A package's own
+        # dotted module names ("llama_index.core", carrying the "llama" stem)
+        # repeat throughout its mapping files.
+        first: dict[str, int] = {}
+        for offset, value in sorted(literals):
+            first.setdefault(value, offset)
+        limited = limited or len(first) > MAX_MODEL_LITERALS_PER_FILE
+        literals = sorted((offset, value) for value, offset in first.items())[:MAX_MODEL_LITERALS_PER_FILE]
         if limited:
             self.walker._gap(
                 file.rel,
                 f"code.filesystem: {file.rel}: model identifiers read from the first "
-                f"{MAX_MODEL_LITERALS_PER_FILE} literals only; later ones were not matched",
+                f"{MAX_MODEL_LITERALS_PER_FILE} distinct literals only; later ones were not matched",
                 suffix=False,
                 reason="analysis-limit",
             )
@@ -1389,7 +1498,10 @@ class FileScanner:
                 # fails alone, so the binder reads the others without it. A cell
                 # declared another language is bound when it parses as Python;
                 # when it does not, it is lexical evidence only, without a gap.
-                source, unparsed, unread = _notebook_binder_source(content_text, file.cells, file.foreign)
+                analyzed: list[int] = []
+                source, unparsed, unread = _notebook_binder_source(
+                    content_text, file.cells, file.foreign, analyzed
+                )
                 file.unparsed = tuple(unread)
                 if unparsed:
                     # Report before binding the other cells: a later AST
@@ -1401,6 +1513,7 @@ class FileScanner:
                         file,
                         f"code.filesystem: {file.rel}: import-bound analysis skipped for notebook "
                         f"{cells} {numbers}, which {verb} not parse; lexical evidence retained",
+                        notebook_cells=bool(analyzed),
                     )
             bound = bound_source_matches(
                 self.index,
@@ -1416,19 +1529,7 @@ class FileScanner:
                 cells=file.cells,
             )
         except SourceBudgetExceeded as exc:
-            # The budget is a property of the file, not of
-            # the scan: keep its lexical evidence. Test code
-            # is discounted evidence, so it only warns.
-            message = (
-                f"code.filesystem: {file.rel}: import-bound analysis skipped ({exc}); "
-                "lexical evidence retained"
-            )
-            # A time budget is a timeout; an AST, call, nesting or recursion limit is not.
-            reason = incomplete_reason(str(exc))
-            if not self.include_tests and _is_test_path(file.rel):
-                self.walker._strict_gap_warning(message, reason=reason)
-            else:
-                self.ctx.error(message, reason=reason)
+            self._binding_budget_exceeded(file, "import-bound analysis", exc)
             return [], whole
         except SourceNotParsed as exc:
             # Newer syntax than the interpreter knows, or invalid source: no
@@ -1440,7 +1541,32 @@ class FileScanner:
                 f"code.filesystem: {file.rel}: import-bound analysis skipped ({exc}); "
                 "lexical evidence retained",
             )
-            return [], whole
+            rendered = None if file.cells else rendered_template(file.rel, content_text)
+            if rendered is None:
+                return [], whole
+            # Unrendered template source (its gap is recorded above): bind the
+            # rendering, so a placeholder cannot hide the imports around it.
+            try:
+                bound = bound_source_matches(
+                    self.index,
+                    rendered,
+                    lang,
+                    ignored,
+                    is_local_module=is_local_module if lang == "python" else None,
+                    max_ast_nodes=self.max_ast_nodes,
+                    truncated=truncated,
+                    resolve_import=resolve_import,
+                    resolve_javascript_tool=resolve_javascript_tool,
+                    resolve_dispatch=resolve_dispatch,
+                )
+            except SourceBudgetExceeded as exc:
+                # The rendering parsed, so this is the binder's limit, not the
+                # template's gap: it fails as it does for any other source.
+                self._binding_budget_exceeded(file, "import-bound analysis of its template rendering", exc)
+                return [], whole
+            except SourceNotParsed:
+                return [], whole
+            file.unparsed = ()
         if truncated:
             # An option past the limit (tools, a stop condition) was not read: the
             # call-analysis budget is a coverage gap like the one above, but the
@@ -2078,16 +2204,68 @@ class FileScanner:
             reason="analysis-limit",
         )
 
-    def _syntax_warning(self, file: _SourceFile, message: str) -> None:
+    def _binding_budget_exceeded(self, file: _SourceFile, analysis: str, exc: SourceBudgetExceeded) -> None:
+        """Record that binding ``file`` ran past an analysis budget: a gap, a warning in test code.
+
+        The budget is a property of the file, not of the scan, so its lexical
+        evidence is kept. Test code is discounted evidence, so it only warns.
+        """
+        message = f"code.filesystem: {file.rel}: {analysis} skipped ({exc}); lexical evidence retained"
+        # A time budget is a timeout; an AST, call, nesting or recursion limit is not.
+        reason = incomplete_reason(str(exc))
+        if not self.include_tests and _is_test_path(file.rel):
+            self.walker._strict_gap_warning(message, reason=reason)
+        else:
+            self.ctx.error(message, reason=reason)
+
+    def _syntax_warning(self, file: _SourceFile, message: str, *, notebook_cells: bool = False) -> None:
         """Record source that did not parse: a gap when ``_syntax_gap`` says so, else a plain warning.
 
         A gap goes through ``_gap``, so the ci profile declares it under a
         template, example or test path, and is counted as unparsed input.
+
+        ``notebook_cells`` says other cells of the notebook parsed and hold code
+        (blank, comment-only, magic-only and foreign cells do not count). Jupyter
+        runs each cell alone, so the binder still read those cells and the
+        failed ones keep their lexical evidence; tutorial notebooks hold
+        placeholders (``api_key = <YOUR API KEY>``) and shell lines pasted into
+        code cells on purpose. Such a notebook is one partial gap charged to the coverage budget
+        at a whole entry, unless the accounting is strict, it is agent configuration (never budgeted)
+        or the ci profile declares it; a tree of them still exhausts the budget.
         """
-        if self._syntax_gap(file):
-            self.walker._gap(file.rel, message, suffix=False, reason="unparsed-input")
-        else:
+        if not self._syntax_gap(file):
             self.ctx.warn(message, incomplete=False)
+        elif (
+            notebook_cells
+            and not self.walker._strict_accounting()
+            and not self.walker._agent_configuration(file.rel)
+            and not self.walker._declared_omission(file.rel)
+        ):
+            self.walker._ledger_gap(
+                file.rel,
+                f"{message}; the other cells were analyzed; coverage gap",
+                full_weight=True,
+                reason="unparsed-input",
+            )
+        elif self._note_template(file):
+            self.walker._discounted_gap(
+                file.rel, message, suffix=False, reason="unparsed-input", defect="parse"
+            )
+        else:
+            self.walker._gap(file.rel, message, suffix=False, reason="unparsed-input")
+
+    def _note_template(self, file: _SourceFile) -> bool:
+        """Whether ``file``, which did not parse, is unrendered template source; record one found by content.
+
+        A file under a directory named with template syntax is one by its path
+        (``_template_source_gap``); one under an ordinary name is one when it
+        parses once its Jinja placeholders are filled in (``unrendered_template``).
+        """
+        if rendered_template(file.rel, file.text) is not None:
+            self.walker.budget_defects(
+                file.rel, "unrendered template source (parses once its placeholders are filled in)"
+            )
+        return self.walker._template_source_gap(file.rel, kind="parse") is not None
 
     def _scan_undecodable_file(
         self,
@@ -2119,14 +2297,14 @@ class FileScanner:
         """
         message = f"code.filesystem: {rel}: {BINARY_CONTENT_ERROR}"
         analyzed = self.scan_secrets and not self.triage
-        if not analyzed and not _guessed_mcp_name(rel, path.name):
+        if not analyzed and not _guessed_mcp_name(rel, PurePosixPath(rel).name):
             self.walker._discounted_gap(
                 rel, f"{message}; not analyzed", reason="unparsed-input", charged_in_full=True
             )
             return
         errors: list[str] = []
         text = read_credential_text(
-            fixture.on_disk, self.walker.size_limit(path.name), errors, dir_fd=scan.root_fd
+            fixture.on_disk, self.walker.size_limit(PurePosixPath(rel).name), errors, dir_fd=scan.root_fd
         )
         if text is None:
             for issue in errors:
@@ -2145,7 +2323,7 @@ class FileScanner:
             # No structured context: none of a binary file's excerpts is emitted.
             file.excerpts = _ExcerptSource(rel, path, text, None)
             self._detect_secrets(scan, file)
-        declares, document = self._binary_declares_mcp(rel, path.name, text)
+        declares, document = self._binary_declares_mcp(rel, PurePosixPath(rel).name, text)
         if declares:
             servers = _parse_mcp_servers(rel, text, [], document)
             if servers:
@@ -2252,6 +2430,9 @@ def _content_declares_mcp(rel: str, text: str, document: Any) -> bool:
         return declared if declared is not None else _names_mcp_key(rel, text)
     if not _text_may_declare_mcp(text):
         return False
+    if rel.endswith(".json") and json_readings_declare_mcp(text) is False:
+        # JSON the integrity checks refused (a repeated key): no reading holds a table.
+        return False
     if rel.endswith(_YAML_SUFFIXES):
         declared = _yaml_declares_mcp(text)
         if declared is not None:
@@ -2262,3 +2443,8 @@ def _content_declares_mcp(rel: str, text: str, document: Any) -> bool:
 def _text_may_declare_mcp(text: str) -> bool:
     """``_may_declare_mcp`` of decoded text: its bytes lower-cased, without NUL characters."""
     return _may_declare_mcp(text.replace("\x00", "").encode("utf-8", "replace").lower())
+
+
+def _blank(text: str) -> bool:
+    """Whether ``text`` holds nothing but JSON, YAML and TOML whitespace (and a byte-order mark)."""
+    return not text.strip(" \t\r\n\ufeff")

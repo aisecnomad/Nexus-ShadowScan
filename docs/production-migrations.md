@@ -10,6 +10,70 @@ summarise them for operators, and the
 [candidate change history](history/production-change-history.md) keeps the
 full dated log.
 
+## October 21 MCP structure in JSON (Unreleased)
+
+- A JSON data file the integrity checks refuse for a repeated key (a provider
+  catalog, an editor grammar) is one budgeted partial gap instead of exit 3
+  when no reading of the key — first value kept, last value kept, repeated
+  objects merged — holds an MCP server table and no detector that needs a
+  parse reads it as anything but data (a structured agent definition, an
+  infrastructure template, a deployment or configuration document) or stops
+  at a limit on it. Manifests, lockfiles and agent configuration still fail
+  closed, as does a repeated key that hides a server table from any reading. Repositories with such catalogs may stop exiting 3;
+  re-baseline.
+- A JSON Schema object's field named `mcp_servers` describes a value, not
+  servers: an oversize OpenAPI snapshot whose bytes name the key is parsed
+  (up to 4 MiB) and, holding no server table, is one budgeted gap instead of
+  a blinding one. A table at any depth, a spelling only a case-insensitive
+  decoder reads (`McpServers`, `mcp.Servers`), a file that does not parse,
+  one larger than 4 MiB, or text that opens more than 100,000 containers
+  stays blinding: the structural check decides only what it can parse and
+  walk within its bounds, and is never weaker than the byte check it
+  refines.
+
+## October 20 unparsed-input triage (Unreleased)
+
+- A Continue `mcpServers` block reference (`{uses, with?, override?}`) is now
+  an `mcp-server` finding instead of an input defect. The record gains
+  `block_reference` (sanitized) and `launch_unidentified: true`; its `override`
+  is projected as the server's fields, and a literal credential in `with` sets
+  `secrets_inline` with `secret_locations: ["with"]`. Repositories with such
+  configs gain findings and may stop exiting 3; re-baseline. Finding identity of
+  existing servers is unchanged (unnamed list entries keep index names).
+- An empty or whitespace/BOM-only manifest, agent manifest or MCP configuration
+  is a file note instead of an `unparsed-input` gap. `strict_coverage` still
+  counts it; NUL-bearing files stay undecodable gaps.
+- Under `--profile ci`, a directory whose manifest names its project with
+  template syntax is judged as a template, so its gaps are declared (counted in
+  `declared_omissions`), as for a manifest that does not parse.
+- Unrendered template source is one partial gap charged to the coverage
+  budget instead of an `unparsed-input` failure. That is a Python, TOML or
+  JSON file that parses once its Jinja placeholders are filled in and its tag
+  lines blanked, or a file other than Python source with Jinja syntax under a
+  directory named with Jinja syntax (`{{cookiecutter.package_name}}/`). Its rendering is
+  analyzed, so its dependencies and imports stay evidence. Scans that exited
+  3 only for such files may complete; `strict_coverage` keeps them
+  incomplete, and agent configuration is never discounted.
+
+These are authored regression fixes measured on offline corpus clones; they do
+not supply live-tenant or independent acceptance.
+
+## October 21 analysis bounds (Unreleased)
+
+- `code.filesystem`'s `max_ast_nodes` default rises from 50,000 to 200,000
+  Python syntax-tree nodes, and the binder's source-call bound from 512 to
+  2,048. Modules between the old and new bounds are now bound instead of
+  reported as partially analyzed: their findings can gain import-bound
+  evidence, and scans that exited 3 only for that limit complete. A
+  deployment that relied on the lower ceiling for memory sets
+  `max_ast_nodes: 50000` explicitly.
+- `SKILL.md` audits read up to 512 KiB (the instruction-content bound); MCP
+  tool descriptions (`endpoint.mcp`) are still audited and searched in 64 KiB.
+- Excerpt redaction runs on a CPU allowance of its own after detection,
+  within the file's wall cap: a file that finished detection no longer
+  times out redacting its excerpts; one whose redaction exhausts that
+  allowance withholds its excerpts, as a sanitization limit does.
+
 ## October 19 dependency floors (Unreleased)
 
 - The package now requires PyJWT 2.15.1 and regex 2026.9.29, and the cloud
