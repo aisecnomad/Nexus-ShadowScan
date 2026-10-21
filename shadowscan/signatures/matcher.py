@@ -98,20 +98,18 @@ class _ScanBudget:
             f"{self.cpu_seconds:.2f}s, wall {wall:.2f}s of {self.wall_seconds:.2f}s)"
         )
 
-    def extend(self, cpu: float, wall: float) -> None:
-        """Give this budget back time spent on work that was not its input's, never past an enclosing one.
+    def extend_cpu(self, cpu: float) -> None:
+        """Give this budget back CPU time spent on work that was not its input's.
 
-        The window moves, so a later diagnostic still measures only the input's
-        work. An enclosing budget (a scan-wide wall cap under the connector
-        deadline) is not extended: this one never outlives it.
+        The CPU window moves, so a later diagnostic still measures only the
+        input's work, never past an enclosing budget's CPU deadline. The wall
+        deadline does not move: it carries the walker's clamp to the connector
+        deadline (``wall_seconds``), which no allowance may pass.
         """
         self.cpu_started += cpu
-        self.wall_started += wall
         self.cpu_deadline += cpu
-        self.wall_deadline += wall
         if self.outer is not None:
             self.cpu_deadline = min(self.cpu_deadline, self.outer.cpu_deadline)
-            self.wall_deadline = min(self.wall_deadline, self.outer.wall_deadline)
 
 
 _SCAN_BUDGET: ContextVar[_ScanBudget | None] = ContextVar("signature_scan_budget", default=None)
@@ -119,29 +117,36 @@ _SCAN_BUDGET: ContextVar[_ScanBudget | None] = ContextVar("signature_scan_budget
 
 @contextmanager
 def separate_budget() -> Iterator[None]:
-    """Run work that follows an input's analysis under an allowance of its own, not charged to the input's.
+    """Run work that follows an input's analysis on a CPU allowance of its own, within its wall deadline.
 
     Redacting a file for its excerpts runs once detection is done and has its
-    own work bound; charged to the input's budget, it made a 940 KB test file
-    whose detection took 4 s of an 8 s allowance time out on 6 s of redaction.
-    The work here gets a fresh budget of the active one's size (CPU and wall
-    cap), still nested under the budgets that enclose the active one, and its
-    time is then given back to the active budget only (``_ScanBudget.extend``),
-    so an input costs at most twice its allowance and a scan-wide cap is never
-    stretched. Exhausting it raises ``MatchTimeoutError`` like any budget.
-    Without an active budget nothing changes.
+    own work bound; charged to the input's CPU budget, it made a 940 KB test
+    file whose detection took 4 s of an 8 s allowance time out on 6 s of
+    redaction. The work here gets a fresh CPU allowance of the active budget's
+    size, under the budgets that enclose it, and its CPU time is then given
+    back to the active budget (``_ScanBudget.extend_cpu``), so an input costs at
+    most twice its CPU allowance. The wall deadline is the active budget's own,
+    unchanged: it holds the walker's clamp to the connector deadline, so no
+    file runs past it. Exhausting either raises ``MatchTimeoutError`` like any
+    budget. Without an active budget nothing changes.
     """
     active = _SCAN_BUDGET.get()
     if active is None:
         yield
         return
-    cpu, wall = time.thread_time(), time.monotonic()
-    token = _SCAN_BUDGET.set(_ScanBudget(active.cpu_seconds, active.wall_seconds, active.outer))
+    cpu = time.thread_time()
+    separate = _ScanBudget(active.cpu_seconds, active.wall_seconds, active.outer)
+    separate.wall_deadline, separate.wall_seconds, separate.wall_started = (
+        active.wall_deadline,
+        active.wall_seconds,
+        active.wall_started,
+    )
+    token = _SCAN_BUDGET.set(separate)
     try:
         yield
     finally:
         _SCAN_BUDGET.reset(token)
-        active.extend(time.thread_time() - cpu, time.monotonic() - wall)
+        active.extend_cpu(time.thread_time() - cpu)
 
 
 # A briefly busy worker can exhaust several regex wall-clock attempts before

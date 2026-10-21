@@ -27,11 +27,13 @@ Counts and figures quoted in an entry are those of its date.
 - litellm's 940 KB `tests/unit/proxy/_experimental/mcp_server/test_mcp_server_manager.py`
   finished detection inside its 8 s allowance and then spent about 6 s
   redacting its excerpts, charged to the same allowance and checked as it
-  closed. Excerpt redaction runs once detection is done; it now runs under
-  an allowance of its own of the same size (`matcher.separate_budget`),
-  nested under the budgets that enclose the file's, and its time is given
-  back to the file's budget only (`_ScanBudget.extend`), never past an
-  enclosing scan-wide cap. A file costs at most twice its allowance. A
+  closed. Excerpt redaction runs once detection is done; it now runs on a
+  CPU allowance of its own of the same size (`matcher.separate_budget`),
+  whose CPU time is given back to the file's budget
+  (`_ScanBudget.extend_cpu`). The wall deadline is the file's own and does
+  not move: it carries the walker's clamp to the connector deadline, which
+  an earlier draft's fresh window could pass (found in review). A file
+  costs at most twice its CPU allowance and never runs past its wall cap. A
   redaction that exhausts its own allowance withholds the file's excerpts
   (a sanitization-limit gap, an error outside discounted test code), never
   a finding.

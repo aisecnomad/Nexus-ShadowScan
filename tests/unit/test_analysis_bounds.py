@@ -95,27 +95,27 @@ def test_without_an_input_budget_nothing_changes():
         assert pattern_timeout(1.5) == 1.5
 
 
-def test_a_separate_budget_never_stretches_an_enclosing_cap(index):
-    # A per-file budget nests under a scan-wide wall cap within the connector deadline:
-    # the time redaction gets back is the file's, never the scan's.
-    with index.scan_budget(seconds=1.0), index.scan_budget(seconds=0.4):
-        scan_wide = _SCAN_BUDGET.get().outer
-        before = scan_wide.cpu_deadline
-        with separate_budget():
-            _burn(0.3)
+def test_a_separate_budget_keeps_the_inputs_wall_deadline(index):
+    # The walker clamps a file's wall cap to the connector deadline: redaction may
+    # use fresh CPU, never wall time past that cap.
+    with pytest.raises(MatchTimeoutError), index.scan_budget(seconds=0.4, wall_seconds=0.4):
         active = _SCAN_BUDGET.get()
-        assert scan_wide.cpu_deadline == before
-        assert active.cpu_deadline <= scan_wide.cpu_deadline
-        assert active.remaining() > 0.3  # the file kept its own allowance
+        deadline = active.wall_deadline
+        time.sleep(0.3)  # detection spent most of the wall cap (wall time, not CPU)
+        with separate_budget():
+            assert _SCAN_BUDGET.get().wall_deadline == deadline
+            time.sleep(0.15)  # within a fresh window, past the file's cap
+            pattern_timeout()  # the file's wall cap ends the redaction
 
 
-def test_the_credit_is_clamped_to_the_enclosing_deadline(index):
-    with index.scan_budget(seconds=0.5), index.scan_budget(seconds=0.4):
+def test_only_cpu_is_given_back(index):
+    with index.scan_budget(seconds=0.5, wall_seconds=5.0):
+        active = _SCAN_BUDGET.get()
+        wall = active.wall_deadline
         with separate_budget():
             _burn(0.3)
-        active = _SCAN_BUDGET.get()
-        # Credited 0.3 s, the file's deadline would pass the scan-wide one; it stops there.
-        assert active.cpu_deadline == active.outer.cpu_deadline
+        assert active.wall_deadline == wall
+        assert active.remaining() > 0.3  # the input kept its own CPU allowance
 
 
 # ------------------------------------------------------------- skill audit
