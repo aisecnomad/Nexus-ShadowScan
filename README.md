@@ -188,6 +188,7 @@ Run `shadowscan --help` or `shadowscan <command> --help` for the installed versi
 API errors, denied access, timeouts and unbounded analysis or sanitization limits
 remain incomplete. A tolerated, bounded gap remains visible in the JSON coverage
 ledger. A complete static scan does not prove that no agent runs.
+For exit 3, start with [incomplete-scan troubleshooting](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/getting-started/incomplete-scans.md).
 See [scan semantics](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/scanning.md).
 
 ## Documentation

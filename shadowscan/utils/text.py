@@ -66,7 +66,25 @@ _BINARY_MAGIC: tuple[bytes, ...] = (
     b"GIF87a",
     b"GIF89a",
     b"%PDF-",
+    b"OggS\x00",  # Ogg (Vorbis, Opus, Theora), stream structure version 0
+    b"ID3",  # MP3 with an ID3v2 tag
+    b"fLaC",  # FLAC
+    b"\x1a\x45\xdf\xa3",  # Matroska and WebM
+    b"\x00\x00\x01\x00",  # ICO
+    b"\x00\x00\x02\x00",  # CUR
+    b"II*\x00",  # TIFF, little-endian
+    b"MM\x00*",  # TIFF, big-endian
+    b"8BPS",  # Photoshop
+    b"wOFF",  # WOFF font
+    b"wOF2",  # WOFF2 font
+    b"OTTO",  # OpenType (CFF) font
+    b"\x00\x01\x00\x00",  # TrueType font
+    b"ttcf",  # TrueType collection
 )
+# Containers whose type is named after a fixed header field rather than at the
+# start: RIFF names its form at offset 8, an ISO base media file (MP4, MOV,
+# M4A, HEIC, AVIF) its first box type, ``ftyp``, at offset 4.
+_RIFF_FORMS = frozenset({b"WEBP", b"WAVE", b"AVI "})
 # Text codec that a PEP 263 coding cookie must not select: its decoder is not
 # linear in its input (``punycode`` re-copies its output for every code point,
 # about 30 s for a 1 MB file with the GIL held), so a hostile cookie would stall
@@ -101,15 +119,24 @@ def redact(value: str, keep: int = 4) -> str:
 def _skips_binary(name: str, raw: bytes, analyzable_name: bool) -> bool:
     """Whether NUL-bearing ``raw`` is a recognised binary artifact to skip without a coverage gap.
 
-    The content must start with a ``_BINARY_MAGIC`` header. Even then a name
+    The content must start with a recognised header (``_binary_header``). Even then a name
     analyzed for its own sake stays a gap unless it has no extension at all.
     Packet-like ``.ts`` bytes cannot establish that the file is video rather
     than TypeScript: source comments can contain the same binary padding.
     Unrecognised binary content is always a gap.
     """
-    if not raw.startswith(_BINARY_MAGIC):
+    if not _binary_header(raw):
         return False
     return not analyzable_name or "." not in name
+
+
+def _binary_header(raw: bytes) -> bool:
+    """Whether ``raw`` starts with the header of a compiled, packed or media artifact."""
+    return (
+        raw.startswith(_BINARY_MAGIC)
+        or (raw[:4] == b"RIFF" and raw[8:12] in _RIFF_FORMS)
+        or raw[4:8] == b"ftyp"
+    )
 
 
 # CPython's PEP 263 cookie pattern. The second source line carries the cookie
