@@ -167,7 +167,7 @@ def test_max_ast_nodes_is_validated(tmp_path, index, value):
 
 
 # ----------------------------------------------------------- notebooks
-def _notebook(code: str, output_bytes: int) -> str:
+def _notebook(code: str, output_bytes: int, mime: str = "image/png") -> str:
     return json.dumps(
         {
             "cells": [
@@ -175,7 +175,10 @@ def _notebook(code: str, output_bytes: int) -> str:
                 {
                     "cell_type": "code",
                     "source": code.splitlines(keepends=True),
-                    "outputs": [{"output_type": "display_data", "data": {"image/png": "A" * output_bytes}}],
+                    # Base64 of a PNG: its signature, then data.
+                    "outputs": [
+                        {"output_type": "display_data", "data": {mime: "iVBORw0KGgo" + "A" * output_bytes}}
+                    ],
                 },
             ],
             "metadata": {},
@@ -194,15 +197,25 @@ CREW_CODE = (
 
 
 def test_notebook_with_large_outputs_is_analyzed_by_code_cells(tmp_path, index):
-    (tmp_path / "demo.ipynb").write_text(_notebook(CREW_CODE, 30_000))
+    (tmp_path / "demo.ipynb").write_text(_notebook(CREW_CODE, 30_000, mime="text/plain"))
     findings, ctx = _run(index, tmp_path, max_file_size=10_000)
     project = next(f for f in findings if f.resource_type == "project")
     assert "framework.crewai" in project.frameworks and project.kind == Kind.AGENT
-    # The saved outputs were not read for credentials: an honest gap.
-    assert ctx.stats.incomplete and not ctx.stats.errors
-    assert any("code cells analyzed" in w and "coverage incomplete" in w for w in ctx.stats.warnings)
+    # The text outputs were not read for credentials: an honest gap, one whole
+    # entry of the budget, which a one-file tree exceeds.
+    assert ctx.stats.incomplete
+    assert all("over the 2.0% budget" in e for e in ctx.stats.errors), ctx.stats.errors
+    assert any("code cells analyzed" in w and "coverage gap" in w for w in ctx.stats.warnings)
     _, strict = _run(index, tmp_path, max_file_size=10_000, strict_coverage=True)
     assert any("saved outputs not scanned" in e for e in strict.stats.errors)
+
+
+def test_notebook_made_large_by_images_is_read_for_credentials(tmp_path, index):
+    # Base64 image data is emptied before the outputs are scanned: nothing is left unread.
+    (tmp_path / "demo.ipynb").write_text(_notebook(CREW_CODE, 30_000))
+    findings, ctx = _run(index, tmp_path, max_file_size=10_000)
+    assert any(f.resource_type == "project" and f.kind == Kind.AGENT for f in findings)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
 
 
 def test_notebook_outputs_are_no_gap_when_credentials_are_not_scanned(tmp_path, index):

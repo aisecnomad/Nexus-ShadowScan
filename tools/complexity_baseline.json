@@ -113,7 +113,7 @@
     "shadowscan/utils/redaction_markup.py::_redact_flow_records": 18,
     "shadowscan/utils/redaction_statements.py::_AssignmentScanner._scan": 24,
     "shadowscan/utils/redaction_statements.py::_indexed_assignment_candidates": 23,
-    "shadowscan/utils/text.py::notebook_to_source": 19,
+    "shadowscan/utils/text.py::notebook_to_source": 17,
     "shadowscan/utils/text.py::parse_timestamp": 17,
     "tools/check_secrets.py::_load_approvals": 17,
     "tools/container/verify.py::verify_bundle": 22,
@@ -124,7 +124,7 @@
   },
   "modules": {
     "shadowscan/connectors/cloud/aws.py": 3528,
-    "shadowscan/connectors/code/file_scan.py": 2378,
+    "shadowscan/connectors/code/file_scan.py": 2440,
     "shadowscan/connectors/code/source_semantics.py": 2784,
     "shadowscan/connectors/code/walk.py": 2824,
     "shadowscan/connectors/gateway/logs.py": 2112,

@@ -46,6 +46,12 @@ explain operator migrations. Earlier per-change entries are preserved in the
   and unrendered template source (a file under a `{{cookiecutter...}}`
   directory, or one that parses once its Jinja placeholders are filled in) is
   one partial gap charged to the coverage budget instead of failing the scan.
+- Notebooks complete more often: more IPython syntax is read as IPython runs
+  it (`% pip install`, `files = !ls`, backslash-continued magics, graph-query
+  cell magics), notebooks made large by saved images are read for credentials
+  without their base64 output data, a notebook in which only some tutorial
+  cells do not parse is one budgeted gap, and repeated model-identifier
+  literals count once toward the per-file bound.
 
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the

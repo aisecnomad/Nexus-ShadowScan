@@ -247,6 +247,62 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   any parse failure under `${env}/`, so a module of newer Python syntax
   there completed; it now needs Jinja syntax in the directory name and in
   the file's own text (`TreeWalker.note_template_syntax`).
+### Notebooks no longer leave llama_index incomplete (October 21)
+
+- A default scan of run-llama/llama_index exited 3 on 40 notebook and data
+  diagnostics. Measured cause by cause, then fixed or recalibrated.
+- IPython syntax the binder did not emulate (12 cells): a line magic spelled
+  with a space (`% pip install x`, recognised by a line magic's own name so a
+  continued `% name` modulo stays Python), lines a backslash continues after
+  a magic or shell line, and an assigned shell escape or magic
+  (`files = !ls`, which keeps its target). These join #285's per-cell,
+  string-aware masking; the masked command keeps its line breaks, so a
+  continued magic's lines become blank lines and every line keeps its
+  number. Bare package-manager automagic still applies only to a
+  single-line cell. `%%ngql`, `%%cypher`, `%%gremlin`, `%%sparql`, `%%kql`,
+  `%%kusto`, `%%graphql`, `%%mermaid` and `%%dot` join the cell magics whose
+  body is not Python.
+- Notebooks over `max_file_size` (18): their size is base64 output data.
+  Outputs are scanned for credentials with every value under a binary MIME
+  key emptied (`image/*` except SVG, `audio/*`, `video/*`,
+  `application/pdf`, in outputs and markdown attachments): 1.1-3.1 MB
+  notebooks become 11-37 KB, every line at its number, in 30-80 ms. A
+  notebook whose text outputs alone exceed the limit is one oversize gap of
+  the budget at a whole entry; never declared by the `ci` profile. A value
+  is found in the document by its JSON encoding, and a miss scans to the
+  document's end, so after 8 misses the rebuild stops: a hostile notebook
+  spelling every value with escapes no writer emits (`iVBOR...`) keeps
+  its oversize gap instead of buying a document-length scan per value.
+- Cells that are not Python (14, in 10 notebooks): placeholders
+  (`<YOUR API KEY>`), a pasted `export` line, typos. Jupyter runs cells one
+  at a time and the binder already read the others, so such a notebook is
+  one partial gap of the budget at a whole entry. A notebook none of whose
+  cells parse stays a full gap, as does every one under strict accounting.
+- `llama_index/core/command_line/mappings.json` names 1,111 literals carrying
+  the `llama` vendor stem, 580 distinct, past the 400-literal bound. A
+  literal's matches depend on its value alone, so each distinct value is
+  matched once; the bound is 2,000 distinct values and 20,000 occurrences
+  (about 0.2 s a file at most).
+- Review of these changes found:
+  - The output view emptied every string under a binary MIME key at any depth,
+    by the key's name: plaintext under `"image/png"` or `"application/pdf"`,
+    or in metadata, was not read, where main reported the notebook as an
+    oversize gap. Only `outputs[*].data` and `attachments.*` bundles are
+    considered now, and only strict base64 that decodes to an image, audio,
+    video or PDF signature is emptied. The strings are collected from the
+    notebook's own parse and found by their JSON encoding: no token loop, so
+    an 18.9 MB notebook takes 0.16 s and 21 MB (the token loop took 5.5 s and
+    410 MB). A notebook that is not valid JSON is not rebuilt (a stray bracket
+    raised `IndexError`, reported as reason `other`).
+  - A broken cell beside blank, comment-only, magic-only or foreign cells was
+    a budgeted partial gap ("the other cells were analyzed"). Only parsed
+    Python cells holding a statement other than a constant count.
+  - A spaced line magic was masked inside brackets: Black's
+    `'%.3f'\n    % precision` inside parentheses stopped the cell parsing.
+    As in IPython, an escape counts only at the start of a logical line
+    (bracket depth zero, no backslash continuation), for every escape form.
+  - `%time`, `%timeit` and `%prun` without options lost the statement they
+    run; only the magic's name is masked now (`0;` and blanks).
 
 ### Release readiness review (October 21)
 
