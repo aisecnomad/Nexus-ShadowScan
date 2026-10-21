@@ -32,7 +32,7 @@ host/runtime inventories), network logs, and running processes.
 
 > The repository was formerly `aisecnomad/Project-Nexus`; GitHub redirects the old links.
 
-This README describes the current source branch, including changes not yet
+This guide describes the current source branch, including changes not yet
 published on PyPI. For the published alpha, see the
 [0.1.2 documentation](https://github.com/aisecnomad/Nexus-ShadowScan/blob/v0.1.2/README.md).
 Newer commands require a
@@ -351,8 +351,8 @@ Abridged offline demo (`--max-rows 5` shows the five highest-risk rows):
 $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
-│ 132 findings  •  128 shadow (inventory: 4 registered agents)               │
-│ critical 16  high 51  medium 64  low 1                                     │
+│ 133 findings  •  129 shadow (inventory: 4 registered agents)               │
+│ critical 16  high 51  medium 65  low 1                                     │
 │ cloud 30 identity 19 endpoint 18 …                                         │
 ╰────────────────────────────────────────────────────────────────────────────╯
  CRITICAL 100  SHADOW  code     agent-config Claude Code configured in repository root
@@ -765,9 +765,13 @@ for where the code, tests, docs, tooling and benchmarks live.
 
 ## Project status
 
-* **Release state.** Version `0.1.2` is published to PyPI as `NexusShadowScan`
-  and tagged `v0.1.2`, as an alpha pre-release. The package classifier is `Development Status :: 3 - Alpha`.
-  Commits on `main` after the tag are unreleased. Publication does not
+* **Release state.** Version `0.1.3` is prepared for publication to PyPI as
+  `NexusShadowScan`, as an alpha pre-release; 0.1.2 is the published release
+  (tag `v0.1.2`). Confirm publication and artifact identity on
+  [PyPI](https://pypi.org/project/NexusShadowScan/0.1.3/) and the
+  [GitHub release](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.3)
+  before installing it. The package classifier is `Development Status :: 3 - Alpha`.
+  Commits on `main` after a release tag are unreleased. Publication does not
   establish independent review or deployment acceptance.
 * **Single maintainer, AI-assisted development.** Apart from Dependabot updates, every commit was written
   by a single maintainer or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot, Google Antigravity, Perplexity, Meta AI, etc.). The logs under

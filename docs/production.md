@@ -1,6 +1,6 @@
 # Production deployment and migration
 
-This is the rollout guide for version 0.1.2. It covers reviewed
+This is the rollout guide for version 0.1.3. It covers reviewed
 revisions, installation, validation, rollout, operation and migration.
 
 Automated validation establishes implementation behavior. Production rollout
@@ -49,8 +49,8 @@ Existing reports retain their recorded categories; rescan to obtain corrected
 reason counts. These corrections do not change whether the scan is incomplete
 or which finding evidence it retains.
 
-Per-change migration and behavior notes for unreleased changes live in
-[pending migration notes](production-migrations.md), and the dated log of
+Per-change migration and behavior notes for the changes between 0.1.2 and
+0.1.3 live in the [migration notes](production-migrations.md), and the dated log of
 every candidate change lives in the
 [candidate change history](history/production-change-history.md), so this
 page stays the rollout guide.
@@ -187,7 +187,7 @@ From the reviewed checkout, in a clean virtual environment:
 python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
 python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
-python -m pip install --no-deps dist/nexusshadowscan-0.1.2-*.whl
+python -m pip install --no-deps dist/nexusshadowscan-0.1.3-*.whl
 python -m pip check
 python -m shadowscan.signatures.validate
 python -m shadowscan.mappings.validate

@@ -5,13 +5,26 @@ title: Engineering log
 # Engineering log
 
 The detailed record of every change, one dated entry per change, newest first.
-It was `CHANGELOG.md` until October 2026; that file now summarises each change
-in a line and points here, and `RELEASE_NOTES.md` says what changes on upgrade
+It was `CHANGELOG.md` until October 2026; that file now summarises each release
+and points here, and `RELEASE_NOTES.md` says what changes on upgrade
 for people who install and operate ShadowScan. Entries name the pull request
 they came from where one exists, and say what was deliberately not carried.
 Counts and figures quoted in an entry are those of its date.
 
-## Unreleased
+## 0.1.3 — 2026-11-20
+
+### Lock the sample Dockerfile's CLI dependency graph (October 20)
+
+The post-merge Scorecard report still found an unpinned global npm installation
+in the synthetic support-bot Dockerfile. A separate manifest and lock now pin
+Claude Code 2.1.304 and all eight native optional packages to registry SHA-512
+integrities. The fixture uses `npm ci` with lifecycle scripts disabled and a
+verified Node 22-slim image digest to satisfy the package's engine requirement.
+The dependency remains detectable without implying that an agent is running.
+No fixture image or CLI was executed, and no production dependency changed.
+The [alert triage record](operations/security-alert-triage.md#october-20-fixture-pinning-follow-up)
+preserves the prior dispositions and distinguishes this correction from a
+measured Scorecard result.
 
 ### Publication hygiene: diff-base diagnosis, Falco example fields and upgrade notes (October 20)
 

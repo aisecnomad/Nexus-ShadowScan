@@ -71,7 +71,7 @@ Passing the CI checks, the CodeQL analysis or the OpenSSF Scorecard is not indep
 |---|---|---|---|
 | `repo_public` | MUST | **Met** | [`aisecnomad/Nexus-ShadowScan`](https://github.com/aisecnomad/Nexus-ShadowScan) is public on GitHub. |
 | `repo_track` | MUST | **Met** | The git history records who changed what and when. |
-| `repo_interim` | MUST | **Met** | Changes reach `main` through pull requests between releases, and [RELEASE_NOTES.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/RELEASE_NOTES.md) lists the ones not yet released under Unreleased. |
+| `repo_interim` | MUST | **Met** | Changes reach `main` through pull requests between releases, and [RELEASE_NOTES.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/RELEASE_NOTES.md) identifies the current candidate and distinguishes release preparation from publication. |
 | `repo_distributed` | SUGGESTED | **Met** | The repository uses git, a distributed version control system. |
 
 #### Unique version numbering
@@ -79,7 +79,7 @@ Passing the CI checks, the CodeQL analysis or the OpenSSF Scorecard is not indep
 | Criterion | Level | Status | Evidence |
 |---|---|---|---|
 | `version_unique` | MUST | **Met** | Each release has its own version in [`pyproject.toml`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/pyproject.toml). CI checks that `shadowscan/__init__.py` and `CITATION.cff` agree ([publishing a release](publishing.md#per-release), step 1). |
-| `version_semver` | SUGGESTED | **Met** | Versions are `MAJOR.MINOR.PATCH` (0.1.2). The [candidate compatibility contract](../api/compatibility.md) defines the boundary proposed for 1.0; the current alpha release does not promise stable compatibility. Answer with the version format, not a stability guarantee. |
+| `version_semver` | SUGGESTED | **Met** | Versions are `MAJOR.MINOR.PATCH` (0.1.3). The [candidate compatibility contract](../api/compatibility.md) defines the boundary proposed for 1.0; the current alpha release does not promise stable compatibility. Answer with the version format, not a stability guarantee. |
 | `version_tags` | SUGGESTED | **Met** | Annotated tags `v0.1.1` and `v0.1.2` exist (`git ls-remote --tags origin`, 2026-10-17). [Publishing a release](publishing.md#per-release), step 4, has the maintainer tag each reviewed release. |
 
 #### Release notes

@@ -6,7 +6,7 @@ One summary per release. Detailed implementation history is maintained in the
 explain operator migrations. Earlier per-change entries are preserved in the
 [change-history archive](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/history/changelog-detail.md).
 
-## Unreleased
+## 0.1.3 — 2026-11-20
 
 - Preserve notebook import binding when a multiline string contains magic-like
   command text; keep string-span protection isolated to each code cell, and do
@@ -57,6 +57,8 @@ A diff-scoped scan under Git older than 2.45 names that requirement instead of
 asking whether the ref is valid, the example Falco rules emit the namespace,
 pod and process name the eBPF reader needs, and the release and migration notes cover the
 attribution, correlation-group and dependency-floor changes.
+The sample Dockerfile uses a digest-pinned Node 22 image and an integrity-locked
+CLI dependency graph, with package lifecycle scripts disabled.
 Report readers
 accept a newer scanner's slug-shaped coverage-gap reason instead of refusing
 the report; forged values stay refused and the write path stays strict.

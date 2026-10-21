@@ -13,7 +13,7 @@ body:
     attributes:
       label: Release version and artifact identity, or full commit SHA
       description: For a wheel from PyPI, the version (`shadowscan --version`) and the wheel's SHA-256 or attestation. For a source or Git install, the full 40-character commit SHA (`git rev-parse HEAD`); the version string alone is the same for every commit between releases and cannot identify a revision.
-      placeholder: "0.1.2, nexusshadowscan-0.1.2-py3-none-any.whl sha256:…  or  0123456789abcdef0123456789abcdef01234567"
+      placeholder: "0.1.3, nexusshadowscan-0.1.3-py3-none-any.whl sha256:…  or  0123456789abcdef0123456789abcdef01234567"
     validations:
       required: true
 
