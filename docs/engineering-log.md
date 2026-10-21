@@ -90,6 +90,21 @@ measured Scorecard result.
   benchmark-suite submodule commit. About 90 external links on other hosts
   could not be reached from the sweep environment and remain unverified.
 
+### Base image refresh for CVE-2026-111943 (October 21)
+
+- `container-security` failed on `main` from 08:01 UTC on October 21 with no
+  Dockerfile or lock change: Trivy reported CVE-2026-111943 (HIGH) in
+  `wolfi:ca-certificates-bundle` 20260909-r2, fixed in 20260909-r3, so the
+  `CI gate` of every open pull request was red. #306's annotation named it.
+- Both `FROM` lines move from `sha256:824f77df…` to the `chainguard/wolfi-base:latest`
+  image index `sha256:81211e15a86ea1d5357f284482af45730c51de45eaf10ad9ce205d6bfc2df323`
+  (pushed 2026-10-20 17:20 UTC). Its amd64 manifest's apk database lists
+  `ca-certificates-bundle` 20260909-r3, read from the registry layers without
+  running the image. No ignore or severity change was added; the gate is unchanged.
+- The python-3.12 3.12.15-r0 pins stay, as their comment requires. The entry sits
+  beside the certifi CA advisory rather than at the top of the section so it
+  does not conflict with the open pull requests that insert there.
+
 ### certifi CA bundle advisory (October 20)
 
 certifi 2026.10.19 replaces 2026.7.22 in the runtime, CI and docs locks. Earlier
