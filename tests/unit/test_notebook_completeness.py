@@ -279,6 +279,19 @@ def test_the_output_view_of_a_large_notebook_is_linear(tmp_path):
     assert removed == 2_500 * len(IMAGE) and len(out) < len(document) // 50
 
 
+def test_escaped_binary_spellings_stop_the_rebuild_quickly():
+    # No writer escapes base64, but a hostile notebook can spell every value
+    # with an escape, so its JSON encoding is never found and each miss scans
+    # to the document's end. The rebuild stops after a few misses; the
+    # notebook keeps its oversize gap and nothing of it goes unread.
+    outputs = [{"output_type": "display_data", "metadata": {}, "data": {"image/png": IMAGE}}] * 2_500
+    document = _notebook(_cell("show()\n", outputs)).replace('"iVBOR', '"\\u0069VBOR')
+    started = time.perf_counter()
+    out, removed = _without_binary(document)
+    assert time.perf_counter() - started < 3.0
+    assert removed == 0 and out == document
+
+
 def test_a_large_notebook_of_images_is_read_in_full_for_credentials(tmp_path, run_connector):
     # Megabytes of rendered figures used to leave the outputs unread: exit 3.
     outputs = [

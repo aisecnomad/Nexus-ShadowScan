@@ -543,6 +543,13 @@ def _binary_output_data(cell: dict[str, Any]) -> list[str]:
     return found
 
 
+# Missed finds that end a notebook rebuild (``notebook_without_binary_data``).
+# A writer emits plain base64, so a find misses only on an unusual escape, and
+# each miss scans to the document's end: a hostile notebook spelling every
+# value with escapes must not buy that scan per value.
+_MAX_MISSED_BINARY = 8
+
+
 def notebook_without_binary_data(document: str, binary: list[str]) -> tuple[str, int]:
     """``document`` with the ``binary`` output strings emptied, and the characters removed.
 
@@ -556,14 +563,20 @@ def notebook_without_binary_data(document: str, binary: list[str]) -> tuple[str,
     (streams, tracebacks, ``text/plain``, HTML, JSON, SVG) and all metadata stay.
     A string is found by its JSON encoding, which holds no quote or raw line
     break, so each match is one whole string and every line keeps its number;
-    one that is not found (an unusual escape) is kept and read.
+    one that is not found (an unusual escape) is kept and read, and after
+    ``_MAX_MISSED_BINARY`` misses the rebuild stops, so a notebook that spells
+    its values with escapes no writer emits keeps its oversize gap instead of
+    buying a document-length scan per value.
     """
     out: list[str] = []
-    removed = position = 0
+    missed = removed = position = 0
     for part in binary:
         encoded = json.dumps(part)
         at = document.find(encoded, position)
         if at < 0:
+            missed += 1
+            if missed > _MAX_MISSED_BINARY:
+                break
             continue
         out.extend((document[position:at], '""'))
         removed += len(encoded) - 2

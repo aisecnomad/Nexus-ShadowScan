@@ -34,7 +34,11 @@ Counts and figures quoted in an entry are those of its date.
   `application/pdf`, in outputs and markdown attachments): 1.1-3.1 MB
   notebooks become 11-37 KB, every line at its number, in 30-80 ms. A
   notebook whose text outputs alone exceed the limit is one oversize gap of
-  the budget at a whole entry; never declared by the `ci` profile.
+  the budget at a whole entry; never declared by the `ci` profile. A value
+  is found in the document by its JSON encoding, and a miss scans to the
+  document's end, so after 8 misses the rebuild stops: a hostile notebook
+  spelling every value with escapes no writer emits (`iVBOR...`) keeps
+  its oversize gap instead of buying a document-length scan per value.
 - Cells that are not Python (14, in 10 notebooks): placeholders
   (`<YOUR API KEY>`), a pasted `export` line, typos. Jupyter runs cells one
   at a time and the binder already read the others, so such a notebook is
