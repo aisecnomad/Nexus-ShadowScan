@@ -4,6 +4,10 @@
 # reviewed inputs in requirements-ci-constraints.txt. A ruff or mypy bump there
 # must carry the matching immutable .pre-commit-config.yaml rev and version
 # comment, which tests/test_repository_consistency.py checks.
+# Not tracked on purpose: the benchmark-suite gitlink moves by hand together with
+# tools/benchmark_evidence.json, and the npm lock and Dockerfile under
+# tests/fixtures/ are static scanner inputs, never installed or built (see
+# docs/operations/security-alert-triage.md).
 version: 2
 updates:
   - package-ecosystem: pip

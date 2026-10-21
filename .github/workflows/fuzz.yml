@@ -40,7 +40,7 @@ concurrency:
 jobs:
   fuzz:
     name: fuzz (${{ matrix.target }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The run itself is at most 3000 seconds; the rest is the install and the seeds.
     timeout-minutes: 70
     strategy:

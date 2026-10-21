@@ -8,6 +8,10 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## 0.1.3 — 2026-11-20
 
+- Repository hygiene: workflows run on a pinned `ubuntu-24.04` image, and
+  configuration left behind for benchmark paths that moved to the Nexus
+  ShadowBench companion is removed.
+
 - Preserve notebook import binding when a multiline string contains magic-like
   command text; keep string-span protection isolated to each code cell, and do
   not let quotes in shell or magic lines open Python strings.

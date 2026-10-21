@@ -50,10 +50,7 @@ Thumbs.db
 *~
 .idea/
 .vscode/
-# ShadowBench estate artifacts are developer home directories and repositories
-# that hold editor state on purpose; tests/unit/test_shadowbench_estate.py
-# fails if a frozen estate file is not tracked.
-!/benchmarks/shadowbench/estate/artifacts/**/.vscode/
+node_modules/
 
 .shadowscan-state/
 # Worktrees that coding-agent sessions create inside the checkout.
