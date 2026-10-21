@@ -13,6 +13,30 @@ Counts and figures quoted in an entry are those of its date.
 
 ## 0.1.3 — 2026-11-20
 
+### Agent-configuration links read at their link path (October 21)
+
+- Every link the walk does not follow was reported as one "whose target is
+  unavailable or unscanned", false for in-tree aliases. The diagnostic now
+  says what the target was found to be: missing or a loop, outside the tree
+  (never echoing an outside path), or an in-tree path walked at its own path
+  but not assessed as the link path, or one the walk does not scan.
+- Significant-Gravitas/AutoGPT exited 3 on two such links:
+  `.agents/skills -> ../.claude/skills` and
+  `docs/content/forge/components/agents.md`, a lowercase `agents.md`
+  pointing at a README. Both targets were walked at their own paths, where
+  they are not configuration for the client that reads the link path. A
+  link that stands for agent configuration whose in-tree target the walk
+  scans is now read a second time at the link path (`_alias_entries`): the
+  link is never followed, the target is opened by its real path with the
+  same confined opens as every file, and its findings name the link path.
+  Its files count toward `max_files` and the entry budget; a link below the
+  alias is judged as a link and never read again, so a loop cannot multiply
+  the walk. A link to an excluded or unselected target, or outside the tree,
+  stays blinding, and so does a directory behind a link named like a
+  configuration file (`CLAUDE.md -> docs`). The per-file loop of
+  `_iter_entries` moves verbatim into `_file_entry` / `_regular_entry`, which
+  the alias walk reuses.
+
 ### Release readiness review (October 21)
 
 - `tools/release/assets.py` looked up the release with `releases/tags/{tag}`,

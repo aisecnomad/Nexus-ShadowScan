@@ -19,12 +19,12 @@ import re
 import stat
 import time
 import tomllib
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Generator, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from shadowscan.connectors.base import ConnectorContext, ConnectorError, incomplete_reason
 from shadowscan.connectors.code.lockfiles import LOCKFILE_NAMES
@@ -215,6 +215,10 @@ class _WalkBudget:
             raise _WalkLimitError(f"max_entries ({self.maximum}) reached during directory enumeration")
 
 
+# Returned by an entry check when the walk must stop (``_file_entry``).
+_STOP = object()
+
+
 @dataclass
 class _WalkCounters:
     """What one directory walk has examined so far, shared with its link checks."""
@@ -230,6 +234,10 @@ class _WalkCounters:
     project_roots: dict[str, str] = field(default_factory=dict)
     budget: _WalkBudget = field(default_factory=_WalkBudget)
     link_gaps: int = 0  # links whose target the walk does not scan (each a coverage gap)
+    # In-tree links that stand for agent configuration, read at the link path after the walk
+    # (``_alias_entries``): (link path, target below the root).
+    aliases: list[tuple[str, Path]] = field(default_factory=list)
+    in_alias: bool = False  # the walk is reading an alias: a link below it is not read again
 
 
 def _project_root(
@@ -1481,47 +1489,152 @@ class TreeWalker:
                 self._note_declaring_root(Path(dirpath), rel_dir, proj, filenames)
                 proj = rel_dir
             for fn in sorted(filenames):
-                walk.budget.check()
-                _check_enumeration_time(walk)
                 shown = _report_name(fn)
                 rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
-                if self._excluded_file(rel) or not self.included(rel):
-                    continue
-                self._entry_projects[rel] = proj
-                p = Path(dirpath) / fn
-                if fn.lower() in LOCKFILE_NAMES:
-                    self._lockfile_governed[rel] = self._lockfile_manifest_beside(rel_dir, fn, filenames)
-                try:
-                    if p.is_symlink():
-                        gaps = walk.link_gaps
-                        if not self._skip_link(root, resolved_root, rel, p, walk):
-                            return
-                        if walk.link_gaps != gaps:
-                            self._unread_settings.append((proj, rel))
-                        continue
-                    info = p.stat()
-                except OSError as exc:
-                    if exc.errno in _IGNORED_STAT_ERRNOS:
-                        continue
-                    self.ctx.error(f"code.filesystem: could not inspect {rel}", reason="unscanned-input")
-                    continue
-                if not stat.S_ISREG(info.st_mode):
-                    if self._analyzed_name(rel, fn):
-                        self._skip_non_regular(walk, root, rel, _special_file_kind(info.st_mode))
-                        self._unread_settings.append((proj, rel))
-                    continue
-                if info.st_size > self.size_limit(fn) and self._skipped_oversize(rel, fn, info.st_size):
-                    if posture_client(rel) is not None:
-                        # Skipped without a coverage gap (a fixture, or a name in
-                        # oversize_skip_globs), but an unread settings file could still
-                        # loosen the approval gate its readable siblings set.
-                        self._unread_settings.append((proj, rel))
-                    continue
-                if _never_read_by_name(fn):
-                    continue
-                if not self._count_entry(walk, root):
+                entry = self._file_entry(root, resolved_root, rel, Path(dirpath) / fn, proj, filenames, walk)
+                if entry is _STOP:
                     return
-                yield rel, p, proj, info.st_size
+                if entry is not None:
+                    yield cast(tuple[str, Path, str, int], entry)
+        yield from self._alias_entries(root, resolved_root, walk, roots)
+
+    def _file_entry(
+        self,
+        root: Path,
+        resolved_root: Path,
+        rel: str,
+        p: Path,
+        proj: str,
+        filenames: list[str],
+        walk: _WalkCounters,
+    ) -> tuple[str, Path, str, int] | object | None:
+        """The entry to analyze for the file listed at ``rel`` (on disk at ``p``); None skips it.
+
+        ``_STOP`` means the walk must stop: ``max_files`` or the deadline was reached.
+        """
+        walk.budget.check()
+        _check_enumeration_time(walk)
+        fn = p.name
+        rel_dir = PurePosixPath(rel).parent.as_posix()
+        if self._excluded_file(rel) or not self.included(rel):
+            return None
+        self._entry_projects[rel] = proj
+        if fn.lower() in LOCKFILE_NAMES:
+            self._lockfile_governed[rel] = self._lockfile_manifest_beside(rel_dir, fn, filenames)
+        try:
+            if p.is_symlink():
+                gaps = walk.link_gaps
+                if not self._skip_link(root, resolved_root, rel, p, walk):
+                    return _STOP
+                if walk.link_gaps != gaps:
+                    self._unread_settings.append((proj, rel))
+                return None
+            info = p.stat()
+        except OSError as exc:
+            if exc.errno not in _IGNORED_STAT_ERRNOS:
+                self.ctx.error(f"code.filesystem: could not inspect {rel}", reason="unscanned-input")
+            return None
+        return self._regular_entry(root, rel, p, proj, info, walk)
+
+    def _regular_entry(
+        self, root: Path, rel: str, p: Path, proj: str, info: os.stat_result, walk: _WalkCounters
+    ) -> tuple[str, Path, str, int] | object | None:
+        """The entry to analyze for ``rel``, found at ``p`` with ``info``; None to skip it, or ``_STOP``."""
+        fn = PurePosixPath(rel).name
+        if not stat.S_ISREG(info.st_mode):
+            if self._analyzed_name(rel, fn):
+                self._skip_non_regular(walk, root, rel, _special_file_kind(info.st_mode))
+                self._unread_settings.append((proj, rel))
+            return None
+        if info.st_size > self.size_limit(fn) and self._skipped_oversize(rel, fn, info.st_size):
+            if posture_client(rel) is not None:
+                # Skipped without a coverage gap (a fixture, or a name in
+                # oversize_skip_globs), but an unread settings file could still
+                # loosen the approval gate its readable siblings set.
+                self._unread_settings.append((proj, rel))
+            return None
+        if _never_read_by_name(fn):
+            return None
+        if not self._count_entry(walk, root):
+            return _STOP
+        return rel, p, proj, info.st_size
+
+    def _alias_entries(
+        self, root: Path, resolved_root: Path, walk: _WalkCounters, roots: list[str]
+    ) -> Iterator[tuple[str, Path, str, int]]:
+        """Yield the files of in-tree links that stand for agent configuration, each at its link path.
+
+        AutoGPT links ``.agents/skills`` to ``../.claude/skills`` and
+        ``docs/.../agents.md`` to a README: their targets are walked at their
+        own paths, but a client reads them at the link path, where they are
+        agent configuration. The link is never followed. Its target, resolved
+        below the root (``_resolved_link_target``), is read by its real path,
+        each component opened without following a link, as any file is, and
+        analyzed under the link path; its findings name that path. A link
+        below such an alias is judged as a link, not read again
+        (``in_alias``). Every file read counts toward ``max_files`` and the
+        walk's entry budget, as at its own path.
+        """
+        walk.in_alias = True
+        try:
+            for rel, target in walk.aliases:
+                real = root / target.relative_to(resolved_root)
+                proj = _nearest_root(PurePosixPath(rel).parent.as_posix(), roots)
+                if not real.is_dir():
+                    try:
+                        info = real.lstat()
+                    except OSError:
+                        self._gap(rel, f"code.filesystem: could not inspect {rel}", reason="unresolved-link")
+                        continue
+                    self._entry_projects[rel] = proj
+                    entry = self._regular_entry(root, rel, real, proj, info, walk)
+                    if entry is _STOP:
+                        return
+                    if entry is not None:
+                        yield cast(tuple[str, Path, str, int], entry)
+                    continue
+                if not (yield from self._alias_directory_entries(root, resolved_root, rel, real, proj, walk)):
+                    return
+        finally:
+            walk.in_alias = False
+
+    def _alias_directory_entries(
+        self, root: Path, resolved_root: Path, rel: str, real: Path, proj: str, walk: _WalkCounters
+    ) -> Generator[tuple[str, Path, str, int], None, bool]:
+        """Yield the files below directory ``real`` at the link path ``rel``; False to stop the walk."""
+
+        def walk_error(exc: OSError) -> None:
+            self._gap(
+                rel, f"code.filesystem: could not enumerate a directory under {rel}", reason="unresolved-link"
+            )
+
+        roots = [proj]
+        for dirpath, dirnames, filenames in _walk_directories(real, walk_error, budget=walk.budget):
+            below = os.path.relpath(dirpath, real).replace(os.sep, "/")
+            rel_dir = rel if below == "." else f"{rel}/{_report_name(below)}"
+            kept = self._walked_directories(root, resolved_root, dirpath, rel_dir, dirnames, walk)
+            if kept is None:
+                return False
+            dirnames[:] = kept
+            here = _nearest_root(rel_dir, roots)
+            if rel_dir != rel and _marks_project(Path(dirpath), filenames):
+                roots.append(rel_dir)
+                here = rel_dir
+            for fn in sorted(filenames):
+                entry = self._file_entry(
+                    root,
+                    resolved_root,
+                    f"{rel_dir}/{_report_name(fn)}",
+                    Path(dirpath) / fn,
+                    here,
+                    filenames,
+                    walk,
+                )
+                if entry is _STOP:
+                    return False
+                if entry is not None:
+                    yield cast(tuple[str, Path, str, int], entry)
+        return True
 
     def _walked_directories(
         self,
@@ -1651,6 +1764,15 @@ class TreeWalker:
         message = self._unscanned_link_message(rel, link, target, resolved_root)
         alias = target is not None and self._alias_of_scanned_directory(rel, target, resolved_root)
         agent = self._agent_configuration_link(rel, link, target if alias else None)
+        if (
+            agent
+            and target is not None
+            and not walk.in_alias
+            and self._readable_alias(rel, target, resolved_root, alias)
+        ):
+            # Read at the link path once the walk ends (_alias_entries): no gap.
+            walk.aliases.append((rel, target))
+            return True
         if not agent and self._walk_declared(root, rel, walk):
             # One representative note per root, like the gap below, and it
             # leaves that gap's own representative slot for an undeclared link.
@@ -2268,6 +2390,20 @@ class TreeWalker:
             "credential detection is off",
             incomplete=False,
         )
+
+    def _readable_alias(self, rel: str, target: Path, resolved_root: Path, alias: bool) -> bool:
+        """Whether a link's in-tree ``target`` is read at the link path (``_alias_entries``).
+
+        It is when the walk reads it at its own path: a directory it scans
+        whole (``alias``, from ``_alias_of_scanned_directory``) or a regular
+        file it reads (``_file_scanned_at_real_path``). An excluded or
+        unselected target stays out of the scan at the link path too, and so
+        does a directory behind a link named like a configuration file
+        (``CLAUDE.md -> docs``): no client reads a directory as that file.
+        """
+        if target.is_dir():
+            return alias and not self._agent_configuration(rel)
+        return self._file_scanned_at_real_path(target, resolved_root)
 
     def _alias_of_scanned_directory(self, rel: str, target: Path, resolved_root: Path) -> bool:
         """Whether directory link ``rel`` names ``target``, a directory inside the root the walk scans whole.

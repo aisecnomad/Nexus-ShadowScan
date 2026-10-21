@@ -275,18 +275,25 @@ def test_a_link_named_like_configuration_to_an_outside_file_fails_closed(
     assert any(rel in e and "named like agent configuration" in e for e in ctx.stats.errors)
 
 
-def test_an_alias_whose_name_makes_it_configuration_fails_closed_inside_the_tree(tmp_path, run_connector):
-    # A client reads .mcp.json through the link; the scanner reads the target
-    # as notes only, so the servers it declares are never inventoried.
+def _locations(findings) -> set[str]:
+    return {evidence.location for finding in findings for evidence in finding.evidence}
+
+
+def test_an_alias_whose_name_makes_it_configuration_is_read_at_the_link_path(tmp_path, run_connector):
+    # A client reads .mcp.json through the link; at its real path the target is
+    # notes only, so the servers it declares are inventoried at the link path.
     _tree(tmp_path, {"notes/servers.txt": MCP_CONFIG, "apps/web/app.py": "x = 1\n"})
     (tmp_path / "apps" / "web" / ".mcp.json").symlink_to(tmp_path / "notes" / "servers.txt")
-    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
-    assert ctx.stats.incomplete and ctx.stats.coverage["blinding_gaps"] == 1
-    # Reviewed, the alias can be excluded by its path, as the migration note says.
-    _, ctx = run_connector(
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
+    assert ctx.stats.coverage is None
+    assert any(location.startswith("apps/web/.mcp.json") for location in _locations(findings))
+    # Excluded by its path, the alias is out of the scan altogether.
+    findings, ctx = run_connector(
         "code.filesystem", path=str(tmp_path), use_git=False, exclude=["apps/web/.mcp.json"]
     )
     assert not ctx.stats.incomplete and ctx.stats.coverage is None
+    assert not any(location.startswith("apps/web/.mcp.json") for location in _locations(findings))
 
 
 @pytest.mark.parametrize("rel", [".mcp.json", ".claude/settings.json", "tests/e2e/.mcp.json"])
@@ -479,7 +486,12 @@ def test_a_clients_own_settings_file_left_unread_is_blinding(tmp_path, run_conne
         path.symlink_to(os.path.relpath(repo / "tools" / "vscode-settings.json", path.parent))
     else:
         os.mkfifo(path)
-    _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
+    findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
+    if how == "in-tree-alias":
+        # Read at the link path, where the client reads it: its servers are inventoried there.
+        assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
+        assert any(location.startswith(rel) for location in _locations(findings))
+        return
     assert ctx.stats.incomplete, f"unread {rel} ({how}) was budgeted"
     assert ctx.stats.coverage is not None and ctx.stats.coverage["blinding_gaps"] == 1
 
@@ -603,12 +615,22 @@ def test_a_directory_link_named_like_agent_configuration_is_never_declared(
         pytest.param({"rules.txt": "notes\n", "environment.json": "{}\n"}, id="environment"),
     ],
 )
-def test_an_alias_named_like_an_agent_directory_stays_blinding_inside_the_tree(tmp_path, run_connector, held):
+def test_an_alias_named_like_an_agent_directory_is_read_at_the_link_path(tmp_path, run_connector, held):
     # config/cursor/mcp.json is scanned, but not as Cursor's configuration: only
-    # the alias path .cursor/mcp.json makes a client read it.
+    # the alias path .cursor/mcp.json makes a client read it, so it is read there too.
     _tree(tmp_path, {f"config/cursor/{name}": content for name, content in held.items()})
     (tmp_path / ".cursor").symlink_to("config/cursor", target_is_directory=True)
-    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
+    assert ctx.stats.coverage is None
+    if "environment.json" not in held:
+        assert any(location.startswith(".cursor/") for location in _locations(findings))
+
+
+def test_an_alias_named_like_an_agent_directory_of_an_excluded_target_stays_blinding(tmp_path, run_connector):
+    _tree(tmp_path, {"config/cursor/mcp.json": MCP_CONFIG})
+    (tmp_path / ".cursor").symlink_to("config/cursor", target_is_directory=True)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, exclude=["config/**"])
     assert ctx.stats.incomplete and ctx.stats.coverage["blinding_gaps"] == 1
 
 
@@ -1183,33 +1205,52 @@ def test_include_tests_keeps_a_binary_test_fixture_a_gap(tmp_path, run_connector
 
 # ------------------------------------------------------------ link diagnostics
 # A link the walk does not follow is described by what its target was found to
-# be. In-tree aliases whose own path is agent configuration (AutoGPT's
-# .agents/skills -> ../.claude/skills, a lowercase agents.md) stay blinding, but
-# are no longer reported as "unavailable" targets, nor an outside path echoed.
+# be, and an outside path is never echoed. An in-tree link whose own path is
+# agent configuration (AutoGPT's .agents/skills -> ../.claude/skills, a
+# lowercase agents.md) has its target read again at the link path: no gap.
 def _link_text(ctx) -> str:
     details = [str(value) for gap in (ctx.stats.coverage or {}).get("details", []) for value in gap.values()]
     return "\n".join([*ctx.stats.errors, *ctx.stats.warnings, *details])
 
 
-def test_in_tree_agent_configuration_links_name_their_scanned_target(tmp_path, run_connector):
-    skill = "---\nname: open-pr\ndescription: Open a pull request.\n---\nRun the tests first.\n"
-    extra = {".claude/skills/open-pr/SKILL.md": skill, "pkg/pyproject.toml": "[project]\nname = 'pkg'\n"}
-    repo = _tree(tmp_path / "repo", {**extra, "pkg/README.md": "# pkg\n"})
+SKILL = "---\nname: open-pr\ndescription: Open a pull request.\n---\nRun the tests first.\n"
+
+
+def _agent_alias_repo(root: Path) -> Path:
+    extra = {".claude/skills/open-pr/SKILL.md": SKILL, "pkg/pyproject.toml": "[project]\nname = 'pkg'\n"}
+    repo = _tree(root, {**extra, "pkg/README.md": "# pkg\n"})
     (repo / ".agents").mkdir()
     (repo / ".agents" / "skills").symlink_to("../.claude/skills")
     (repo / "docs").mkdir()
     (repo / "docs" / "agents.md").symlink_to("../pkg/README.md")
+    return repo
+
+
+def test_in_tree_agent_configuration_links_are_read_at_the_link_path(tmp_path, run_connector):
+    repo = _agent_alias_repo(tmp_path / "repo")
+    findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
+    assert not (ctx.stats.coverage or {}).get("details")
+    locations = {evidence.location for finding in findings for evidence in finding.evidence}
+    # The skill is reported where each client reads it.
+    assert {".claude/skills/open-pr/SKILL.md", ".agents/skills/open-pr/SKILL.md"} <= locations, locations
+
+
+def test_an_agent_link_to_an_excluded_target_stays_blinding(tmp_path, run_connector):
+    repo = _agent_alias_repo(tmp_path / "repo")
+    _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, exclude=[".claude/**", "pkg/**"])
+    assert ctx.stats.incomplete
+    assert ctx.stats.incomplete_reasons == {"unresolved-link": 2}
+    assert "which the walk does not scan (excluded or outside the selected paths)" in _link_text(ctx)
+
+
+def test_a_link_inside_an_agent_alias_is_not_read_again(tmp_path, run_connector):
+    repo = _agent_alias_repo(tmp_path / "repo")
+    # Below the alias, a link back to the alias's own target: judged as a link, never expanded.
+    (repo / ".claude" / "skills" / "again").symlink_to("../../.claude/skills")
     _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
     assert ctx.stats.incomplete
-    assert ctx.stats.coverage["blinding_gaps"] == 2
-    assert ctx.stats.incomplete_reasons == {"unresolved-link": 2}
-    text = _link_text(ctx)
-    assert "unavailable" not in text
-    assert (
-        "skipped symbolic link .agents/skills to .claude/skills, which is walked at its own path but not assessed as "
-        "the link path; at the link path its files are agent configuration (named like agent configuration)"
-    ) in text
-    assert "skipped symbolic link docs/agents.md to pkg/README.md, which is walked at its own path" in text
+    assert "skipped symbolic link .agents/skills/again" in _link_text(ctx)
 
 
 def test_dangling_and_outside_links_say_which_without_echoing_outside_paths(tmp_path, run_connector):

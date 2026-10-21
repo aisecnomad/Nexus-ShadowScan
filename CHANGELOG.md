@@ -8,6 +8,14 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## 0.1.3 — 2026-11-20
 
+- An in-tree symbolic link that stands for agent configuration
+  (`.agents/skills -> ../.claude/skills`, a lowercase `agents.md` linked to a
+  README) is read at its link path instead of failing the scan: the link is
+  never followed; its target is opened by its real path below the root and
+  reported under the link path. A link the walk does not follow is described
+  by what its target was found to be. Links out of the tree, to excluded
+  targets, or naming a file but pointing at a directory still fail closed.
+
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the
   checkout so it exercises the installed wheel.
