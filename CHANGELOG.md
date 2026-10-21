@@ -6,7 +6,7 @@ One summary per release. Detailed implementation history is maintained in the
 explain operator migrations. Earlier per-change entries are preserved in the
 [change-history archive](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/history/changelog-detail.md).
 
-## 0.1.3 — 2026-10-21
+## 0.1.3 — 2026-11-20
 
 - Preserve notebook import binding when a multiline string contains magic-like
   command text; keep string-span protection isolated to each code cell, and do

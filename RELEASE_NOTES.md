@@ -8,7 +8,7 @@ records each in detail, and the
 [deployment and migration guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md)
 has the full upgrade steps.
 
-## 0.1.3 — 2026-10-21
+## 0.1.3 — 2026-11-20
 
 The first release since the repository was renamed to
 `aisecnomad/Nexus-ShadowScan`, and the first built as a source distribution

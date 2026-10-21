@@ -11,7 +11,7 @@ for people who install and operate ShadowScan. Entries name the pull request
 they came from where one exists, and say what was deliberately not carried.
 Counts and figures quoted in an entry are those of its date.
 
-## 0.1.3 — 2026-10-21
+## 0.1.3 — 2026-11-20
 
 ### Lock the sample Dockerfile's CLI dependency graph (October 20)
 
