@@ -15,8 +15,8 @@ from shadowscan.connectors import builtin_connector_names, get_connector_class
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.cloud import kubernetes as kubernetes_module
 from shadowscan.connectors.cloud.gcp import AI_SERVICES as GCP_AI_SERVICES
-from shadowscan.connectors.code import skill_audit
 from shadowscan.connectors.cloud.kubernetes import KubernetesConnector, OpenShiftConnector
+from shadowscan.connectors.code import skill_audit
 from shadowscan.connectors.endpoint import runtime as endpoint_runtime
 from shadowscan.connectors.endpoint.catalog import (
     AMBIGUOUS_PRODUCT_CONTEXTS,
