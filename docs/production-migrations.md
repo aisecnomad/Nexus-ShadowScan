@@ -7,6 +7,21 @@ revision; at release time they fold into the release notes. The
 [candidate change history](history/production-change-history.md) keeps the
 full dated log.
 
+## October 19 dependency floors (Unreleased)
+
+- The package now requires PyJWT 2.15.1 and regex 2026.9.29, and the cloud
+  extras require boto3 1.43.114, google-auth 2.62.0, azure-identity 1.26.0
+  and oci 2.188.0. The hash locks pin exactly these versions; a deployment
+  installed from an earlier lock does not satisfy them.
+- oci 2.188.0 adds a hard dependency on `python-pkcs11` 0.9.4 (and
+  `asn1crypto` 1.5.1). It is a native extension with wheels for CPython
+  3.11-3.14 on manylinux and macOS. ShadowScan does not import it, but image
+  builds and software inventories will list it.
+- The runtime lock pins aiohttp to 3.14.5, retaining the fixes introduced
+  in 3.14.4 for three published advisories.
+  Rebuild the worker image from the locks and re-run `make audit` instead of
+  upgrading packages in place.
+
 ## October 18 application and static-tool attribution (Unreleased)
 
 - Display names, publisher labels and descriptions no longer establish an AI
@@ -26,6 +41,30 @@ revision. The scanner-source fingerprint changes, invalidating incremental cache
 These authored regression fixes do not supply live-tenant or independent holdout
 acceptance. See [code](connectors/code.md) and
 [identity](connectors/identity.md#ambiguous-product-names) for the supported bounds.
+
+## October 18 correlation group memberships (Unreleased)
+
+- Exact-identifier groups larger than 25 observations, and exact pairs capped
+  by the 24-peer limit, now keep compact `metadata.related_groups`
+  memberships instead of losing their links. `metadata.related_truncation`
+  records each omitted pairwise expansion.
+- Pairwise `metadata.related` is not exhaustive. A consumer that reconstructs
+  cross-surface relationships must read group memberships as well. Large
+  groups join only members with an identical verified scope; compatible
+  partial scopes are not merged into a larger group. Capped exact pairs can
+  retain compatible partial scopes, with each two-member token bound to both
+  endpoints and their combined scope. This prevents distinct pairs from
+  combining conflicting scopes into a larger group. Tokens hold no raw
+  identifier.
+- For large groups, tokens, including a truncation entry's
+  `identifier_group_id`, are salted with the member's exact-scope partition,
+  so per-tenant report slices cannot be joined on them. A member outside an
+  exact-scope partition carries the omission disclosure without a token or
+  count. Filtering a report recomputes member counts and drops a token or count
+  that fewer than two retained findings back.
+- Memberships are evidence links. They do not establish ownership,
+  authorization or runtime activity, and they change no inventory binding or
+  risk policy. See the [architecture](architecture.md) correlation step.
 
 ## October 17 coverage semantics migration (Unreleased)
 
