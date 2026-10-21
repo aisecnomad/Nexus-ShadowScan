@@ -10,9 +10,10 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 - A Python consumer whose unrelated imports lie past the dispatch inventory
   is no longer incomplete: a dispatcher's verdict is resolved only for the
-  module a selected tool call reaches. Only provider-SDK consumers (OpenAI,
-  Anthropic) are queued for nested dispatch, so litellm's own tree no longer
-  fills the 16 MiB queue.
+  module a selected tool call reaches. Only consumers that import a model
+  provider's SDK (any of the 38 `category: provider` signatures) are queued
+  for nested dispatch, not those importing `platform.litellm` alone, so
+  litellm's own tree no longer fills the 16 MiB queue.
 
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the

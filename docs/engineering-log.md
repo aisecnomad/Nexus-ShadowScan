@@ -27,8 +27,11 @@ Counts and figures quoted in an entry are those of its date.
   `provider_tool_loop_lines`, the only reader of the nested dispatch verdict,
   so scanning BerriAI/litellm filled the scan-wide 16 MiB queue with
   consumers that cannot use it. The predicate keeps
-  `signature.category == "provider"` (so aliased or re-exported provider
-  clients are still queued) and drops the litellm clause.
+  `signature.category == "provider"` (all 38 provider signatures, wider than
+  the OpenAI and Anthropic requests that reader binds) and drops the litellm
+  clause. It reads the consumer's own imports: an aliased provider import
+  counts, and a consumer that reaches a provider client only through a local
+  re-export did not count before this change either.
   `test_only_provider_consumers_add_nested_dispatch_deferral` now expects a
   litellm-only consumer not to be queued.
 
