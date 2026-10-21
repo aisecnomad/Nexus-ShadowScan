@@ -10,10 +10,18 @@ recognized here instead, by rendering it with stand-ins.
 
 The rule is narrow on purpose. The file must fail its own parser, hold Jinja
 placeholders or tags, and parse once each placeholder is replaced by a
-stand-in and each one-line tag is dropped. A file that is broken in any other
+stand-in and each tag line is dropped. A file that is broken in any other
 way still fails with the stand-ins, so it is not a template by this rule. The
 rendering is what the scanner then analyzes, so a placeholder added to a
 deployed file does not hide the dependencies or imports around it.
+
+Neither a placeholder nor a tag can swallow the structure around it. A
+placeholder holds a Jinja expression without quotes, separators or brackets
+(``{{ cookiecutter.package_name }}``, ``{{ name | lower }}``), so it cannot
+span from one string or value to another; a tag is a line of its own
+(``{%- if cookiecutter.depends_on_core -%}``) with no ``%}`` before its end.
+A ``package.json`` whose ``dependencies`` sit between ``"{%`` and ``%}"`` on
+one line is not rendered: it fails to parse, as it would without this rule.
 """
 
 from __future__ import annotations
@@ -24,9 +32,11 @@ import re
 import tomllib
 import warnings
 
-# One placeholder or tag on one line, of bounded length: nothing here scans unboundedly.
-_PLACEHOLDER = re.compile(r"\{\{[^{}\n]{1,200}\}\}")
-_TAG = re.compile(r"\{%-?[^\n]{1,200}?-?%\}")
+# One placeholder within a line, or one tag that is a whole line, of bounded length:
+# nothing here scans unboundedly. A placeholder's expression holds no quote, separator,
+# bracket, assignment or comment, so it cannot reach across a string or a value.
+_PLACEHOLDER = re.compile(r"\{\{[^{}\n\"'`,;:=#\[\]]{1,200}\}\}")
+_TAG = re.compile(r"^[ \t]*+\{%(?:[^%\n]|%(?!\})){1,200}%\}[ \t]*+$", re.MULTILINE)
 # A stand-in that is an identifier (a class or key name) and, in a second
 # rendering, a number (a JSON value).
 _STAND_INS = ("template_value", "0")

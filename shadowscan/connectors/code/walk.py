@@ -108,6 +108,8 @@ def _marks_project(directory: Path, names: Iterable[str]) -> bool:
 # Template syntax in a path segment: cookiecutter and copier (``{{cookiecutter.slug}}``,
 # ``{% if x %}``) and shell-style (``${name}``) placeholders a generator fills in.
 _TEMPLATE_SYNTAX = re.compile(r"\{\{|\{%|\$\{")
+# Jinja syntax in a directory name: a generator's template directory (``_template_source_gap``).
+_JINJA_DIRECTORY = re.compile(r"\{\{|\{%")
 # A manifest larger than this is not read to tell whether it parses: it counts as one.
 _MANIFEST_PROBE_BYTES = 1024 * 1024
 _JSON_MANIFESTS = frozenset({"package.json", "composer.json"})
@@ -912,6 +914,8 @@ class TreeWalker:
         self._file_notes: dict[str, list[str]] = {}
         # Defects in content no client reads as written: path -> (kind of defect, why) (``budget_defects``).
         self._budgeted_defects: dict[str, tuple[str, str]] = {}
+        # Files whose text holds Jinja placeholders or tags (``note_template_syntax``).
+        self._template_syntax: set[str] = set()
         self._symlink_warnings: set[Path] = set()
         self._declared_link_notes: set[Path] = set()
         self._blinding_link_notes: set[Path] = set()
@@ -1681,7 +1685,7 @@ class TreeWalker:
         self._default_skipped = {}
         fixtures_before = self.skipped_oversize_test_fixtures
         self._file_notes = {}
-        self._budgeted_defects = {}
+        self._budgeted_defects, self._template_syntax = {}, set()
         try:
             self._walk_entries(scan, scan_file, unread_settings)
         except _WalkLimitError as exc:
@@ -2125,17 +2129,24 @@ class TreeWalker:
         """
         self._budgeted_defects[rel] = (kind, why)
 
+    def note_template_syntax(self, rel: str) -> None:
+        """Record that ``rel``'s text holds Jinja placeholders or tags (``{{`` or ``{%``)."""
+        self._template_syntax.add(rel)
+
     def _template_source_gap(
         self, rel: str, *, full_weight: bool = False, kind: str | None = None
     ) -> str | None:
         """Why a gap in ``rel`` is in content no client reads as written, such as unrendered template source.
 
-        Template syntax in a directory name (cookiecutter's
+        Jinja syntax in a directory name (cookiecutter's
         ``{{cookiecutter.package_name}}/pyproject.toml``, copier's ``{% if %}``
-        paths, a shell-style ``${name}``) means no tool reads the file where it
-        is: the generator fills in its placeholders, and its Jinja blocks
+        paths) means no tool reads the file where it is: the generator fills in
+        its placeholders, and its Jinja blocks
         (``{%- if cookiecutter.depends_on_core -%}``) are not TOML, JSON or
-        YAML. A file under an ordinary name is template source when it fails
+        YAML. The file's own text must hold Jinja syntax too
+        (``note_template_syntax``): a module of newer Python syntax under such
+        a directory, or under a shell-style ``${env}``, is broken source, and
+        keeps its gap. A file under an ordinary name is template source when it fails
         to parse only because of its placeholders (``budget_defects``):
         crewAI's ``templates/crew/crew.py`` declares ``class {{crew_name}}():``.
         So is the ambiguity of a JSON data file whose duplicate keys neither
@@ -2154,7 +2165,11 @@ class TreeWalker:
         """
         if kind is None or full_weight or self._strict_accounting() or self._agent_configuration(rel):
             return None
-        if kind == "parse" and _TEMPLATE_SYNTAX.search(rel.rpartition("/")[0]):
+        if (
+            kind == "parse"
+            and rel in self._template_syntax
+            and _JINJA_DIRECTORY.search(rel.rpartition("/")[0])
+        ):
             return "unrendered template source (template syntax in its directory)"
         recorded = self._budgeted_defects.get(rel)
         return recorded[1] if recorded is not None and recorded[0] == kind else None

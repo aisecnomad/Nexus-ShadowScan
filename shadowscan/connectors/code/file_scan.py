@@ -522,6 +522,8 @@ class FileScanner:
             else:
                 self.walker._gap(rel, message, reason="unscanned-input")
             return None
+        if "{{" in text or "{%" in text:
+            self.walker.note_template_syntax(rel)  # read by _template_source_gap
         if path.suffix.lower() != ".ipynb":
             return text, None, (), ()
         return self._notebook_source(rel, text)

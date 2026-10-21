@@ -25,6 +25,14 @@ full dated log.
 - Under `--profile ci`, a directory whose manifest names its project with
   template syntax is judged as a template, so its gaps are declared (counted in
   `declared_omissions`), as for a manifest that does not parse.
+- Unrendered template source is one partial gap charged to the coverage
+  budget instead of an `unparsed-input` failure. That is a Python, TOML or
+  JSON file that parses once its Jinja placeholders are filled in and its tag
+  lines dropped, or a file with Jinja syntax under a directory named with
+  Jinja syntax (`{{cookiecutter.package_name}}/`). Its rendering is
+  analyzed, so its dependencies and imports stay evidence. Scans that exited
+  3 only for such files may complete; `strict_coverage` keeps them
+  incomplete, and agent configuration is never discounted.
 
 These are authored regression fixes measured on offline corpus clones; they do
 not supply live-tenant or independent acceptance.

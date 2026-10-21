@@ -91,6 +91,17 @@ Counts and figures quoted in an entry are those of its date.
   completed. The directory rule and the content rule now explain only parse
   failures (`_discounted_gap(defect="parse")`, a registry scoped by kind),
   and the rendering is analyzed as above.
+- A second review found that a placeholder or tag span could cross string
+  delimiters and swallow structure: a root `package.json` whose
+  `dependencies` (with a JSON5 trailing comma) sat between `"{%` and `%}"`
+  on one line rendered as valid JSON without them, so a scan main reports
+  incomplete completed with no findings. A placeholder now holds a Jinja
+  expression without quotes, separators, brackets, `=`, `:`, `;` or `#`, and
+  a tag must be a whole line with no `%}` before its end. The same seven
+  corpus files are recognized as before. The directory rule also budgeted
+  any parse failure under `${env}/`, so a module of newer Python syntax
+  there completed; it now needs Jinja syntax in the directory name and in
+  the file's own text (`TreeWalker.note_template_syntax`).
 
 ### Release readiness review (October 21)
 
@@ -168,6 +179,21 @@ measured Scorecard result.
   checkout credentials; wheel and sdist contents and metadata; the pinned
   benchmark-suite submodule commit. About 90 external links on other hosts
   could not be reached from the sweep environment and remain unverified.
+
+### Base image refresh for CVE-2026-111943 (October 21)
+
+- `container-security` failed on `main` from 08:01 UTC on October 21 with no
+  Dockerfile or lock change: Trivy reported CVE-2026-111943 (HIGH) in
+  `wolfi:ca-certificates-bundle` 20260909-r2, fixed in 20260909-r3, so the
+  `CI gate` of every open pull request was red. #306's annotation named it.
+- Both `FROM` lines move from `sha256:824f77df…` to the `chainguard/wolfi-base:latest`
+  image index `sha256:81211e15a86ea1d5357f284482af45730c51de45eaf10ad9ce205d6bfc2df323`
+  (pushed 2026-10-20 17:20 UTC). Its amd64 manifest's apk database lists
+  `ca-certificates-bundle` 20260909-r3, read from the registry layers without
+  running the image. No ignore or severity change was added; the gate is unchanged.
+- The python-3.12 3.12.15-r0 pins stay, as their comment requires. The entry sits
+  beside the certifi CA advisory rather than at the top of the section so it
+  does not conflict with the open pull requests that insert there.
 
 ### certifi CA bundle advisory (October 20)
 
