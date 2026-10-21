@@ -413,9 +413,12 @@ def test_an_unrendered_template_manifest_is_one_budgeted_gap(tmp_path, run_conne
 @pytest.mark.parametrize(
     ("rel", "content"),
     [
-        # Without template syntax in its directory the same file is an ordinary manifest that does not parse.
+        # Without template syntax in its directory, a manifest broken beyond its placeholders
+        # is an ordinary manifest that does not parse.
         pytest.param(
-            "python/packages/new-package/pyproject.toml", COOKIECUTTER_PYPROJECT, id="no-template-dir"
+            "python/packages/new-package/pyproject.toml",
+            COOKIECUTTER_PYPROJECT + "[tool\n",
+            id="no-template-dir",
         ),
         # Agent configuration is never discounted: the rendered project's client reads it as written.
         pytest.param(

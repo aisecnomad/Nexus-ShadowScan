@@ -13,6 +13,36 @@ Counts and figures quoted in an entry are those of its date.
 
 ## 0.1.3 — 2026-11-20
 
+### Unparsed-input triage and unrendered template source (October 21)
+
+- Three misjudgements made ordinary repositories exit 3. A Continue
+  `mcpServers` block reference (`{uses, with?, override?}`, Continue's own
+  schema) was an input defect; it is now an `mcp-server` finding whose
+  `override` is projected as the server's fields
+  (`docs/production-migrations.md`). An empty or whitespace-only manifest,
+  agent manifest or MCP configuration fails its parser without hiding a byte;
+  it is a file note, which strict accounting still counts. Under
+  `--profile ci` a directory whose manifest names its project with template
+  syntax is judged a template, as one whose manifest does not parse.
+- microsoft/autogen exited 3 on
+  `python/templates/new-package/{{cookiecutter.package_name}}/pyproject.toml`,
+  whose `{%- if cookiecutter.depends_on_core -%}` block is not TOML. A file
+  that does not parse under a directory whose name holds template syntax is
+  now one partial gap charged to the coverage budget at a whole entry.
+- crewAIInc/crewAI exited 3 on six templates `crewai create` renders, kept
+  under ordinary names (`templates/crew/crew.py` declares
+  `class {{crew_name}}():`, `templates/crew/pyproject.toml` a
+  `{{folder_name}} = ...` key). A Python, TOML or JSON file that fails its
+  parser, holds Jinja placeholders or tags, and parses once each placeholder
+  is replaced by a stand-in and each one-line tag is dropped is now
+  unrendered template source too (`connectors/code/template_source.py`). The
+  file scanner records the verdict against the path
+  (`TreeWalker.budget_defects`) and the walker charges the gap. A file broken
+  in any other way still fails; agent configuration, strict accounting and
+  MCP configuration found by structure keep the gap, and a tree of templates
+  exhausts the budget. No installer or interpreter reads such a file as
+  written, so its dependencies and definitions are not deployed from it.
+
 ### Release readiness review (October 21)
 
 - `tools/release/assets.py` looked up the release with `releases/tags/{tag}`,

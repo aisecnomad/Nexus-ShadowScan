@@ -471,7 +471,11 @@ applied in this order:
    directory whose name holds template syntax (`{{`, `{%`, `${`, as in
    cookiecutter's `{{cookiecutter.package_name}}/pyproject.toml`) is read by
    no tool until a generator renders it, so its gap is partial and its
-   warning says `unrendered template source`. Agent configuration there is
+   warning says `unrendered template source`. So is a Python, TOML or JSON
+   file under an ordinary name that parses once each Jinja placeholder is
+   filled in (crewAI's `templates/crew/crew.py`, `class {{crew_name}}():`); a
+   file broken in any other way still fails. No installer or interpreter reads
+   such a file as written. Agent configuration there is
    never discounted, strict accounting keeps the gap, and a tree seeded with
    such files still exhausts the budget.
 5. **Budget.** Every other partial gap is charged to the budget; a blinding

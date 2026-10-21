@@ -130,6 +130,7 @@ from shadowscan.connectors.code.source_text import (
     _without_xml_comments,
     foreign_cell,
 )
+from shadowscan.connectors.code.template_source import unrendered_template
 from shadowscan.connectors.code.tool_attribution import ToolRegions
 from shadowscan.connectors.code.walk import (
     _AGENT_DEFINITION_DIRS,
@@ -667,6 +668,8 @@ class FileScanner:
         if issues and _blank(file.text):
             self.walker.note_file(file.rel, empty_note)
             return False
+        if issues:
+            self._note_template(file)
         self.file_errors(file.rel, issues, defect=True, full_weight=full_weight)
         return True
 
@@ -2108,10 +2111,25 @@ class FileScanner:
         A gap goes through ``_gap``, so the ci profile declares it under a
         template, example or test path, and is counted as unparsed input.
         """
-        if self._syntax_gap(file):
-            self.walker._gap(file.rel, message, suffix=False, reason="unparsed-input")
-        else:
+        if not self._syntax_gap(file):
             self.ctx.warn(message, incomplete=False)
+        elif self._note_template(file):
+            self.walker._discounted_gap(file.rel, message, suffix=False, reason="unparsed-input")
+        else:
+            self.walker._gap(file.rel, message, suffix=False, reason="unparsed-input")
+
+    def _note_template(self, file: _SourceFile) -> bool:
+        """Whether ``file``, which did not parse, is unrendered template source; record one found by content.
+
+        A file under a directory named with template syntax is one by its path
+        (``_template_source_gap``); one under an ordinary name is one when it
+        parses once its Jinja placeholders are filled in (``unrendered_template``).
+        """
+        if unrendered_template(file.rel, file.text):
+            self.walker.budget_defects(
+                file.rel, "unrendered template source (parses once its placeholders are filled in)"
+            )
+        return self.walker._template_source_gap(file.rel) is not None
 
     def _scan_undecodable_file(
         self,
