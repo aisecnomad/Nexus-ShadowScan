@@ -500,7 +500,7 @@ and **not** measured production precision or recall.
 | [ShadowBench estate, nine surfaces](https://github.com/aisecnomad/Nexus-ShadowScan/blob/0792106b8d2cc09517f7f4ee2eeabf4f8eb8da2d/benchmarks/shadowbench/estate/results/2026-10-11/REPORT.md) (2026-10-11, 0.1.2) | 137 authored vendor-format entities for one fictional estate: 87 positive, 27 control, 23 near-miss | Entity precision / recall / F1 91.2% / 95.4% / 93.3%; 83 of 87 positives found; 8 of 50 controls and near-misses flagged | Authored artifacts; frozen after one label-completeness pass in which every runnable tool ran once (it added one secondary anchor and one tolerated pair and changed no label); later ShadowScan runs on it are in-sample (below) |
 | [Shadow AI discovery, code surface](https://github.com/aisecnomad/Nexus-ShadowScan/blob/0792106b8d2cc09517f7f4ee2eeabf4f8eb8da2d/benchmarks/shadow-ai-discovery/results/2026-10-09/REPORT.md) (2026-10-09, 0.1.2+7bdea5300551) | 87 public repositories pinned by SHA: 65 positive, 10 control, 12 near-miss; 839 expected facts | Fact precision / recall / F1 99.8% / 94.8% / 97.2% **after** tuning on this corpus; 65 of 65 positive repositories flagged; 0 of 22 controls and near-misses flagged (4 of those 22 runs incomplete) | In-sample: the detection changes were driven by this corpus's errors, so these numbers measure fit to it, not field accuracy. 43 of 87 runs were incomplete (exit 3): fact counts are a lower bound, and an incomplete clean run is not a clean result |
 
-The archived [2026-10-08 discovery metrics](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/benchmarks/shadow-ai-discovery/results/2026-10-08/metrics.json)
+The archived [2026-10-08 discovery metrics](https://github.com/aisecnomad/Nexus-ShadowBench/blob/1ce0eee376585f85fbd0fec98235d556310e6277/benchmarks/shadow-ai-discovery/results/2026-10-08/metrics.json)
 record in-scope fact F1 of 90.9%. The earlier report uses a different expected-fact
 universe, and labels and adapters also changed between the archived runs, so
 this and the later 97.2% are not a controlled before/after
@@ -536,7 +536,7 @@ drawing any conclusion. ShadowScan marked 27 of its 326 scans incomplete there.
 The same authorship caveat applies: the maintainer wrote the corpus, the
 rubrics, the scorer and every tool's adapter.
 
-The [cases report](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/benchmarks/shadowbench/cases/results/2026-10-11/REPORT.md)
+The [cases report](https://github.com/aisecnomad/Nexus-ShadowBench/blob/1ce0eee376585f85fbd0fec98235d556310e6277/benchmarks/shadowbench/cases/results/2026-10-11/REPORT.md)
 also records that the producing harness revision was not captured, scoring was
 revised with the results in view, and result files have no hashes binding them
 to the original run. The current companion pin and migration hashes preserve
@@ -547,7 +547,7 @@ ShadowScan's specificity on decoy entities in this run was 63%.
 
 ### Synthetic head-to-head
 
-The [archived head-to-head report](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/tools/benchmark/results/REPORT.md)
+The [archived head-to-head report](https://github.com/aisecnomad/Nexus-ShadowBench/blob/1ce0eee376585f85fbd0fec98235d556310e6277/tools/benchmark/results/REPORT.md)
 covers 900 synthetic repository, endpoint and network cases, including 540
 positive cases, with tool versions pinned on 2026-10-06. ShadowScan's estate
 recall was 0.90 (95% interval 0.87–0.92), while its recall on AI developer home
@@ -560,12 +560,12 @@ were committed before the other tools ran.
 
 Unsupported surfaces count as misses in this chart. Several tools ran below
 full capability, and narrower tools can be precise within their scope. Read
-the report's in-scope results and [execution limits](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/tools/benchmark/results/README.md#limits)
+the report's in-scope results and [execution limits](https://github.com/aisecnomad/Nexus-ShadowBench/blob/1ce0eee376585f85fbd0fec98235d556310e6277/tools/benchmark/results/README.md#limits)
 before comparing tools. These archived scores do not establish a current
 product ranking. Other tools scored higher on selected metrics in the real-world
-runs of [34](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/tools/benchmark/results-realworld/REPORT.md),
-[41](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/tools/benchmark_realworld/results/REPORT.md)
-and [326 public repositories](https://github.com/aisecnomad/Nexus-ShadowBench/blob/e027b98fdfbfdc242a4c89ee7c62f41b2dbacc5e/tools/benchmark/realworld/REPORT.md)
+runs of [34](https://github.com/aisecnomad/Nexus-ShadowBench/blob/1ce0eee376585f85fbd0fec98235d556310e6277/tools/benchmark/results-realworld/REPORT.md),
+[41](https://github.com/aisecnomad/Nexus-ShadowBench/blob/1ce0eee376585f85fbd0fec98235d556310e6277/tools/benchmark_realworld/results/REPORT.md)
+and [326 public repositories](https://github.com/aisecnomad/Nexus-ShadowBench/blob/1ce0eee376585f85fbd0fec98235d556310e6277/tools/benchmark/realworld/REPORT.md)
 from 2026-10-08, partly because those runs count incomplete positive scans as
 misses. Their labels, error policies and intervals have further limitations
 documented in each report.

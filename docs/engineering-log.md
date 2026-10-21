@@ -54,6 +54,22 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   records that its #107 precondition was satisfied by #123; and
   `.github/dependabot.yml` says why the companion gitlink and the fixture
   manifests are not tracked.
+### Companion pin to Nexus-ShadowBench 1ce0eee (October 21)
+
+- `benchmark-suite` moves from `e027b98` to `1ce0eee`, which adds the
+  companion's documentation and standards, an append-only `AMENDMENTS.json`
+  ledger for migrated harness code (aisecnomad/Nexus-ShadowBench#2), a
+  code-surface `fetch` that delegates to the hardened cases fetcher, certifi
+  2026.10.19 with a CI `pip-audit` step, and errata for stale statements in
+  preserved files.
+- `tools/benchmark_evidence.json` was regenerated with
+  `tools.benchmark_suite.extract`. Only `companion_modules.tools.verify_migration`
+  changed (its SHA-256); the migration manifest digest and every metrics and
+  corpus digest are unchanged, so no published number moves.
+- The benchmark-section permalinks in `README.md` and the product guide name
+  the new pin, as the consistency test requires; the linked reports are
+  byte-identical at both commits. Checkouts the old companion `fetch` made
+  should be fetched again.
 
 ### Release readiness review (October 21)
 
