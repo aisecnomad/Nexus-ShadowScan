@@ -8,6 +8,12 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## 0.1.3 — 2026-11-20
 
+- A Python consumer whose unrelated imports lie past the dispatch inventory
+  is no longer incomplete: a dispatcher's verdict is resolved only for the
+  module a selected tool call reaches. Only provider-SDK consumers (OpenAI,
+  Anthropic) are queued for nested dispatch, so litellm's own tree no longer
+  fills the 16 MiB queue.
+
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the
   checkout so it exercises the installed wheel.

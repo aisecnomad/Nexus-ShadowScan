@@ -13,6 +13,25 @@ Counts and figures quoted in an entry are those of its date.
 
 ## 0.1.3 — 2026-11-20
 
+### Dispatch verdicts resolved only where a selected call reaches (October 21)
+
+- The dispatch inventory was consulted for every imported name a consumer
+  held, so an unrelated import past the inventory's cut raised
+  `DispatchLimitError` and left the consumer incomplete. Verdicts are now
+  resolved inside `_selected_dispatcher`, after the call-shape and
+  import-ordering checks: a limit is raised only for a module a selected
+  (function name, arguments) call actually reaches. Limits are not cached and
+  still fail closed; every numeric bound is unchanged.
+- The nested re-export and dispatch queue admitted any consumer importing a
+  provider or `platform.litellm` signature. litellm's requests never reach
+  `provider_tool_loop_lines`, the only reader of the nested dispatch verdict,
+  so scanning BerriAI/litellm filled the scan-wide 16 MiB queue with
+  consumers that cannot use it. The predicate keeps
+  `signature.category == "provider"` (so aliased or re-exported provider
+  clients are still queued) and drops the litellm clause.
+  `test_only_provider_consumers_add_nested_dispatch_deferral` now expects a
+  litellm-only consumer not to be queued.
+
 ### Release readiness review (October 21)
 
 - `tools/release/assets.py` looked up the release with `releases/tags/{tag}`,
