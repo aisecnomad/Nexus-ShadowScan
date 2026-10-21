@@ -569,14 +569,19 @@ def test_host_of_returns_none_without_a_host(url):
 
 
 def test_committed_template_syntax_keeps_coverage_incomplete(tmp_path, run_connector):
-    """Input-defect diagnostics preserve findings without claiming full coverage."""
+    """Input-defect diagnostics preserve findings without claiming full coverage.
+
+    The unrendered template manifest is charged to the coverage budget as one
+    whole entry (``_template_source_gap``); in a tree of three files that is over
+    the budget, so the only error is the budget's own summary.
+    """
     (tmp_path / "agent.py").write_text("from crewai import Agent\nAgent(role='r', goal='g')\n")
     template = tmp_path / "{{cookiecutter.package_name}}"
     template.mkdir()
     (template / "pyproject.toml").write_text('[project\nname = "{{cookiecutter.package_name}}"\n')
     (tmp_path / "broken.mcp.json").write_text('{"mcpServers": "not-an-object"}')
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
-    assert not ctx.stats.errors, ctx.stats.errors
+    assert all("over the 2.0% budget" in error for error in ctx.stats.errors), ctx.stats.errors
     assert ctx.stats.incomplete
     defects = [w for w in ctx.stats.warnings if "input defect" in w]
     assert any("invalid TOML" in w for w in defects)

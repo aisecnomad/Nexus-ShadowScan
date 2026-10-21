@@ -383,6 +383,72 @@ def test_an_asset_beside_agent_rules_is_an_ordinary_gap(tmp_path, run_connector)
     assert ctx.stats.incomplete and ctx.stats.coverage["blinding_gaps"] == 1
 
 
+# microsoft/autogen's package template, abridged: cookiecutter renders the directory name and
+# the Jinja block before any tool reads the file, so as written it is not TOML.
+COOKIECUTTER_PYPROJECT = """[project]
+name = "{{ cookiecutter.package_name }}"
+dependencies = [
+{%- if cookiecutter.depends_on_core -%}
+"autogen-core",
+{% endif %}
+]
+"""
+TEMPLATE_DIR = "python/templates/new-package/{{cookiecutter.package_name}}"
+
+
+def _template_gaps(ctx) -> list[tuple[str, str]]:
+    return [(gap["path"], gap["kind"]) for gap in (ctx.stats.coverage or {}).get("details", [])]
+
+
+def test_an_unrendered_template_manifest_is_one_budgeted_gap(tmp_path, run_connector):
+    # The default profile used to fail the scan outright on this file (exit 3).
+    rel = f"{TEMPLATE_DIR}/pyproject.toml"
+    _tree(tmp_path, {rel: COOKIECUTTER_PYPROJECT, f"{TEMPLATE_DIR}/src/pkg/__init__.py": ""})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert _template_gaps(ctx) == [(rel, "partial")]
+    assert any("unrendered template source" in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize(
+    ("rel", "content"),
+    [
+        # Without template syntax in its directory the same file is an ordinary manifest that does not parse.
+        pytest.param(
+            "python/packages/new-package/pyproject.toml", COOKIECUTTER_PYPROJECT, id="no-template-dir"
+        ),
+        # Agent configuration is never discounted: the rendered project's client reads it as written.
+        pytest.param(
+            f"{TEMPLATE_DIR}/.mcp.json",
+            '{"mcpServers": {"a": {"command": "x"}, "a": {"command": "y"}}}',
+            id="ambiguous-mcp-config",
+        ),
+    ],
+)
+def test_a_malformed_file_outside_this_rule_still_fails_the_scan(tmp_path, run_connector, rel, content):
+    _tree(tmp_path, {rel: content})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+
+
+def test_strict_accounting_keeps_an_unrendered_template_manifest_a_gap(tmp_path, run_connector):
+    _tree(tmp_path, {f"{TEMPLATE_DIR}/pyproject.toml": COOKIECUTTER_PYPROJECT})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, strict_coverage=True)
+    assert ctx.stats.incomplete
+
+
+def test_a_tree_of_unrendered_templates_exhausts_the_budget(tmp_path, run_connector):
+    # Each template manifest costs a whole entry: a tree seeded with them is still incomplete.
+    (tmp_path / "app.py").write_text("from openai import OpenAI\n")
+    for i in range(3):
+        path = tmp_path / f"t{i}" / "{{cookiecutter.slug}}" / "pyproject.toml"
+        path.parent.mkdir(parents=True)
+        path.write_text(COOKIECUTTER_PYPROJECT)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+    assert ctx.stats.coverage is not None and not ctx.stats.coverage["within_budget"]
+
+
 # Real headers of the web and audio assets a framework's directory-wide glob
 # (framework.autogpt's **/autogpt_platform/**) selected in the AutoGPT checkout,
 # where each was a blinding "undecodable" gap and the scan exited 3.
