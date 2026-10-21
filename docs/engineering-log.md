@@ -13,6 +13,39 @@ Counts and figures quoted in an entry are those of its date.
 
 ## 0.1.3 — 2026-11-20
 
+### Notebooks no longer leave llama_index incomplete (October 21)
+
+- A default scan of run-llama/llama_index exited 3 on 40 notebook and data
+  diagnostics. Measured cause by cause, then fixed or recalibrated.
+- IPython syntax the binder did not emulate (12 cells): a line magic spelled
+  with a space (`% pip install x`, recognised by a line magic's own name so a
+  continued `% name` modulo stays Python), lines a backslash continues after
+  a magic or shell line, and an assigned shell escape or magic
+  (`files = !ls`, which keeps its target). These join #285's per-cell,
+  string-aware masking; the masked command keeps its line breaks, so a
+  continued magic's lines become blank lines and every line keeps its
+  number. Bare package-manager automagic still applies only to a
+  single-line cell. `%%ngql`, `%%cypher`, `%%gremlin`, `%%sparql`, `%%kql`,
+  `%%kusto`, `%%graphql`, `%%mermaid` and `%%dot` join the cell magics whose
+  body is not Python.
+- Notebooks over `max_file_size` (18): their size is base64 output data.
+  Outputs are scanned for credentials with every value under a binary MIME
+  key emptied (`image/*` except SVG, `audio/*`, `video/*`,
+  `application/pdf`, in outputs and markdown attachments): 1.1-3.1 MB
+  notebooks become 11-37 KB, every line at its number, in 30-80 ms. A
+  notebook whose text outputs alone exceed the limit is one oversize gap of
+  the budget at a whole entry; never declared by the `ci` profile.
+- Cells that are not Python (14, in 10 notebooks): placeholders
+  (`<YOUR API KEY>`), a pasted `export` line, typos. Jupyter runs cells one
+  at a time and the binder already read the others, so such a notebook is
+  one partial gap of the budget at a whole entry. A notebook none of whose
+  cells parse stays a full gap, as does every one under strict accounting.
+- `llama_index/core/command_line/mappings.json` names 1,111 literals carrying
+  the `llama` vendor stem, 580 distinct, past the 400-literal bound. A
+  literal's matches depend on its value alone, so each distinct value is
+  matched once; the bound is 2,000 distinct values and 20,000 occurrences
+  (about 0.2 s a file at most).
+
 ### Release readiness review (October 21)
 
 - `tools/release/assets.py` looked up the release with `releases/tags/{tag}`,

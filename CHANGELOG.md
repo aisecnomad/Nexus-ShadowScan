@@ -8,6 +8,13 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## 0.1.3 — 2026-11-20
 
+- Notebooks complete more often: more IPython syntax is read as IPython runs
+  it (`% pip install`, `files = !ls`, backslash-continued magics, graph-query
+  cell magics), notebooks made large by saved images are read for credentials
+  without their base64 output data, a notebook in which only some tutorial
+  cells do not parse is one budgeted gap, and repeated model-identifier
+  literals count once toward the per-file bound.
+
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the
   checkout so it exercises the installed wheel.
