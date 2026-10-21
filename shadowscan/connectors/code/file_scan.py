@@ -43,6 +43,7 @@ from shadowscan.connectors.code.javascript_imports import (
     JavascriptToolResolver,
     has_javascript_tool_import,
 )
+from shadowscan.connectors.code.json_data import ambiguous_data_file
 from shadowscan.connectors.code.lockfiles import LOCKFILE_NAMES, LockInventory
 from shadowscan.connectors.code.manifests import (
     Artifact,
@@ -51,7 +52,7 @@ from shadowscan.connectors.code.manifests import (
     manifest_comment_projection,
     parse_manifest,
 )
-from shadowscan.connectors.code.mcp_config import _parse_mcp_servers, json_readings, json_readings_declare_mcp
+from shadowscan.connectors.code.mcp_config import _parse_mcp_servers, json_readings_declare_mcp
 from shadowscan.connectors.code.mcp_tools import MCPToolLimitError, mcp_tool_names
 from shadowscan.connectors.code.model_artifacts import (
     ARTIFACT_SUFFIXES,
@@ -598,40 +599,14 @@ class FileScanner:
             # Detection still runs, but without an established
             # structured context none of this file's excerpts can
             # safely be emitted.
-            if isinstance(exc, JSONIntegrityError) and self._ambiguous_data_file(rel, text):
+            if isinstance(exc, JSONIntegrityError) and ambiguous_data_file(
+                self.index, rel, text, self.walker._agent_configuration
+            ):
                 self.walker.budget_defects(
                     rel, "ambiguous JSON data no reading makes configuration", kind="integrity"
                 )
             self._withhold_excerpts(rel, exc, "parsing")
             return None, False
-
-    def _ambiguous_data_file(self, rel: str, text: str) -> bool:
-        """Whether JSON the integrity checks refused is a data file that no reading makes configuration.
-
-        A provider catalog or an editor grammar that repeats a key is read by
-        no client as configuration: every reading of the key (first value kept,
-        last value kept, repeated objects merged; ``json_readings``) is walked
-        for an MCP server table (``json_readings_declare_mcp``) and none holds
-        one, and none is a structured agent definition the configuration
-        detectors recognize (``structured_code_matches``: an exported n8n
-        workflow that repeats a harmless key is still an agent). A manifest or
-        lockfile is never such a file (npm keeps a repeated ``dependencies``
-        key's last value, which hides the first from a reader that keeps it),
-        nor is agent configuration (``_agent_configuration``).
-        """
-        name = PurePosixPath(rel).name
-        if (
-            not name.lower().endswith(".json")
-            or is_manifest_name(name)
-            or name.lower() in LOCKFILE_NAMES
-            or self.walker._agent_configuration(rel)
-            or json_readings_declare_mcp(text) is not False
-        ):
-            return False
-        readings = json_readings(text) or []
-        return bool(readings) and not any(
-            structured_code_matches(self.index, rel, text, documents=[reading]) for reading in readings
-        )
 
     @staticmethod
     def _parsed_document(file: _SourceFile, suffixes: tuple[str, ...], *, strict: bool = False) -> Any:

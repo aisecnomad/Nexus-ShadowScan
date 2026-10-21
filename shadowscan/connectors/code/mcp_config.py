@@ -9,10 +9,12 @@ any record leaves this module.
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import sys
 import tomllib
+from collections.abc import Callable
 from typing import Any, NamedTuple
 
 import yaml
@@ -352,11 +354,21 @@ class _Repeated(list[Any]):
     """Every value a repeated key held where the values were not all objects (``_merged``)."""
 
 
-def _merge_into(kept: Any, value: Any) -> Any:
-    """``value`` merged into ``kept``, in place: objects key by key, anything else kept side by side."""
+class _MergeLimitError(ValueError):
+    """Merging a document's repeated objects took more work than its text bounds."""
+
+
+def _merge_into(kept: Any, value: Any, work: list[int]) -> Any:
+    """``value`` merged into ``kept``, in place: objects key by key, anything else kept side by side.
+
+    Each key copied is charged to ``work[0]``, the merges left; past it the merge stops.
+    """
     if isinstance(kept, dict) and isinstance(value, dict):
+        work[0] -= len(value)
+        if work[0] < 0:
+            raise _MergeLimitError("merged reading past its work bound")
         for key, item in value.items():
-            kept[key] = _merge_into(kept[key], item) if key in kept else item
+            kept[key] = _merge_into(kept[key], item, work) if key in kept else item
         return kept
     if isinstance(kept, _Repeated):
         kept.append(value)
@@ -364,18 +376,26 @@ def _merge_into(kept: Any, value: Any) -> Any:
     return _Repeated([kept, value])
 
 
-def _merged(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    """A JSON object in which a repeated key's objects are merged, as Go's decoder fills a struct.
+def _merged(budget: int) -> Callable[[list[tuple[str, Any]]], dict[str, Any]]:
+    """A hook building JSON objects whose repeated keys' objects merge, as Go's decoder fills a struct.
 
     Every value any reading could take stays in the document: a repeated
     key whose values are not all objects keeps them all, side by side. Each
-    object is merged in place, and each value once, so the cost is linear
-    in the document.
+    object is merged in place, but an object merged into a repeated key is
+    copied key by key, and nesting such repeats copies one object again at
+    every level. The keys copied are therefore charged to ``budget`` (the
+    text's length), past which the hook raises ``_MergeLimitError`` and the
+    reading is undecided, as text that does not parse is.
     """
-    obj: dict[str, Any] = {}
-    for key, value in pairs:
-        obj[key] = _merge_into(obj[key], value) if key in obj else value
-    return obj
+    work = [budget]
+
+    def merged(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        obj: dict[str, Any] = {}
+        for key, value in pairs:
+            obj[key] = _merge_into(obj[key], value, work) if key in obj else value
+        return obj
+
+    return merged
 
 
 def json_readings(text: str) -> list[Any] | None:
@@ -390,7 +410,9 @@ def json_readings(text: str) -> list[Any] | None:
     with a hook that records whether any object repeats a key: a document
     without a repeat reads the same under every treatment, so that one
     reading is returned, and the extra readings are built only over a
-    repeat. ``text`` is bounded by its caller's size limit.
+    repeat; merging repeated objects copies at most as many keys as ``text``
+    has characters (``_merged``), past which the text is undecided too.
+    ``text`` is bounded by its caller's size limit.
     """
     if text.count("{") + text.count("[") > _MAX_JSON_CONTAINERS:
         return None
@@ -410,7 +432,7 @@ def json_readings(text: str) -> list[Any] | None:
     if not repeated:
         return [document]
     documents = [document]
-    for hook in (_first_wins, _merged):
+    for hook in (_first_wins, _merged(len(text))):
         try:
             documents.append(json.loads(text, object_pairs_hook=hook))
         except (ValueError, RecursionError):
@@ -421,6 +443,8 @@ def json_readings(text: str) -> list[Any] | None:
 # A server table key in any spelling a case-insensitive or lenient client may accept.
 _SERVER_KEY_VARIANT = re.compile(r"mcp[-_.]?servers", re.IGNORECASE)
 _EXACT_SERVER_KEYS = frozenset({"mcpServers", "mcp_servers"})
+_MCP_KEY = re.compile(r"mcp", re.IGNORECASE)
+_SERVERS_KEY = re.compile(r"servers", re.IGNORECASE)
 
 
 def _variant_server_key(document: Any) -> bool:
@@ -448,21 +472,23 @@ def _variant_key(key: str, value: Any) -> bool:
     """Whether ``key`` spells ``mcpServers``, or an ``mcp`` section holding ``servers``, in another case.
 
     Either name may carry the variant case (``McpServers``, ``MCP.Servers``,
-    ``mcp.Servers``); only the exact pair ``mcp.servers``, which the walk
-    reads itself, is no variant.
+    ``mcp.Servers``, ``mcp.ſervers``: Go folds names as Unicode does); only
+    the exact pair ``mcp.servers``, which the walk reads itself, is no
+    variant. A section a repeated key held more than once is judged in each
+    of its values.
     """
     if _SERVER_KEY_VARIANT.fullmatch(key):
         return True
-    return (
-        key.lower() == "mcp"
-        and isinstance(value, dict)
-        and any(
-            isinstance(inner, str) and inner.lower() == "servers" and (key, inner) != ("mcp", "servers")
-            for inner in value
-        )
+    sections = value if isinstance(value, _Repeated) else [value]
+    return _MCP_KEY.fullmatch(key) is not None and any(
+        isinstance(inner, str) and _SERVERS_KEY.fullmatch(inner) and (key, inner) != ("mcp", "servers")
+        for section in sections
+        if isinstance(section, dict)
+        for inner in section
     )
 
 
+@functools.lru_cache(maxsize=4)
 def json_readings_declare_mcp(text: str) -> bool | None:
     """Whether any reading of ambiguous JSON holds an MCP server table; None when that is not known.
 
@@ -473,6 +499,8 @@ def json_readings_declare_mcp(text: str) -> bool | None:
     decided rather than left undecided. None when the text does not parse,
     holds more containers than the readings decide, or names a server table
     key in a spelling the walk does not match (``_variant_server_key``).
+    The file scanner asks this of one text more than once, so recent answers
+    are kept.
     """
     documents = json_readings(text)
     if documents is None:
@@ -481,8 +509,8 @@ def json_readings_declare_mcp(text: str) -> bool | None:
     for document in documents:
         holders, _ = mcp_server_holders(document, first=True, exhaustive=True)
         holds = holds or bool(holders)
-    # The merged reading holds every key any reading has.
-    if not holds and _variant_server_key(documents[-1]):
+    # A variant one reading's value of a repeated key spells is judged in that reading.
+    if not holds and any(_variant_server_key(document) for document in documents):
         return None
     return holds
 

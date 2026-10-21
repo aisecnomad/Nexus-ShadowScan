@@ -71,6 +71,27 @@ Counts and figures quoted in an entry are those of its date.
   schema keyword (`default`, `type`) under a schema's `properties` was taken
   for a field description (a field schema's keywords must now hold values
   of the types they take).
+- Review of the integration branch found that a budgeted repeated-key file
+  is analyzed without a parse, and that only two detectors were asked about
+  its readings. One harmless repeated key (`Description`, `family`) then
+  hid a CloudFormation template's Bedrock agent (the template need not name
+  its format version, and without a parse the structural check fell back to
+  that name) and an ECS task definition's LLM usage (without a parse it read
+  as a catalog), and a structured detector's alias limit (an ambiguous
+  Workato step) was dropped as an empty answer; each scan completed where
+  main fails it. Every reading is now also put to the manifest parser and to
+  the configuration-document check under each possible project root, and a
+  detector's errors and limits keep the file a gap. The case-variant guard
+  read only the merged reading and compared `servers` with `str.lower`: a
+  repeated `"MCP": null` section or a Unicode-folding `ſervers` (which Go
+  matches) slipped past it. Every reading is now checked, a repeated
+  section is judged in each of its values, and names are compared as
+  Unicode folds them. The merged reading's cost was not linear: nesting
+  repeats copied the widest object again at every level (a 4 MB file took
+  about 34 s of uninterruptible parse). Keys copied are now charged to a
+  budget of the text's length, past which the text is undecided (66 s to
+  3 s end to end on that file), and the answer is cached per text. Seven
+  regression tests fail on the earlier check and pass now.
 
 ### Unparsed-input triage and unrendered template source (October 21)
 

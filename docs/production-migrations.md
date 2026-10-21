@@ -15,10 +15,11 @@ full dated log.
 - A JSON data file the integrity checks refuse for a repeated key (a provider
   catalog, an editor grammar) is one budgeted partial gap instead of exit 3
   when no reading of the key — first value kept, last value kept, repeated
-  objects merged — holds an MCP server table and no structured detector reads
-  it as agent configuration. Manifests, lockfiles and agent configuration
-  still fail closed, as does a repeated key that hides a server table from
-  any reading. Repositories with such catalogs may stop exiting 3;
+  objects merged — holds an MCP server table and no detector that needs a
+  parse reads it as anything but data (a structured agent definition, an
+  infrastructure template, a deployment or configuration document) or stops
+  at a limit on it. Manifests, lockfiles and agent configuration still fail
+  closed, as does a repeated key that hides a server table from any reading. Repositories with such catalogs may stop exiting 3;
   re-baseline.
 - A JSON Schema object's field named `mcp_servers` describes a value, not
   servers: an oversize OpenAPI snapshot whose bytes name the key is parsed
