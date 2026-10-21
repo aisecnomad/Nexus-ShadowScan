@@ -121,6 +121,28 @@ Counts and figures quoted in an entry are those of its date.
   any parse failure under `${env}/`, so a module of newer Python syntax
   there completed; it now needs Jinja syntax in the directory name and in
   the file's own text (`TreeWalker.note_template_syntax`).
+- Review of the integration branch found three more ways the rules let a
+  scan complete with less read than main, which failed it:
+  - An analysis limit (AST nodes, recursion, time) reached while binding a
+    rendering was dropped with the template's own gap. Ordinary source that
+    reaches it fails the scan, so a placeholder line added to a large
+    agent module turned that failure into one budgeted gap and lost the
+    module's agent proof. The limit now fails the scan for a rendering too.
+  - The directory rule took `{{` anywhere in the text, a prompt string's
+    included. Python runs a module under such a directory as written, and a
+    newer interpreter than the scanner's parses grammar it cannot, so a
+    module of 3.12 syntax there completed as a template. Python source and
+    notebooks are now templates only by the content rule.
+  - The rendering kept lines but not character offsets: a 14-character
+    stand-in and dropped tags shifted the binder's spans against the file's
+    lexical matches, so a templated tool lost its `code-exec` capability.
+    Each stand-in is now as long as its placeholder and each tag line is
+    blanked.
+  A placeholder or tag also no longer spans a bare CR, which ends a Python
+  line, and a CRLF tag line is recognized. Renderings are cached, and Python
+  is rendered with the identifier stand-in only, so a failing 1 MB module
+  that holds `{{` costs 3 compiles rather than 7 (main: 1). Five regression
+  tests in `test_template_source.py` fail on the earlier rules and pass now.
 
 ### Release readiness review (October 21)
 

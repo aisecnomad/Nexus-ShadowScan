@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from shadowscan.connectors.code.template_source import unrendered_template
+from shadowscan.connectors.code.template_source import rendered_template, unrendered_template
 from shadowscan.models import Kind
 
 CREW = (
@@ -199,3 +199,73 @@ def test_a_template_under_a_jinja_directory_is_still_budgeted(tmp_path, run_conn
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
     assert _gaps(ctx) == [("{{cookiecutter.package_name}}/pyproject.toml", "partial", "unparsed-input")]
+
+
+# ------------------------------------------------- integration review follow-ups
+
+TOOL_MODULE = (
+    "import subprocess\n"
+    "from agents import Agent, function_tool\n\n"
+    "class {{crew_name}}():\n"
+    "    pass\n\n"
+    "@function_tool\n"
+    "def shell(cmd: str) -> str:\n"
+    "    return subprocess.run(cmd, shell=True, capture_output=True, text=True).stdout\n\n"
+    'agent = Agent(name="ops", instructions="run commands", tools=[shell])\n'
+)
+
+
+@pytest.mark.parametrize(
+    ("rel", "text"),
+    [
+        ("templates/crew/crew.py", CREW),
+        ("templates/crew/pyproject.toml", PYPROJECT),
+        ("templates/data.json", '{"count": {{count}}}'),
+        ("templates/tool.py", TOOL_MODULE),
+        ("templates/flow/main.py", "{% if flow %}\nimport os\n{% endif %}\nprint({{value}})\n"),
+        ("templates/crlf.py", "{% if x %}\r\nclass {{crew_name}}():\r\n    pass\r\n{% endif %}\r\n"),
+    ],
+)
+def test_a_rendering_keeps_every_line_and_character_offset(rel, text):
+    # The binder's spans in the rendering locate the file's own lexical matches.
+    rendered = rendered_template(rel, text)
+    assert rendered is not None and len(rendered) == len(text)
+    assert [len(line) for line in rendered.split("\n")] == [len(line) for line in text.split("\n")]
+
+
+def test_a_bare_carriage_return_ends_a_placeholder_or_a_tag():
+    # Python ends a line at a bare CR, so a placeholder spanning one could hide a statement.
+    assert not unrendered_template("app.py", "x = {{ 0\rimport openai\r0 }}\n")
+    assert not unrendered_template("app.py", "{% if a\rimport openai %}\nx = 1\n")
+
+
+def test_a_templated_tool_keeps_its_capabilities(tmp_path, run_connector):
+    # A placeholder or tag line of another length than its stand-in shifted every later
+    # offset, so the shell tool's code execution was no longer within the registered tool.
+    _project(tmp_path, {"templates/agent/agent.py": TOOL_MODULE})
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
+    agents = [f for f in findings if f.kind == Kind.AGENT]
+    assert any("code-exec" in f.capabilities for f in agents), [(f.kind, f.capabilities) for f in findings]
+
+
+def test_an_analysis_limit_on_a_rendering_fails_the_scan(tmp_path, run_connector):
+    # The rendering parsed, so a binder limit is no template gap: it fails as for any source.
+    weights = "WEIGHTS = [\n" + "    0.5,\n" * 1200 + "]\n"
+    _project(tmp_path, {"templates/crew/crew.py": CREW + weights})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, max_ast_nodes=1000)
+    assert ctx.stats.incomplete
+    assert any("template rendering skipped" in error for error in ctx.stats.errors), ctx.stats.errors
+
+
+def test_python_under_a_jinja_directory_is_a_template_only_by_its_content(tmp_path, run_connector):
+    # Python runs a module under such a directory as written, and a newer interpreter
+    # parses grammar this one cannot: '{{ }}' in a prompt string explains nothing.
+    module = 'PROMPT = "Answer the question: {{ question }}"\nfrom agents import Agent\nx = (\n'
+    _project(tmp_path, {"{{cookiecutter.agent}}/agent.py": module})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+    rendered_module = "from crewai import Agent\n\nclass {{crew_name}}():\n    pass\n"
+    _project(tmp_path / "ok", {"{{cookiecutter.agent}}/crew.py": rendered_module})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path / "ok"), use_git=False)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)

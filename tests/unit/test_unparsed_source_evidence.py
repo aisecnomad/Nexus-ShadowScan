@@ -169,10 +169,9 @@ def test_unparsed_source_in_a_discounted_test_path_only_warns(
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("{% if cookiecutter.flag %}import os{% endif %}\ndef f(:\n    pass\n")
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, **options)
+    # Python under a template-named directory runs as written: it is a template only by its
+    # content, and an inline tag does not render, so it is judged as any other source.
     message = f"code.filesystem: {rel}: import-bound analysis skipped (source did not parse); lexical evidence retained"
-    if "{{" in rel:
-        # Unrendered template source is charged to the budget, which a tree of two files exceeds.
-        message += "; unrendered template source (template syntax in its directory); coverage gap"
     assert ctx.stats.warnings == [message]
     assert ctx.stats.incomplete is incomplete
     assert any(finding.kind == Kind.AGENT for finding in findings)
