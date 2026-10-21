@@ -291,8 +291,8 @@ repository contains no secrets.
 - Do not log raw credentials, JWTs, or unsanitized connector configuration.
 - Pin GitHub Actions by full commit SHA. Do not leave `persist-credentials`
   enabled on checkouts that do not need to push.
-- Add a detailed entry under Unreleased in `docs/engineering-log.md`, name it in
-  a line under Unreleased in `CHANGELOG.md`, and update `docs/production.md`
+- Add a detailed entry to `docs/engineering-log.md` and name it in a line in
+  `CHANGELOG.md`, each in the newest section (`## Unreleased`, or the upcoming release's dated section until it is tagged), and update `docs/production.md`
   when a change affects rollout, finding identity, or credential policy.
 - Include regression tests for bug fixes.
 - Use the PR template checklist; it covers the main gates. `make check` runs

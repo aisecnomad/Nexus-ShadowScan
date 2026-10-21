@@ -341,7 +341,7 @@ def test_live_files_name_the_current_repository() -> None:
             continue
         if name in ("CHANGELOG.md", "docs/engineering-log.md"):
             # Dated logs: the released sections record the name the repository had then.
-            text = text[: text.index("\n## 0.")]
+            text = text[: _history_start(text)]
         stale.extend(
             f"{name}:{number}"
             for number, line in enumerate(text.splitlines(), start=1)
@@ -1528,6 +1528,20 @@ _CURRENT_ROOT_DOCS = ("README.md", "RELEASE_NOTES.md", "SECURITY.md", "GOVERNANC
 _RELEASED_HEADING = re.compile(r"^## \d+\.\d+", re.MULTILINE)
 
 
+def _history_start(text: str) -> int:
+    """Where a dated log's history begins: the first section after the newest one.
+
+    The newest section describes the current tree: ``## Unreleased`` while changes
+    are pending, or the upcoming release's own section once its heading is dated
+    ahead of publication. Every later versioned section records a shipped release.
+    """
+    headings = [match.start() for match in _RELEASED_HEADING.finditer(text)]
+    unreleased = re.search(r"^## Unreleased\b", text, re.MULTILINE)
+    if unreleased is not None and (not headings or unreleased.start() < headings[0]):
+        return headings[0] if headings else len(text)
+    return headings[1] if len(headings) > 1 else len(text)
+
+
 # The dated engineering log quotes the counts of each entry's date, like CHANGELOG.md.
 _DATED_DOCS = frozenset({"engineering-log.md"})
 
@@ -1554,15 +1568,13 @@ def _current_docs() -> list[Path]:
 def _current_text(path: Path) -> str:
     """The part of a document that describes the current tree.
 
-    RELEASE_NOTES.md keeps one section per release below its ``## Unreleased`` section, and a
-    released section states what that version shipped; only the text before the first released
-    heading is checked. Every other document is checked whole.
+    RELEASE_NOTES.md keeps one section per release below its newest section (see
+    ``_history_start``), and a released section states what that version shipped; only the newest
+    section and the text above it are checked. Every other document is checked whole.
     """
     text = _read(path)
     if path.name == "RELEASE_NOTES.md":
-        match = _RELEASED_HEADING.search(text)
-        if match is not None:
-            return text[: match.start()]
+        return text[: _history_start(text)]
     return text
 
 
@@ -1574,6 +1586,10 @@ def test_release_notes_are_checked_up_to_the_first_released_section(tmp_path: Pa
     assert _current_text(notes) == current
     notes.write_text(current, encoding="utf-8")
     assert _current_text(notes) == current, "notes without a released section are checked whole"
+    # A release dated ahead of publication is the newest section and still describes the tree.
+    upcoming = "# Release notes\n\n## 0.1.2 — 2026-11-20\n\n- 10 signatures and 20 signals\n\n"
+    notes.write_text(upcoming + released, encoding="utf-8")
+    assert _current_text(notes) == upcoming
     other = tmp_path / "README.md"
     other.write_text(current + released, encoding="utf-8")
     assert _current_text(other) == current + released, "only RELEASE_NOTES.md is sliced"
