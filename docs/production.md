@@ -515,7 +515,13 @@ bytes) per file.
 YAML parsing checks input size, composed nodes, alias count, nesting, expanded
 nodes/content and merge work before object construction. Sanitization has a
 separate expanded-structure and total-work budget, so valid YAML aliases cannot
-cause unbounded report serialization. CODEOWNERS patterns use bounded iterative
+cause unbounded report serialization. Credential-call redaction reads each
+argument list for at most 8,192 steps; a credential-typed call that is still
+open there (often prose naming `` `ClientSession(` ``) is read on to its end
+within an extension budget of 8 work units per character of the text, shared
+by all such calls in it, and inside the shared 128 Mi-unit redaction work
+limit. A call past either budget, or nested more than 32 deep, still withholds
+the file's excerpts (sanitization-limit, exit 3). CODEOWNERS patterns use bounded iterative
 matching with a per-lookup work budget.
 
 `code.filesystem` reserves incomplete coverage (exit 3) for content it would

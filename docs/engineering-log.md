@@ -70,6 +70,36 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   the new pin, as the consistency test requires; the linked reports are
   byte-identical at both commits. Checkouts the old companion `fetch` made
   should be fetched again.
+### Unclosed credential calls and a faster call lexer (October 21)
+
+- The 8,192-step call bound could not tell an argument list that never
+  closes from one that is merely long. Prose and comments that name a
+  credential-typed call without closing it reached the bound, and every
+  excerpt of the file was withheld (a sanitization-limit gap). A call past
+  the bound that would fail closed is now read again to its end; all such
+  reads in one text share `_CALL_EXTENSION_PER_CHAR` work units per
+  character, so they stay linear in its length, and a call past that budget
+  still fails closed.
+- The lexer crosses runs of characters that cannot open or close a string,
+  comment or bracket in one step, charged their length. A run is matched no
+  further than the step after the bound and the shared work bound: an
+  earlier draft let a run cross a whole text, so 200 unclosed calls over a
+  960 KB tail each scanned to its end (quadratic), which
+  `test_reading_past_the_step_bound_stays_linear` caught. Over 4,500 corpus
+  and adversarial texts the output and exceptions are identical to the
+  per-character lexer, in 17.9 s against 29.7 s.
+- Review found a fail-open in the extension: with the shared budget nearly
+  spent, an extended reading could stop before the step-bound reading had,
+  and it replaced that reading. A call pairing a credential key with a
+  value (`setdefault(default=..., key="OPENAI_API_KEY", ...)`) was then
+  judged on the shorter reading, which no longer held the key, and the
+  value reached the excerpt where main fails closed. An extension that
+  stops for length is now discarded, and the call keeps its step-bound
+  reading and fails closed. A differential fuzz (8,000 texts, step bound 64,
+  extension budgets 0-8 per character, a credential-shaped value) found 781
+  values the old extension emitted and main withheld, and none after the
+  fix. The lexer also skips the run pattern at a character that cannot start
+  a run, which brings delimiter-dense text back to main's cost.
 
 ### Release readiness review (October 21)
 

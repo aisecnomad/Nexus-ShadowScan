@@ -53,7 +53,25 @@ _CALL_PLAIN_KEY = re.compile(r"(?i)[rub]{0,2}(?P<quote>[\"'])(?P<key>[A-Za-z_][A
 # them is only a problem when it pairs a credential key with a value.
 _MAX_CALL_DEPTH = 32
 _MAX_CALL_STEPS = 8 * 1024
+# The step bound cannot tell an argument list that is merely long from one that
+# never closes: prose and comments name credential types ('`ClientSession(`')
+# without closing them. A call past it that would fail closed is read again to
+# its end. All such reads in one text share this many work units per character
+# of it, so they stay linear in its length, also summed over the many values of
+# one structured file; a call past that budget still fails closed.
+_CALL_EXTENSION_PER_CHAR = 8
 _OPENERS = {")": "(", "]": "[", "}": "{"}
+# Runs of characters the lexer only steps over: none opens a string, comment or
+# bracket, closes one, or separates arguments (inside a string: none escapes,
+# quotes, interpolates or ends a line). Each run is crossed in one step and
+# charged its length, so every bound counts exactly what the loop's per-character
+# steps counted and trips at the same place; only the Python overhead goes.
+_ARGUMENT_RUN = re.compile(r"[^\"'`#/()\[\]{},]++")
+_STRING_RUN = re.compile(r"[^\\\"'`#{}$@\n]++")
+# The characters each run excludes: at one of them no run starts, so the lexer
+# steps over it without trying the pattern (delimiter-dense text is common).
+_ARGUMENT_STOPS = frozenset("\"'`#/()[]{},")
+_STRING_STOPS = frozenset("\\\"'`#{}$@\n")
 
 
 class _CallLexer:
@@ -77,9 +95,11 @@ class _CallLexer:
         # Actual Go comments indexed while reading SDK imports. Selector
         # receivers can then be read backwards without searching source again.
         self._go_comments: dict[int, int] = {}
+        # Work left for reading calls past _MAX_CALL_STEPS (see complete_arguments).
+        self._extension = _CALL_EXTENSION_PER_CHAR * len(text)
 
-    def tick(self) -> None:
-        self.work += 1
+    def tick(self, steps: int = 1) -> None:
+        self.work += steps
         if self.work > _MAX_REDACTION_WORK:
             raise SanitizationLimitError("credential call work limit exceeded")
 
@@ -169,6 +189,15 @@ class _CallLexer:
         braces = 0
         end = len(text)
         while position < len(text):
+            run = (
+                None
+                if text[position] in _STRING_STOPS
+                else _STRING_RUN.match(text, position, position + max(_MAX_REDACTION_WORK - self.work, 0) + 1)
+            )
+            if run is not None:
+                self.tick(run.end() - position)
+                position = run.end()
+                continue
             self.tick()
             char = text[position]
             if char == "\\" and not verbatim:
@@ -211,7 +240,9 @@ class _CallLexer:
         self._strings[start] = end
         return end
 
-    def arguments(self, start: int, *, comments: bool) -> tuple[list[tuple[int, int]], str, bool]:
+    def arguments(
+        self, start: int, *, comments: bool, until: int | None = None
+    ) -> tuple[list[tuple[int, int]], str, bool]:
         """Split the argument list whose ``(`` ends just before ``start``.
 
         Returns the argument spans, a state and whether a comment was skipped.
@@ -220,6 +251,7 @@ class _CallLexer:
         bound. Unless closed, the last span runs to the end of the text, so a
         malformed credential value is withheld through EOF. Delimiters inside
         quoted values, nested calls and comments cannot end a value early.
+        ``until`` replaces the step bound with a total work count to stop at.
         """
         text = self.text
         spans: list[tuple[int, int]] = []
@@ -229,11 +261,23 @@ class _CallLexer:
         skipped_comment = False
         state = "open"
         while position < len(text):
-            self.tick()
-            steps += 1
-            if steps > _MAX_CALL_STEPS:
+            # A run is matched no further than the step after the bound, which trips
+            # where the per-character loop tripped: an unclosed call in a long
+            # paragraph-free text stops at the bound instead of crossing all of it.
+            run = None
+            if text[position] not in _ARGUMENT_STOPS:
+                allowed = _MAX_CALL_STEPS - steps if until is None else until - self.work
+                allowed = min(allowed, _MAX_REDACTION_WORK - self.work)
+                run = _ARGUMENT_RUN.match(text, position, position + max(allowed, 0) + 1)
+            length = 1 if run is None else run.end() - position
+            self.tick(length)
+            steps += length
+            if (steps > _MAX_CALL_STEPS) if until is None else (self.work > until):
                 state = "length"
                 break
+            if run is not None:
+                position = run.end()
+                continue
             char = text[position]
             if char in "\"'`":
                 position = self.string_end(position)
@@ -264,6 +308,89 @@ class _CallLexer:
             position += 1
         spans.append((argument_start, len(text)))
         return spans, state, skipped_comment
+
+    def complete_arguments(self, start: int) -> tuple[list[tuple[int, int]], str]:
+        """Read past the step bound an argument list ``arguments`` stopped in.
+
+        Only a call that would otherwise fail closed is read again, so ordinary
+        calls keep the step bound that keeps their rescans near linear. Every
+        such read in one text draws on one budget proportional to its length;
+        once it is spent the call reports ``length`` as before. The reading
+        under comment rules is retried with the markers as text, as in
+        ``_redact_credential_calls``.
+        """
+        before = self.work
+        try:
+            spans, state, skipped = self.arguments(start, comments=True, until=before + self._extension)
+            if state != "closed" and skipped and self.work - before < self._extension:
+                retry = self.arguments(start, comments=False, until=before + self._extension)
+                if retry[1] == "closed":
+                    spans, state = retry[0], retry[1]
+        finally:
+            self._extension = max(0, self._extension - (self.work - before))
+        return spans, state
+
+
+class _CallReadings:
+    """Argument lists of one text, each lexed and judged once.
+
+    Several callees can share one ``(`` (every word of a comment block before
+    it), so the lexed spans and the judged values are cached by its position.
+    """
+
+    def __init__(self, lexer: _CallLexer) -> None:
+        self.lexer = lexer
+        self.lexed: dict[int, tuple[list[tuple[int, int]], str]] = {}
+        self.judged: dict[int, tuple[bool, list[tuple[int, int]]]] = {}
+
+    def read(self, start: int) -> tuple[list[tuple[int, int]], str]:
+        """Lex an argument list within the step bound.
+
+        A reading under comment rules that does not close is retried with the
+        markers as text, and that retry is kept only if it closes.
+        """
+        if start not in self.lexed:
+            spans, state, skipped_comment = self.lexer.arguments(start, comments=True)
+            if state != "closed" and skipped_comment:
+                retry = self.lexer.arguments(start, comments=False)
+                if retry[1] == "closed":
+                    spans, state, _ = retry
+            self.lexed[start] = spans, state
+        return self.lexed[start]
+
+    def complete(self, start: int) -> tuple[list[tuple[int, int]], str]:
+        """Read a call that would fail closed at the step bound to its end.
+
+        Only a ``length`` reading is extended, so every other call keeps the
+        spans it had; the judged values of an extended call are recomputed.
+        An extension that stops for length too is discarded: with the shared
+        budget nearly spent it can stop before the step-bound reading did,
+        and judging that shorter reading could miss the credential key the
+        longer one holds, so the call keeps its first reading and fails closed.
+        """
+        spans, state = self.read(start)
+        if state == "length":
+            extended = self.lexer.complete_arguments(start)
+            if extended[1] != "length":
+                spans, state = self.lexed[start] = extended
+                self.judged.pop(start, None)
+        return spans, state
+
+    def judge(self, start: int) -> tuple[str, bool, list[tuple[int, int]]]:
+        """Return the call's state, whether it pairs a credential key, and its values.
+
+        A pairing call cut off at the step bound is completed before its
+        values are taken, so a value past the bound is withheld exactly.
+        """
+        spans, state = self.read(start)
+        if start not in self.judged:
+            self.judged[start] = _credential_call_values(self.lexer.text, spans, state == "closed")
+        sensitive, values = self.judged[start]
+        if sensitive and state == "length":
+            spans, state = self.complete(start)
+            self.judged[start] = _credential_call_values(self.lexer.text, spans, state == "closed")
+            sensitive, values = self.judged[start]
+        return state, sensitive, values
 
 
 def _call_argument_start(text: str, start: int, end: int) -> int:
@@ -414,9 +541,9 @@ def _redact_credential_calls(text: str) -> str:
     # Every word of a comment block before a '(' reaches that '(' as a callee.
     # Its arguments are lexed and judged once; each callee adds what its own
     # name withholds, once per kind of name.
-    lexed: dict[int, tuple[list[tuple[int, int]], str]] = {}
-    judged: dict[int, tuple[bool, list[tuple[int, int]]]] = {}
+    readings = _CallReadings(lexer)
     read_literals: set[tuple[int, int, tuple[int, ...]]] = set()
+
     for call in calls:
         if call.start() < skip_until:
             continue
@@ -426,14 +553,7 @@ def _redact_credential_calls(text: str) -> str:
             if opening >= len(text) or text[opening] != "(":
                 continue
             argument_start = opening + 1
-        if argument_start not in lexed:
-            spans, state, skipped_comment = lexer.arguments(argument_start, comments=True)
-            if state != "closed" and skipped_comment:
-                retry = lexer.arguments(argument_start, comments=False)
-                if retry[1] == "closed":
-                    spans, state, _ = retry
-            lexed[argument_start] = spans, state
-        spans, state = lexed[argument_start]
+        spans, state = readings.read(argument_start)
         callee = _qualified_callee(text, call)
         if imported and callee in _GO_SDK_METHODS:
             receiver = _go_sdk_receiver(text, call.start(), lexer)
@@ -446,6 +566,7 @@ def _redact_credential_calls(text: str) -> str:
             level = min(level, 1)
         known = _sdk_credential_positions(callee, imported)
         if level or known:
+            spans, state = readings.complete(argument_start)
             if state in {"nesting", "length"}:
                 raise SanitizationLimitError(f"credential call {state} limit exceeded")
             # Literal credentials do not skip nested calls: a call inside
@@ -453,9 +574,7 @@ def _redact_credential_calls(text: str) -> str:
             if (argument_start, level, known) not in read_literals:
                 read_literals.add((argument_start, level, known))
                 literals.extend(_credential_literals(lexer, spans, state == "closed", level, known))
-        if argument_start not in judged:
-            judged[argument_start] = _credential_call_values(text, spans, state == "closed")
-        sensitive, call_values = judged[argument_start]
+        state, sensitive, call_values = readings.judge(argument_start)
         if not sensitive:
             continue
         if state in {"nesting", "length"}:

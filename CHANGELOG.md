@@ -17,6 +17,12 @@ explain operator migrations. Earlier per-change entries are preserved in the
 - The `benchmark-suite` companion pin moves to Nexus-ShadowBench `1ce0eee`
   (documentation, an amendment ledger, a hardened code-surface fetch, certifi
   2026.10.19 and a CI dependency audit); no benchmark evidence changed.
+- Prose and comments that name a credential-typed call without closing it
+  (`ClientSession(` in Markdown) no longer withhold a whole file's excerpts:
+  such a call is read to its end within a per-text work budget, and the
+  credential-call lexer crosses inert text in runs, 1.66x faster with
+  identical output.
+
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the
   checkout so it exercises the installed wheel.
