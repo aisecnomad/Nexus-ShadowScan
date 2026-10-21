@@ -305,3 +305,74 @@ def test_an_oversize_container_dense_json_stays_blinding(tmp_path, run_connector
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, max_file_size=4_000)
     assert ctx.stats.incomplete
     assert [kind for _, kind, _ in _gaps(ctx)] == ["blinding"]
+
+
+# ------------------------------------------- integration review follow-ups
+
+# A repeated-key file is analyzed without a parse, so a detector that needs one
+# must read every reading too: each of these was budgeted and its finding lost.
+_BEDROCK_TEMPLATE = (
+    '{"Description": "a", "Description": "b", "Resources": {"SupportAgent": {'
+    '"Type": "AWS::Bedrock::Agent", "Properties": {"AgentName": "support-agent",'
+    ' "FoundationModel": "anthropic.claude-3-5-sonnet-20240620-v1:0"}}}}\n'
+)
+_ECS_TASK = json.dumps(
+    {
+        "containerDefinitions": [
+            {
+                "name": "app",
+                "image": "registry.example/app:1",
+                "environment": [
+                    {"name": name, "value": "placeholder"}
+                    for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY")
+                ],
+            }
+        ]
+    }
+).replace("{", '{"family": "svc", "family": "svc", ', 1)
+_WORKATO_ALIASES = (
+    '{"z": 1, "z": 2, "code": [{"name": "generate", "provider": "workato_genai", "operation": "x"}]}\n'
+)
+
+
+@pytest.mark.parametrize(
+    ("rel", "text"),
+    [
+        ("infra/stack.json", _BEDROCK_TEMPLATE),  # CloudFormation needs no format version
+        ("deploy/task.json", _ECS_TASK),  # a deployment, however many providers it names
+        ("recipes/flow.json", _WORKATO_ALIASES),  # a detector's alias limit is no empty answer
+    ],
+    ids=["cloudformation", "ecs-task-definition", "detector-limit"],
+)
+def test_a_repeated_key_in_a_document_a_detector_reads_still_fails(tmp_path, run_connector, rel, text):
+    _project(tmp_path, {rel: text})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A repeated section whose first value is no object: Go skips the null.
+        '{"MCP": null, "MCP": {"Servers": {"e": {"command": "npx"}}}}',
+        '{"mcp": null, "mcp": {"Servers": {"e": {"command": "npx"}}}}',
+        # Go folds names as Unicode does: U+017F matches 's'.
+        '{"MCP": {"ſervers": {"e": {"command": "npx"}}}}',
+    ],
+    ids=["repeated-null-section", "repeated-null-lower", "unicode-fold"],
+)
+def test_a_server_section_only_a_case_insensitive_decoder_reads_is_undecided(text):
+    assert json_readings_declare_mcp(text) is None
+
+
+def test_merging_nested_repeats_is_bounded_by_the_text():
+    # Each level repeats a key whose first object is an empty path down to the widest
+    # object, so merging copied that object again at every level: depth times width.
+    width, depth = 20_000, 300
+    document = '{"p": {}, "p": {' + ",".join(f'"k{i}": 1' for i in range(width)) + "}}"
+    for level in range(2, depth + 1):
+        path = '{"p": ' * (level - 1) + "{}" + "}" * (level - 1)
+        document = '{"p": ' + path + ', "p": ' + document + "}"
+    start = time.monotonic()
+    assert json_readings(document) is None
+    assert time.monotonic() - start < 10

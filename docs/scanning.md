@@ -510,8 +510,11 @@ applied in this order:
    directory is judged as anywhere else. A plain JSON data file with a
    repeated key is charged to the budget when no reading of the key (first
    value kept, last value kept, repeated objects merged) holds an MCP server
-   table and no structured detector reads it as agent configuration; a
-   manifest, a lockfile and agent configuration never are. Agent configuration there is
+   table and no detector that needs a parse reads any reading as anything
+   but data (a structured agent definition, a CloudFormation or ARM
+   template, a deployment such as an ECS task definition, a configuration
+   document) or stops at a limit on it; a manifest, a lockfile and agent
+   configuration never are. Agent configuration there is
    never discounted, strict accounting keeps the gap, and a tree seeded with
    such files still exhausts the budget.
 5. **Budget.** Every other partial gap is charged to the budget; a blinding
