@@ -926,12 +926,14 @@ an untrusted repository, set `--connector-timeout-seconds` or
 
 When the deadline does end a walk, the walk stops early enough to leave time for
 the work that follows it (re-export binding and finding emission): five percent
-of its window, or 5 ms per file it scanned, whichever is larger, capped at a
-quarter of the window. The report then says how far it got (`connector deadline
+of its window, or 5 ms per file it scanned, whichever is larger (the per-file
+share capped at a quarter of the window), and never less than 250 ms. The report then says how far it got (`connector deadline
 reached after N of M files`), and the findings are a subset. If emission itself
 runs into the deadline, the connector records `connector deadline reached during
-finding emission; N of M project findings not emitted` rather than dropping
-them silently. Either way the scan exits 3. A value you set, from a configuration
+finding emission; the findings of N of M projects ... not emitted` rather
+than dropping them silently. Only the per-project emission, the costly part, is
+checked against the deadline; the findings that follow it (MCP configurations,
+manifests, workflows, infrastructure and credentials) are emitted in full. Either way the scan exits 3. A value you set, from a configuration
 file, `--connector-timeout-seconds` or `ScanConfig`, is used as it is and never
 raised, and that includes 120: a configuration that spells out
 `connector_timeout_seconds: 120` gives a large repository 120 seconds and

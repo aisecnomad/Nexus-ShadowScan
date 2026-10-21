@@ -195,8 +195,8 @@ class ProjectFindings:
             if deadline is not None and time.monotonic() >= deadline - scan.margin / 2:
                 self.ctx.error(
                     f"code.filesystem: {self._root_prefix(scan.label)}connector deadline reached during "
-                    f"finding emission; {len(projects) - position} of {len(projects)} project findings "
-                    "not emitted; results incomplete",
+                    f"finding emission; the findings of {len(projects) - position} of {len(projects)} "
+                    "projects (project, agent and tool findings) not emitted; results incomplete",
                 )
                 break
             with isolated(self.walker, proj.root, "project analysis"):

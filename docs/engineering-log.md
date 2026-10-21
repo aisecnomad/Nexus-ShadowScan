@@ -367,6 +367,13 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   cap, four times the allowance, leaves room for a compile. The Python
   source-semantics pass now compiles a deferred pattern (`ready`) before
   timing its search, as the matcher does.
+- Review follow-ups: the tree probe sized every file of one directory
+  before checking its limits, so one flat directory of 400,000 files took
+  1.7-2.4 s against the documented "180,000 entries or one second" (main:
+  0.3 s); the limits are now checked every 1,024 entries of a listing.
+  `.mts` and `.cts` count as source, the documented margin names its 250 ms
+  floor, and the emission diagnostic says it counts projects, whose project,
+  agent and tool findings were left out.
 
 ### Release readiness review (October 21)
 

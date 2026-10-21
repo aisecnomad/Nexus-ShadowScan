@@ -103,6 +103,25 @@ class TestEstimate:
         monkeypatch.setattr(FilesystemConnector, "_PROBE_SECONDS", 0.0)
         assert FilesystemConnector._probe_entry_count([tmp_path]) == FilesystemConnector._PROBE_LIMIT
 
+    def test_the_probe_stops_inside_one_flat_directory(self, tmp_path, monkeypatch) -> None:
+        # A flat directory of 400,000 files took 1.7-2.4 s: its limit was checked
+        # only between directories, after every entry had been sized.
+        for i in range(3_000):
+            (tmp_path / f"f{i}.py").write_text("x = 1\n", encoding="utf-8")
+        monkeypatch.setattr(FilesystemConnector, "_PROBE_LIMIT", 500)
+        monkeypatch.setattr(FilesystemConnector, "_PROBE_CHECK_ENTRIES", 100)
+        sized = 0
+        original = FilesystemConnector._probe_file.__func__
+
+        def counted(cls, *args) -> None:
+            nonlocal sized
+            sized += 1
+            original(cls, *args)
+
+        monkeypatch.setattr(FilesystemConnector, "_probe_file", classmethod(counted))
+        assert FilesystemConnector._probe_entry_count([tmp_path]) == 500
+        assert sized < 700, sized
+
     def test_the_probe_stops_at_its_limit(self, tmp_path) -> None:
         _tree(tmp_path, 60)
         original = FilesystemConnector._PROBE_LIMIT
@@ -649,7 +668,7 @@ class TestPostWalkReserve:
         assert not any(f.resource_type == "project" for f in findings)
         assert ctx.stats.incomplete and not ctx.stats.skipped
         assert any(
-            "connector deadline reached during finding emission; 4 of 4 project findings not emitted" in e
+            "connector deadline reached during finding emission; the findings of 4 of 4 projects" in e
             for e in ctx.stats.errors
         )
         assert ctx.stats.incomplete_reasons.get("timeout") == 1
