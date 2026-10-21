@@ -382,13 +382,16 @@ def test_a_queued_binders_wall_time_stops_short_of_the_deadline_margin(tmp_path,
         # The walk leaves the consumer just its budget and the margin.
         clock[0] = deadline - (self.scan_timeout + scan.margin + 0.05)
         expected.append(deadline - clock[0] - scan.margin)
-        scan_budget = self.index.scan_budget
+        # Patch the class, not the shared session index: undoing an instance patch
+        # would leave a stale bound method on it that hides later class patches.
+        index_type = type(self.index)
+        scan_budget = index_type.scan_budget
 
-        def recording(*args, **options):
+        def recording(index_self, *args, **options):
             caps.append(options)
-            return scan_budget(*args, **options)
+            return scan_budget(index_self, *args, **options)
 
-        monkeypatch.setattr(self.index, "scan_budget", recording)
+        monkeypatch.setattr(index_type, "scan_budget", recording)
         return resolve(self, scan)
 
     monkeypatch.setattr(file_scan.FileScanner, "resolve_reexport_sources", late_resolve)
