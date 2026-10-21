@@ -480,6 +480,12 @@ configured file/total limits within their hard ceilings when appropriate.
 The line limit is fixed, so a single oversize record requires an upstream
 export with bounded records rather than a larger file limit.
 
+`code.filesystem` binds a Python module of up to `max_ast_nodes` syntax-tree
+nodes (200,000 by default since the October 21 analysis-bounds change; set
+`max_ast_nodes: 50000` to keep the earlier ceiling) and redacts a file's
+excerpts on a CPU allowance of its own within the file's wall cap; see the
+[migration notes](production-migrations.md#october-21-analysis-bounds-unreleased).
+
 Shared HTTP JSON responses are streamed and limited to 16 MiB of decoded
 content by default. Each network attempt has a response-acquisition budget of
 twice the client timeout (60 seconds by default), covering connection, request

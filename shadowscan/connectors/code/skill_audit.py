@@ -103,7 +103,9 @@ class InstructionAudit:
         }
 
 
-def audit_skill_text(text: str, *, front_matter: bool = True) -> InstructionAudit:
+def audit_skill_text(
+    text: str, *, front_matter: bool = True, max_bytes: int = MAX_TEXT_BYTES
+) -> InstructionAudit:
     """Inspect a bounded snapshot; emit locations and fixed descriptions only.
 
     The caller reports ``incomplete`` through its connector statistics. Input
@@ -113,6 +115,9 @@ def audit_skill_text(text: str, *, front_matter: bool = True) -> InstructionAudi
     last ``MAX_LINE_CHARACTERS`` characters and marks the audit ``partial``.
     No evidence weight or agent classification is assigned here.
 
+    ``max_bytes`` bounds the snapshot (``MAX_TEXT_BYTES`` for a skill file; an
+    MCP tool description is audited in its own, smaller window).
+
     ``front_matter``: a leading ``---`` line opens YAML front matter, of which
     only ``name`` and ``description`` are audited, as a skill loader reads a
     ``SKILL.md``. Text that is not such a document (an MCP tool description)
@@ -121,11 +126,11 @@ def audit_skill_text(text: str, *, front_matter: bool = True) -> InstructionAudi
     """
     limitations = list(_LIMITATIONS)
     incomplete = partial = False
-    encoded = text[: MAX_TEXT_BYTES + 1].encode("utf-8", errors="replace")
-    if len(text) > MAX_TEXT_BYTES or len(encoded) > MAX_TEXT_BYTES:
+    encoded = text[: max_bytes + 1].encode("utf-8", errors="replace")
+    if len(text) > max_bytes or len(encoded) > max_bytes:
         incomplete = True
         limitations.append("Instruction text exceeds the inspection byte limit; only a prefix was inspected.")
-        text = encoded[:MAX_TEXT_BYTES].decode("utf-8", errors="ignore")
+        text = encoded[:max_bytes].decode("utf-8", errors="ignore")
     lines = text.splitlines()
     body_start = 0
     indicators: list[InstructionIndicator] = []

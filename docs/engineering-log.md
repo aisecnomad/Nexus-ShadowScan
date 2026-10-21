@@ -41,6 +41,16 @@ Counts and figures quoted in an entry are those of its date.
   was past the skill audit's 64 KiB. The audit is linear in its lines (about
   40 ms at 512 KiB) and the instruction-content inspector already reads the
   same files to 512 KiB; the audit now does too.
+- Review of that change found that `endpoint.mcp` passes MCP tool
+  descriptions through the same audit, so its window rose with it, and the
+  endpoint's tool-poisoning search, whose verb suffix was an unbounded
+  `\w*`, is quadratic on long runs of word characters (7.9 s for 64 KiB on
+  main). Tool descriptions keep a 64 KiB window of their own
+  (`runtime.MAX_DESCRIPTION_BYTES`, passed to `audit_skill_text` as
+  `max_bytes`), and the verb suffix is bounded to 32 word characters, which
+  keeps the search linear. `separate_budget` also checks its own allowance
+  when the work returns, so redaction that ran out between periodic checks
+  still withholds the file's excerpts.
 
 ### Release readiness review (October 21)
 

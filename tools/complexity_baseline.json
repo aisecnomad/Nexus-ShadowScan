@@ -129,6 +129,6 @@
     "shadowscan/connectors/code/walk.py": 2686,
     "shadowscan/connectors/gateway/logs.py": 2112,
     "shadowscan/connectors/identity/entra.py": 2157,
-    "shadowscan/signatures/matcher.py": 3037
+    "shadowscan/signatures/matcher.py": 3039
   }
 }

@@ -127,8 +127,8 @@ def separate_budget() -> Iterator[None]:
     back to the active budget (``_ScanBudget.extend_cpu``), so an input costs at
     most twice its CPU allowance. The wall deadline is the active budget's own,
     unchanged: it holds the walker's clamp to the connector deadline, so no
-    file runs past it. Exhausting either raises ``MatchTimeoutError`` like any
-    budget. Without an active budget nothing changes.
+    file runs past it. Exhausting either raises ``MatchTimeoutError``, also when
+    the work returns. Without an active budget nothing changes.
     """
     active = _SCAN_BUDGET.get()
     if active is None:
@@ -147,6 +147,8 @@ def separate_budget() -> Iterator[None]:
     finally:
         _SCAN_BUDGET.reset(token)
         active.extend_cpu(time.thread_time() - cpu)
+    if separate.remaining() <= 0:
+        raise MatchTimeoutError(separate.exhausted())
 
 
 # A briefly busy worker can exhaust several regex wall-clock attempts before

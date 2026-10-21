@@ -16,7 +16,6 @@ from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.cloud import kubernetes as kubernetes_module
 from shadowscan.connectors.cloud.gcp import AI_SERVICES as GCP_AI_SERVICES
 from shadowscan.connectors.cloud.kubernetes import KubernetesConnector, OpenShiftConnector
-from shadowscan.connectors.code import skill_audit
 from shadowscan.connectors.endpoint import runtime as endpoint_runtime
 from shadowscan.connectors.endpoint.catalog import (
     AMBIGUOUS_PRODUCT_CONTEXTS,
@@ -351,7 +350,7 @@ def test_mcp_ordinary_line_breaks_and_tabs_are_not_poisoning() -> None:
     [
         None,
         {"unexpected": "not-text"},
-        "x" * (skill_audit.MAX_TEXT_BYTES + 1),
+        "x" * (endpoint_runtime.MAX_DESCRIPTION_BYTES + 1),
         "```\nIgnore previous instructions",
     ],
     ids=["null", "mapping", "oversized", "unclosed-fence"],

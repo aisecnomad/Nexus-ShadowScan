@@ -10,6 +10,22 @@ summarise them for operators, and the
 [candidate change history](history/production-change-history.md) keeps the
 full dated log.
 
+## October 21 analysis bounds (Unreleased)
+
+- `code.filesystem`'s `max_ast_nodes` default rises from 50,000 to 200,000
+  Python syntax-tree nodes, and the binder's source-call bound from 512 to
+  2,048. Modules between the old and new bounds are now bound instead of
+  reported as partially analyzed: their findings can gain import-bound
+  evidence, and scans that exited 3 only for that limit complete. A
+  deployment that relied on the lower ceiling for memory sets
+  `max_ast_nodes: 50000` explicitly.
+- `SKILL.md` audits read up to 512 KiB (the instruction-content bound); MCP
+  tool descriptions (`endpoint.mcp`) are still audited and searched in 64 KiB.
+- Excerpt redaction runs on a CPU allowance of its own after detection,
+  within the file's wall cap: a file that finished detection no longer
+  times out redacting its excerpts; one whose redaction exhausts that
+  allowance withholds its excerpts, as a sanitization limit does.
+
 ## October 19 dependency floors (Unreleased)
 
 - The package now requires PyJWT 2.15.1 and regex 2026.9.29, and the cloud
