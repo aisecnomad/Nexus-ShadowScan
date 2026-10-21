@@ -110,7 +110,8 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
    python -m venv /tmp/nss && . /tmp/nss/bin/activate
    python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
    python -m pip install --no-deps --index-url https://test.pypi.org/simple/ NexusShadowScan==0.1.3
-   shadowscan --help && python -m shadowscan.signatures.validate && python -m shadowscan.mappings.validate
+   # Leave the checkout: `python -m` would otherwise import its source, not the installed wheel.
+   cd "$(mktemp -d)" && shadowscan --help && python -m shadowscan.signatures.validate && python -m shadowscan.mappings.validate
    ```
 
 4. **Tag the reviewed commit.** Create an annotated tag on that exact commit.
