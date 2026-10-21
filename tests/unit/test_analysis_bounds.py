@@ -161,3 +161,24 @@ def test_a_separate_allowance_exhausted_without_polling_raises_on_exit(index):
         separate_budget(),
     ):
         _burn(0.25)
+
+
+def test_copies_for_constant_guards_are_charged_to_the_flow_budget(monkeypatch):
+    # A constant guard continues on its branch with the rest of the body; nesting them copied
+    # the rest at every level uncharged (939 KB of source peaked at about 1.4 GiB).
+    monkeypatch.setattr(provider_loops, "MAX_FLOW_STEPS", 50_000)
+    source = (
+        "from openai import OpenAI\nclient = OpenAI()\n"
+        "T = [{'type': 'function', 'function': {'name': 'x'}}]\nh = []\nwhile True:\n"
+        "    r = client.chat.completions.create(model='m', messages=h, tools=T)\n"
+        + "    if 1:pass\n" * 100
+        + ("    " + "pass;" * 999 + "pass\n")
+    )
+    tree = ast.parse(source)
+    calls = {
+        id(node)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "create"
+    }
+    with pytest.raises(MatchTimeoutError, match="provider tool-loop analysis budget"):
+        provider_loops.provider_tool_loop_lines(tree, calls)

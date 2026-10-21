@@ -43,6 +43,7 @@ from shadowscan.connectors.posture import (
     CLIENT_SIGNATURES,
     approval_scopes,
     posture_client,
+    settings_paths_at,
     unreadable_settings,
 )
 from shadowscan.coverage import is_vendored_path
@@ -1657,19 +1658,20 @@ class TreeWalker:
         try:
             for rel, target, identity in walk.aliases:
                 real = root / target.relative_to(resolved_root)
-                if walk.alias_files >= MAX_ALIAS_FILES:
-                    self._unread_alias_gap(rel, f"{MAX_ALIAS_FILES:,} files already read at link paths")
-                    continue
-                if not _same_object(real, target, identity):
-                    self._unread_alias_gap(rel, "its target changed while the walk read the tree")
-                    continue
                 # The walk's stack of project roots holds only its last branch by now.
                 proj = _project_root(root, rel, walk.project_roots, budget=walk.budget)
+                if walk.alias_files >= MAX_ALIAS_FILES:
+                    self._unread_alias_gap(rel, proj, f"{MAX_ALIAS_FILES:,} files already read at link paths")
+                    continue
+                if not _same_object(real, target, identity):
+                    self._unread_alias_gap(rel, proj, "its target changed while the walk read the tree")
+                    continue
                 if not real.is_dir():
                     try:
                         info = real.lstat()
                     except OSError:
                         self._gap(rel, f"code.filesystem: could not inspect {rel}", reason="unresolved-link")
+                        self._unread_settings.extend((proj, path) for path in settings_paths_at(rel))
                         continue
                     self._entry_projects[rel] = proj
                     entry = self._regular_entry(root, rel, real, proj, info, walk)
@@ -1715,7 +1717,7 @@ class TreeWalker:
                 here = rel_dir
             for fn in sorted(filenames):
                 if walk.alias_files >= MAX_ALIAS_FILES:
-                    self._unread_alias_gap(rel, f"{MAX_ALIAS_FILES:,} files already read at link paths")
+                    self._unread_alias_gap(rel, proj, f"{MAX_ALIAS_FILES:,} files already read at link paths")
                     return True
                 if self._excluded_file(f"{real_dir}/{_report_name(fn)}"):
                     continue
@@ -1742,8 +1744,13 @@ class TreeWalker:
         self._alias_real[entry[0]] = _report_name(os.path.relpath(entry[1], root).replace(os.sep, "/"))
         return entry
 
-    def _unread_alias_gap(self, rel: str, why: str) -> None:
-        """Record a link that stands for agent configuration and is not read at its link path."""
+    def _unread_alias_gap(self, rel: str, proj: str, why: str) -> None:
+        """Record a link that stands for agent configuration and is not read at its link path.
+
+        A settings file a client reads there stays unread too, so it keeps the
+        approval gate of project ``proj`` from looking tighter than it is.
+        """
+        self._unread_settings.extend((proj, path) for path in settings_paths_at(rel))
         self._ledger_gap(
             rel,
             f"code.filesystem: skipped symbolic link {rel}: not read at the link path, {why}; at the link "
@@ -2026,7 +2033,13 @@ class TreeWalker:
             self.root_listing_incomplete = True
         if (diff_files := scan.diff_files) is not None:
             # Filtered up front so the deadline remainder counts only files the walk would read.
-            entries = [entry for entry in entries if self._diff_included(entry[0], diff_files)]
+            # A file read at a link path is agent configuration whichever change reached it (the
+            # link, its target, or a directory link above), so it is always kept.
+            entries = [
+                entry
+                for entry in entries
+                if entry[0] in self._alias_real or self._diff_included(entry[0], diff_files)
+            ]
         entries.sort(key=lambda entry: (_scan_priority(entry[0], entry[1].name), entry[3]))
         examined = 0
         # Files the walk read: only they leave re-export binding and emission work after it.

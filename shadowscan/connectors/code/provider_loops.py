@@ -109,6 +109,16 @@ class _Budget:
         if self.steps % 256 == 0:
             pattern_timeout()
 
+    def followed(self, selected: list[ast.stmt], rest: list[ast.stmt]) -> list[ast.stmt]:
+        """``selected`` then ``rest``, the copy charged a step per statement.
+
+        A constant guard continues on its one reachable branch with the statements
+        after it; nesting such guards copies the rest of the body at every level.
+        """
+        self.steps += len(selected) + len(rest)
+        self.tick()
+        return [*selected, *rest]
+
     def walk(self, node: ast.AST, *, nested_scopes: bool = False) -> Iterator[ast.AST]:
         pending = [node]
         while pending:
@@ -572,7 +582,7 @@ def _tool_iteration(
                 # break/return cannot turn later feedback into loop evidence.
                 selected = action.body if bool(action.test.value) else action.orelse
                 return _tool_iteration(
-                    [*selected, *body[number + 1 :]],
+                    budget.followed(selected, body[number + 1 :]),
                     local,
                     history,
                     budget,
@@ -633,7 +643,7 @@ def _statements(
             if isinstance(statement.test, ast.Constant):
                 selected = statement.body if bool(statement.test.value) else statement.orelse
                 return _statements(
-                    [*selected, *statements[number + 1 :]],
+                    budget.followed(selected, statements[number + 1 :]),
                     values,
                     history,
                     budget,

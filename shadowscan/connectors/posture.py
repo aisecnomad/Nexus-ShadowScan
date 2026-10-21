@@ -305,6 +305,25 @@ def canonical_settings_path(rel: str) -> str | None:
     return None
 
 
+def settings_paths_at(rel: str) -> list[str]:
+    """The settings paths a client reads at ``rel`` or below it, for a link the walk did not read.
+
+    ``rel`` itself when it is one (``.claude/settings.local.json``), and below a
+    directory named as a part of a client's settings path (``.claude`` gives
+    ``.claude/settings.json`` and ``.claude/settings.local.json``).
+    """
+    paths = [rel] if posture_client(rel) is not None else []
+    base = PurePosixPath(rel).name.rstrip(" .").casefold()
+    for tails in _CANONICAL_TAILS.values():
+        for tail in tails:
+            paths.extend(
+                "/".join((rel, *tail[index + 1 :]))
+                for index, part in enumerate(tail[:-1])
+                if part.casefold() == base and posture_client("/".join((rel, *tail[index + 1 :])))
+            )
+    return paths
+
+
 def assess(rel: str, text: str) -> list[PostureIssue] | None:
     """Posture issues in one settings file; None when ``rel`` is not a known settings file."""
     client = posture_client(rel)

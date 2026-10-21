@@ -427,6 +427,13 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   keeps the search linear. `separate_budget` also checks its own allowance
   when the work returns, so redaction that ran out between periodic checks
   still withholds the file's excerpts.
+- Review of the integration branch found that a constant `if` in a tool
+  loop continues on its branch with a copy of the rest of the body, and
+  nesting such guards copied it again at every level without charging the
+  flow budget. With the raised bounds a 939 KB file reached that recursion
+  and peaked at about 1.4 GiB before failing closed (main: 259 MiB, refused
+  at its old node bound). Each copied statement now costs a flow step, so
+  the same file fails closed at 227 MiB in 0.6 s.
 
 ### Automatic filesystem deadline sized by bytes as well as entries (October 21)
 
@@ -522,6 +529,20 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   one (`--fail-on high` passed a docs-linked `.claude/skills`): credentials
   are reported at both paths again. An exclude below an aliased directory
   now holds at the link path too.
+- Review of the integration branch found three more gaps at link paths.
+  A diff-scoped scan filtered entries by the link path alone, but Git
+  records a link as its target string: a change to the target, or a new
+  directory link, put no file read at the link path in the diff, so the
+  scan completed where main fails it on the link. Every entry read at a
+  link path is now kept in diff mode. An alias left unread (the
+  `MAX_ALIAS_FILES` cap, a target that changed, a failed `lstat`) no longer
+  recorded its settings files as unread, so the approval gate read tighter
+  than main reports it; their paths (`posture.settings_paths_at`) are noted
+  now. And import provenance applied the link path's project to the
+  target's real path, probing an unrelated ancestor of the real file for
+  local modules, where a decoy module hid a provider import at the link
+  path; a file outside its link project on disk is judged from its own
+  directory now. Four regression tests fail on the earlier walk.
 
 ### Release readiness review (October 21)
 
