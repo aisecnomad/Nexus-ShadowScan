@@ -14,6 +14,7 @@ from __future__ import annotations
 import ast
 import re
 import tomllib
+from bisect import bisect_right
 from collections.abc import Iterator, Sequence
 from typing import Any
 
@@ -231,15 +232,74 @@ def _quote_glob_values(front_matter: str) -> str:
 # alone on its line, as IPython rewrites them before Python reads the cell.
 # "% name" continuing an expression is the modulo operator and stays.
 _IPYTHON_LINE = re.compile(r"^([ \t]*+)((?:%%?[A-Za-z_]|!)[^\n]*)", re.MULTILINE)
+# Unescaped package-manager magics apply only to a single-line input cell.
+# A magic name followed by one of these subcommands is not a Python statement;
+# no subcommand listed is a keyword ("pip in xs" stays).
+_IPYTHON_AUTOMAGIC = re.compile(
+    r"^([ \t]*+)((?:uv[ \t]++pip\b|(?:pip|conda|mamba|micromamba|uv)[ \t]++"
+    r"(?:install|uninstall|download|list|show|freeze|check|config|create|env|remove|update|upgrade|"
+    r"add|sync|search|info|init)\b)[^\n]*)",
+)
 
 
-def _without_ipython_lines(text: str) -> str:
+def _without_ipython_lines(text: str, cells: _CellSpans = ()) -> str:
     """Replace a notebook's magic and shell lines with an inert expression, keeping every offset.
 
     IPython turns each into an expression statement, so an indented one can be a
     block's only statement: it becomes ``0`` padded to its length, not blanks.
+    Unescaped package-manager magics are restricted to single-line cells;
+    absent cell spans, ``text`` is one cell.
     """
-    return _IPYTHON_LINE.sub(lambda match: match[1] + "0" + " " * (len(match[2]) - 1), text)
+
+    pieces: list[str] = []
+    previous = 0
+    for start, end in cells or ((0, len(text)),):
+        cell = text[start:end]
+        pieces.extend((text[previous:start], _without_cell_ipython_lines(cell)))
+        previous = end
+    pieces.append(text[previous:])
+    return "".join(pieces)
+
+
+# Characters whose removal from a masked line can change how the rest of a cell lexes.
+_LEXICAL_CHARACTERS = frozenset("\"'#\\")
+# Re-lexes per cell before the remaining magic lines are masked unconditionally.
+_MAGIC_RELEX_LIMIT = 32
+
+
+def _without_cell_ipython_lines(cell: str) -> str:
+    """Normalize one cell without treating command-looking string content as code.
+
+    Lines are masked top to bottom against the cell as already masked, so a quote
+    in a shell or magic line (``!echo '''``) cannot open a string that hides a
+    later magic line. Past ``_MAGIC_RELEX_LIMIT`` re-lexes the remaining magic
+    lines are masked unconditionally, as they were before string awareness.
+    """
+    single_line = len(cell.splitlines()) == 1
+    pattern = _IPYTHON_AUTOMAGIC if single_line and _IPYTHON_AUTOMAGIC.match(cell) else _IPYTHON_LINE
+    if not pattern.search(cell):
+        return cell
+    source = cell
+    spans, _ = noncode_ranges(source, "python")
+    starts = [start for start, _ in spans]
+    relexes = 0
+    position = 0
+    while (match := pattern.search(source, position)) is not None:
+        position = match.end()
+        index = bisect_right(starts, match.start(2)) - 1
+        if index >= 0 and match.start(2) < spans[index][1]:
+            continue
+        command = match[2]
+        source = source[: match.start(2)] + "0" + " " * (len(command) - 1) + source[match.end(2) :]
+        if _LEXICAL_CHARACTERS.isdisjoint(command):
+            continue
+        relexes += 1
+        if relexes > _MAGIC_RELEX_LIMIT:
+            spans, starts = [], []
+        else:
+            spans, _ = noncode_ranges(source, "python")
+            starts = [start for start, _ in spans]
+    return source
 
 
 def _within(offset: int, spans: Sequence[tuple[int, int]]) -> bool:
@@ -331,7 +391,7 @@ def _notebook_binder_source(
     bound like any other cell. One that does not parse is blanked without being
     reported as unparsed: lexical evidence only, not a coverage gap.
     """
-    source = _without_ipython_lines(text)
+    source = _without_ipython_lines(text, cells)
     declared = set(foreign)
     unparsed: list[int] = []
     unread: list[tuple[int, int]] = []

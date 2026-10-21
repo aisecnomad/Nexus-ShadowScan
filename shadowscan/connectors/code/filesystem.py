@@ -613,7 +613,9 @@ class FilesystemConnector(BaseConnector):
     #: Entries (directories and files) a probe counts before it stops, and the
     #: seconds it may spend counting them. Bounded so the estimate costs a
     #: fraction of a second even on a huge tree or a slow filesystem.
-    _PROBE_LIMIT = 20_000
+    # At the existing entries-per-budget rate, the count cap can reach the
+    # engine's 1800-second ceiling without increasing the probe's time budget.
+    _PROBE_LIMIT = 180_000
     _PROBE_SECONDS = 1.0
     #: Entries the default deadline comfortably covers. Above this the budget
     #: grows in proportion, because the walk's cost is roughly linear in
@@ -1140,7 +1142,7 @@ class FilesystemConnector(BaseConnector):
         result everywhere except the exit code. The probe counts entries up to
         ``_PROBE_LIMIT`` and stops; reaching the limit means "at least this
         many", so the proposal saturates at ``default * _PROBE_LIMIT /
-        _ENTRIES_PER_DEFAULT_BUDGET`` (200 s at the 120 s default), below the
+        _ENTRIES_PER_DEFAULT_BUDGET`` (1800 s at the 120 s default), matching the
         engine's own ceiling. A larger tree needs an explicit deadline; one
         that overruns this one is still incomplete.
         """

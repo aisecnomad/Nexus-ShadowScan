@@ -701,7 +701,7 @@ state that never hold a project's own source, and are skipped without comment:
 `.git`, `.hg`, `.svn`, `node_modules`, `bower_components`, `.yarn`,
 `.pnpm-store`, `Pods`, `.venv`, `venv`, `.virtualenv`, `site-packages`,
 `__pycache__`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `.tox`, `.nox`,
-`.cache`, `.coverage`, `.dart_tool`, `.gradle`, `.terraform`, `.serverless`,
+`.cache`, `.coverage`, `.hypothesis`, `.dart_tool`, `.gradle`, `.terraform`, `.serverless`,
 `.next`, `.nuxt`, `.svelte-kit`, `.turbo`, `.parcel-cache`, `.idea` and `.vs`.
 The remaining names are build output or vendored code by convention, but
 projects also keep first-party code there (scripts in `bin/`, an agent under
@@ -917,7 +917,13 @@ favour of the installed package, so it does not hide that SDK's imports.
 
 A notebook's IPython magic (`%pip`, `%%time`) and shell (`!pip`) lines are read
 as inert expressions, as IPython rewrites them, so they do not keep the import
-binder from the notebook. Jupyter runs code cells one at a time, so each cell is
+binder from the notebook. Supported package-manager commands without `%`, such
+as `pip install openai` and `uv pip install openai`, are treated as automagic
+only when the entire input cell is a single line. Unknown command forms and
+invalid multiline cells remain unparsed coverage gaps. Command-looking text
+inside a Python string is retained unchanged, including closing triple quotes;
+string boundaries are judged separately in each cell.
+Jupyter runs code cells one at a time, so each cell is
 lexed on its own. A cell can be declared another language: by a cell magic that
 runs, renders or writes its body as something else (`%%bash`, `%%sh`,
 `%%script bash`, `%%html`, `%%javascript`, `%%latex`, `%%markdown`, `%%sql`,
