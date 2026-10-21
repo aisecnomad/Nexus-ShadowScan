@@ -8,6 +8,9 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## 0.1.3 — 2026-11-20
 
+- A blocked container scan names each blocking vulnerability (package, installed and
+  fixed version) as a check annotation, so the pull request page shows why without the job log.
+
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the
   checkout so it exercises the installed wheel.
