@@ -47,10 +47,16 @@ that are never silent:
   the link path: the link is not followed, its target is opened by its real
   path below the root, as any file is, and analyzed and reported under the
   link path, where a client reads it as configuration. Its files count
-  toward `max_files`; a link below such an alias is judged as a link, not
-  read again. A link to an excluded or unselected target stays blinding, and
-  so does a directory behind a link named like a configuration file
-  (`CLAUDE.md -> docs`), which no client reads as that file. One that holds none
+  toward `max_files`, and at most 5,000 files a root are read at link paths.
+  Below such an alias, a file link is read at its own link path and a
+  directory link is judged as a link, not read again. A credential found at
+  both paths is reported once, at the real path, and a budgeted gap of such
+  a file is charged once. A link to an excluded or unselected target stays
+  blinding. So does a directory behind a link named like a configuration
+  file (`CLAUDE.md -> docs`), which no client reads as that file, and a link
+  inside its own target (`.agents/skills -> ../../`), which would walk the
+  tree again below it. So does a link past the 5,000-file cap, or one whose
+  target changed while the walk read the tree. One that holds none
   (`web/public/.well-known` aliasing `static/well-known` without an MCP
   manifest or agent card) is an alias like any other, one entry. The `ci`
   profile never declares a link that stands for configuration. So does a

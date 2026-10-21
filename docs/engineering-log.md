@@ -41,6 +41,24 @@ Counts and figures quoted in an entry are those of its date.
   configuration file (`CLAUDE.md -> docs`). The per-file loop of
   `_iter_entries` moves verbatim into `_file_entry` / `_regular_entry`, which
   the alias walk reuses.
+- A second review found:
+  - A link inside its own target (`pkg0/.agents/skills -> ../../`) was read
+    at the link path, walking the whole tree again below it: 16 entries
+    became 112, with fabricated paths such as
+    `pkg0/.agents/skills/.claude/skills/deploy/SKILL.md`. Such a link stays
+    blinding now. At most `MAX_ALIAS_FILES` (5,000) files a root are read at
+    link paths; past that a link stays blinding, so many links to one large
+    directory cannot multiply the walk.
+  - Each credential was reported twice, at the real path and at the link
+    path, which would show as new findings after an upgrade. A credential the
+    real path already reports is dropped at the link path. A budgeted gap of
+    the same weight is charged once per real file (`_ledger_gap`): a partly
+    broken notebook in an aliased skills directory (#300) made a scan within
+    budget exceed it.
+  - The alias target was listed by its path after the walk. Before listing,
+    the target is checked again: not a link, the same device and inode as
+    when the link was classified, the same real path. A target swapped since
+    then stays blinding instead of having outside names listed.
 
 ### Release readiness review (October 21)
 

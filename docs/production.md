@@ -548,7 +548,13 @@ user-agent discount tokenizes only lines naming `mozilla/`, in linear time, so
 a planted file of escaped quotes cannot hold the connector either. Symbolic
 links count toward `max_files` together with regular files. A checkout with
 more links than the remaining `max_files` budget needs a larger `max_files` or
-an `exclude` entry for the link directories. The walk lists a root's entries
+an `exclude` entry for the link directories. An in-tree link that stands for
+agent configuration (`.agents/skills -> ../.claude/skills`) is read a second
+time at its link path, so its files count twice toward `max_files`, and at
+most 5,000 files a root are read at link paths; past that the link fails
+closed. Scans that exited 3 only for such links may now complete, and the
+link path's findings are new; a credential in such a file is reported once,
+at its real path, and a budgeted gap of such a file is charged once. The walk lists a root's entries
 before it scans them in priority order; listing, including the checks of file
 and directory links, stops after half of the time in which a file can still
 start, with the error `connector deadline: listing stopped after N entries`,

@@ -20,8 +20,11 @@ from click.testing import CliRunner
 
 from shadowscan.cli import main
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
+from shadowscan.connectors.code import walk as walk_module
+from shadowscan.connectors.code.file_scan import FileScanner
 from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector
+from shadowscan.models import Kind
 
 PROVIDERS = [GitHubConnector, GitLabConnector]
 
@@ -1322,3 +1325,83 @@ def test_a_file_link_inside_an_agent_alias_is_read_at_its_link_path(tmp_path, ru
     assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
     locations = {e.location for f in findings for e in f.evidence}
     assert {".claude/skills/y/SKILL.md", ".agents/skills/y/SKILL.md"} <= locations, locations
+
+
+def test_an_agent_link_inside_its_own_target_stays_blinding(tmp_path, run_connector):
+    # .agents/skills -> ../../ holds the link itself: read at the link path, it would walk the
+    # tree again below it (pkg0/.agents/skills/.claude/skills/...), and again for every such link.
+    repo = _tree(tmp_path / "repo", {".claude/skills/x/SKILL.md": SKILL, "pkg0/app.py": "x = 1\n"})
+    (repo / "pkg0" / ".agents").mkdir()
+    (repo / "pkg0" / ".agents" / "skills").symlink_to("../../", target_is_directory=True)
+    findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
+    assert ctx.stats.incomplete and ctx.stats.coverage["blinding_gaps"] == 1
+    assert not any(location.startswith("pkg0/.agents/skills/") for location in _locations(findings))
+
+
+def test_files_read_at_link_paths_are_capped(tmp_path, run_connector, monkeypatch):
+    monkeypatch.setattr(walk_module, "MAX_ALIAS_FILES", 2)
+    repo = _tree(tmp_path / "repo", {f".claude/skills/s{i}/SKILL.md": SKILL for i in range(3)})
+    (repo / ".agents").mkdir()
+    (repo / ".agents" / "skills").symlink_to("../.claude/skills")
+    _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
+    assert ctx.stats.incomplete and ctx.stats.coverage["blinding_gaps"] == 1
+    assert "not read at the link path, 2 files already read at link paths" in _link_text(ctx)
+
+
+def test_an_alias_target_swapped_for_a_link_is_not_listed(tmp_path):
+    # Rechecked before the alias pass lists the target by its path.
+    (tmp_path / "skills").mkdir()
+    (tmp_path / "elsewhere").mkdir()
+    target = Path(os.path.realpath(tmp_path / "skills"))
+    identity = walk_module._object_identity(target)
+    assert identity is not None and walk_module._same_object(tmp_path / "skills", target, identity)
+    (tmp_path / "skills").rename(tmp_path / "moved")
+    (tmp_path / "skills").symlink_to("elsewhere", target_is_directory=True)
+    assert not walk_module._same_object(tmp_path / "skills", target, identity)
+    (tmp_path / "skills").unlink()
+    (tmp_path / "skills").mkdir()  # a new directory under the old name is another object
+    assert not walk_module._same_object(tmp_path / "skills", target, identity)
+
+
+LEAKED_KEY = "OPENAI_API_KEY=sk-proj-" + "Q7v2Lm9Xr4Tz8Kp1Wn6Ys3Bd5Hf0Jc2Ge7Ua4Ri9Oe1Nl6Mq3Vt8Zx5Cw2Pb7Sd4"
+
+
+def test_a_credential_read_again_at_a_link_path_is_reported_once(tmp_path, run_connector):
+    repo = _tree(tmp_path / "repo", {".claude/skills/x/SKILL.md": SKILL + LEAKED_KEY + "\n"})
+    (repo / ".agents").mkdir()
+    (repo / ".agents" / "skills").symlink_to("../.claude/skills")
+    findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
+    secrets = [f for f in findings if f.kind == Kind.SECRET]
+    assert len(secrets) == 1 and secrets[0].resource.endswith("/.claude/skills/x/SKILL.md"), secrets
+
+
+def test_a_budgeted_gap_read_again_at_a_link_path_is_charged_once(tmp_path, run_connector, monkeypatch):
+    # A partly broken notebook (charged at a whole entry wherever it lies) inside an aliased
+    # skills directory was charged at both paths. Stand in a partial gap for any file named so.
+    original = FileScanner.scan_file
+
+    def scan_file(self, scan, rel, path, proj_root):
+        original(self, scan, rel, path, proj_root)
+        if rel.endswith("/partly.txt"):
+            self.walker._ledger_gap(
+                rel, f"code.filesystem: {rel}: partly read; coverage gap", full_weight=True
+            )
+
+    monkeypatch.setattr(FileScanner, "scan_file", scan_file)
+    files = {f"src/m{i}.py": f"x = {i}\n" for i in range(120)}
+    repo = _tree(
+        tmp_path / "repo", {**files, ".claude/skills/x/SKILL.md": SKILL, ".claude/skills/x/partly.txt": "x\n"}
+    )
+    (repo / ".agents").mkdir()
+    (repo / ".agents" / "skills").symlink_to("../.claude/skills")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "partly.txt").write_text("y\n")
+    _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
+    entries = {gap["path"]: gap["entries"] for gap in ctx.stats.coverage["details"]}
+    assert entries == {
+        ".claude/skills/x/partly.txt": 1,
+        ".agents/skills/x/partly.txt": 0,
+        "docs/partly.txt": 1,
+    }
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)

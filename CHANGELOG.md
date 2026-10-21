@@ -14,7 +14,9 @@ explain operator migrations. Earlier per-change entries are preserved in the
   never followed; its target is opened by its real path below the root and
   reported under the link path. A link the walk does not follow is described
   by what its target was found to be. Links out of the tree, to excluded
-  targets, or naming a file but pointing at a directory still fail closed.
+  targets, inside their own target, or naming a file but pointing at a
+  directory still fail closed. A credential read at both paths is reported
+  once, at the real path.
 
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the
