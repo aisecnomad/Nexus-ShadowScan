@@ -13,6 +13,24 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Unrendered template source is a budgeted gap, not an outright failure (October 21)
+
+- microsoft/autogen still exited 3 on one file after the October 20 fixes:
+  `python/templates/new-package/{{cookiecutter.package_name}}/pyproject.toml`,
+  whose `{%- if cookiecutter.depends_on_core -%}` block is not TOML. The
+  `ci` profile already judged such a directory as a template; the default
+  profile recorded the input defect as a full coverage gap.
+- A file that does not parse, or fails the integrity checks, under a
+  directory whose name holds template syntax (`{{`, `{%`, `${`) is now
+  charged to the coverage budget as one partial gap at a whole entry, as a
+  malformed test fixture is (at a quarter), with `unrendered template source`
+  in its warning and `stats[].coverage.details` entry. No tool reads such a
+  file until a generator renders it. Agent configuration is never
+  discounted there (a duplicate-key `.mcp.json` under `{{x}}/` still fails
+  the scan), strict accounting keeps the gap, and a tree seeded with
+  template files still exhausts the budget. autogen now completes with one
+  tolerated gap.
+
 ### Ordinary repositories finish complete: measured causes of exit 3 fixed, a preflight and remediation added (October 20)
 
 - Measured first. A default `shadowscan code` of 14 public repositories

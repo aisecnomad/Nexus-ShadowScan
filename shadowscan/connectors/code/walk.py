@@ -2198,6 +2198,30 @@ class TreeWalker:
         """
         return not self.include_tests and _is_test_path(rel) and not self._agent_configuration(rel)
 
+    def _template_source_gap(self, rel: str, *, full_weight: bool = False) -> bool:
+        """Whether a gap in ``rel`` is in unrendered template source, which a generator renders first.
+
+        Template syntax in a directory name (cookiecutter's
+        ``{{cookiecutter.package_name}}/pyproject.toml``, copier's ``{% if %}``
+        paths, a shell-style ``${name}``) means no tool reads the file where it
+        is: the generator fills in its placeholders, and its Jinja blocks
+        (``{%- if cookiecutter.depends_on_core -%}``) are not TOML, JSON or
+        YAML. Such a file that does not parse is charged to the coverage budget
+        as one partial gap, like a malformed test fixture, instead of failing
+        the scan outright; a tree seeded with them still exhausts the budget.
+        Agent configuration is never discounted (``_agent_configuration``): a
+        client started in the rendered project reads it as written. Strict
+        accounting, and a caller that found MCP servers by structure
+        (``full_weight``), keep the gap.
+        """
+        directory = rel.rpartition("/")[0]
+        return (
+            not full_weight
+            and not self._strict_accounting()
+            and bool(_TEMPLATE_SYNTAX.search(directory))
+            and not self._agent_configuration(rel)
+        )
+
     def _discounted_gap(
         self,
         rel: str,
@@ -2209,7 +2233,8 @@ class TreeWalker:
         reason: str | None = None,
         charged_in_full: bool = False,
     ) -> None:
-        """Record ``message`` about ``rel`` as a gap (``_gap``), or charge it to the budget in test code.
+        """Record ``message`` about ``rel`` as a gap (``_gap``), or charge it to the budget in test code
+        or unrendered template source (``_template_source_gap``, a whole entry).
 
         A ``ci`` profile declaration takes precedence over the discount, so the
         omission is counted in ``declared_omissions`` like every other one the
@@ -2235,6 +2260,13 @@ class TreeWalker:
                 rel,
                 f"{message}; test code is discounted evidence (include_tests is false); coverage gap",
                 full_weight=charged_in_full,
+                reason=reason,
+            )
+        elif self._template_source_gap(rel, full_weight=full_weight) and not self._declared_omission(rel):
+            self._ledger_gap(
+                rel,
+                f"{message}; unrendered template source (template syntax in its directory); coverage gap",
+                full_weight=True,
                 reason=reason,
             )
         else:

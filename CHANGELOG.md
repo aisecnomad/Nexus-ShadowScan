@@ -35,7 +35,8 @@ the report; forged values stay refused and the write path stays strict.
 Ordinary repositories finish complete more often: binary media headers,
 a ReDoS-bounded inline-credential pattern, a filesystem deadline sized by entries
 and bytes, IPython automagic, `.hypothesis` exclusion, faster built-in pack
-loading, unparsed-input triage, unclosed credential calls and dangling-link
+loading, unparsed-input triage, unrendered template source charged to the
+coverage budget, unclosed credential calls and dangling-link
 descriptions. `shadowscan code --preflight` also lists the static coverage gaps
 a full scan would record, `--max-file-size` sets the size limit, and exit 3
 prints per-reason remediation with an incomplete-scans guide. The command line

@@ -466,6 +466,14 @@ applied in this order:
    beside other gaps: a 200-file service with four binary fixtures and one
    dangling certificate link exits 3 (see
    [test and fixture code](#test-and-fixture-code)).
+   **Unrendered template source** is charged the same way, at a whole entry:
+   a file that does not parse (or fails the integrity checks) under a
+   directory whose name holds template syntax (`{{`, `{%`, `${`, as in
+   cookiecutter's `{{cookiecutter.package_name}}/pyproject.toml`) is read by
+   no tool until a generator renders it, so its gap is partial and its
+   warning says `unrendered template source`. Agent configuration there is
+   never discounted, strict accounting keeps the gap, and a tree seeded with
+   such files still exhausts the budget.
 5. **Budget.** Every other partial gap is charged to the budget; a blinding
    one marks the scan incomplete.
 
