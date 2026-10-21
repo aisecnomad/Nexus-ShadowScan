@@ -178,3 +178,17 @@ branch = true
 show_missing = true
 skip_empty = true
 fail_under = 80
+
+[tool.codespell]
+# `pre-commit run codespell --all-files` checks spelling in prose, comments
+# and docstrings. Frozen inputs, generated images and hash locks are skipped.
+skip = "*.lock,*.json,*.svg,*.webp,*.png,./archive,./benchmark-suite,./benchmarks,./docs/history,./tests/fixtures,./tools/evaluation,./site"
+# Words the dictionary misreads: `unparseable` is a triage verdict and report
+# category, `thirdparty` a vendored-code directory name, `.intoto.jsonl` a
+# provenance file suffix, `registr`/`schedul`/`retriev`/`summar`/`generat`
+# regex stems, `notin` an AST node, `ags`/`alue`/`ot` variable, pattern and
+# byte-string fragments, `caf` the start of "café" in a test, `regraded`
+# re-graded, `pre-empt` a spelling, `exemple`/`deine`/`mot`/`sizin` French,
+# German and Turkish placeholder tokens, and `frameworkk`/`paralell`/`weigth`/
+# `ttest` deliberately invalid inputs that tests feed to the validators.
+ignore-words-list = "unparseable,thirdparty,intoto,registr,schedul,retriev,summar,generat,notin,caf,ags,alue,ot,exemple,deine,mot,sizin,regraded,pre-empt,frameworkk,paralell,weigth,ttest"

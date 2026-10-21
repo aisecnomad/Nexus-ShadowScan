@@ -2339,13 +2339,15 @@ def test_estate_benchmark_documents_say_later_shadowscan_runs_are_in_sample() ->
         "fewer errors on it are not evidence of better field accuracy",
     ):
         assert statement in benchmarks, f"README Benchmarks no longer says: {statement!r}"
-    # The disclosure belongs to the newest section: ``## Unreleased`` while the changes are
-    # unreleased, and the version that ships them once the release headings are dated.
+    # The disclosure belongs to the section that ships the tuned detection: ``## Unreleased``
+    # while it was unreleased, the dated 0.1.3 section since the headings were dated. An
+    # ``## Unreleased`` section opened above it for the next candidate does not move it.
     changelog = _read(ROOT / "CHANGELOG.md")
     start = changelog.index("\n## ")
-    newest = " ".join(changelog[start : changelog.index("\n## ", start + 1)].split())
-    assert "in-sample" in newest
-    assert re.search(r"Wudpecker and Tactiq[^.]*\(benchmark-derived", newest)
+    release = changelog.index("\n## 0.1.3")
+    shipping = " ".join(changelog[start : changelog.index("\n## ", release + 1)].split())
+    assert "in-sample" in shipping
+    assert re.search(r"Wudpecker and Tactiq[^.]*\(benchmark-derived", shipping)
 
 
 _PIP_COMMANDS = frozenset(

@@ -79,6 +79,15 @@ repos:
           - types-requests==2.33.0.20261006
         args: []
 
+  - repo: https://github.com/codespell-project/codespell
+    rev: 57b21406f092110c18776e39b0bda50d37c945c8 # v2.4.3
+    hooks:
+      - id: codespell
+        # Skips and the accepted-word list live in pyproject.toml
+        # ([tool.codespell]); the exclude mirrors the skips because pre-commit
+        # passes files explicitly.
+        exclude: ^(archive/|benchmark-suite/|benchmarks/|docs/history/|tests/fixtures/|tools/evaluation/|.*\.(lock|json|svg|webp|png)$)
+
   - repo: local
     hooks:
       - id: signature-validate
