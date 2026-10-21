@@ -2323,9 +2323,9 @@ class SignatureIndex:
             for s in sig.signals:
                 self._by_type.setdefault(s.type, []).append((sig, s))
                 if s.bounded_compiled:
-                    self._literals[id(s)] = [
-                        _ordered_hints(getattr(rx, "pattern", None)) for rx in s.bounded_compiled
-                    ]
+                    # Required literals describe the declared grammar; the
+                    # compiled SKIP/FAIL branch never produces a match.
+                    self._literals[id(s)] = [_ordered_hints(pattern) for pattern in s.patterns]
                 if s.type == "dependency":
                     eco = (s.ecosystem or "any").lower()
                     for n in s.names:

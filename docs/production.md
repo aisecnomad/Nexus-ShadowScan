@@ -573,7 +573,7 @@ A limit hit is a diagnostic and incomplete coverage, not proof of absence. Exit 
 must remain a failed gate in CI. Exit 2 means a complete scan exceeded the chosen
 risk threshold. `connector_timeout_seconds` defaults to 120 seconds and must be a strictly positive
 finite number. Left unset, it is a starting point that `code.filesystem` raises to fit a large
-tree (to at most 200 seconds); a value you set, 120 included, is a fixed deadline that is never
+tree (to at most 1800 seconds); a value you set, 120 included, is a fixed deadline that is never
 raised, so leave the option out of a configuration unless you mean to fix it
 ([connector deadlines](scanning.md#connector-deadlines-and-parallelism)). It starts when the
 connector worker begins, and split filesystem

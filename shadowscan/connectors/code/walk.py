@@ -358,6 +358,7 @@ DEFAULT_EXCLUDES = {
     ".mypy_cache",
     ".pytest_cache",
     ".ruff_cache",
+    ".hypothesis",
     ".tox",
     ".nox",
     "site-packages",
@@ -389,9 +390,8 @@ DEFAULT_EXCLUDES = {
     "thirdparty",
     "external",
 }
-# The walk skips every DEFAULT_EXCLUDES name at any depth unless the connector
-# option `default_excludes` is false. Most are tool metadata, caches,
-# virtualenvs, dependency trees and IDE state that never hold a project's own
+# The walk skips DEFAULT_EXCLUDES at any depth unless `default_excludes` is false.
+# Most are tool metadata, caches, virtualenvs, dependency trees and IDE state that never hold a project's own
 # source: those are skipped without comment. The names here are build output or
 # vendored code by convention, but projects also keep first-party code in them
 # (scripts in bin/, an agent under vendor/ or build/). A directory with these

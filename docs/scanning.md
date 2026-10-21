@@ -178,8 +178,8 @@ that are never silent:
   BOM-declared content also make coverage incomplete, with a fixed diagnostic
   that does not expose the rejected bytes. Names the scanner
   never reads (images, archives, `.bin`, compiled artifacts) stay silent, and so
-  does a recognised binary artifact (an executable, archive, image, PDF or
-  SQLite database, by its header) that has no file extension, that only a
+  does a recognised binary artifact (an executable, archive, image, audio,
+  video, font, PDF or SQLite database, by its header) that has no file extension, that only a
   directory-wide signature glob such as `.cursor/rules/**` selected.
   Unrecognised binary content stays a gap in those places too. An operator can
   exclude a known binary with an `exclude` file glob.
@@ -870,8 +870,9 @@ are deprecated compatibility aliases; the YAML alias logs a deprecation warning
 once per process. Configure only one YAML key; supplying both is rejected.
 Legacy YAML `connector_timeout: null` uses the 120-second default; it does not
 disable the deadline. Left unset, the default is raised for a large input
-when the connector can measure it: `code.filesystem` counts up to 20,000
-entries and scales the deadline above 12,000, to at most 200 seconds. An
+when the connector can measure it: `code.filesystem` counts up to 180,000
+entries within a one-second probe and scales the deadline above 12,000,
+to at most 1800 seconds. An
 explicit value, 120 included, is honoured unchanged, so a configuration that
 sets `connector_timeout_seconds: 120` turns that scaling off; a larger tree
 needs an explicit, larger deadline.
@@ -879,8 +880,8 @@ needs an explicit, larger deadline.
 Leaving the option out and setting it are not the same. Left out (or given as
 legacy `connector_timeout: null`), the 120 seconds is where a connector starts,
 and a connector may raise its own deadline to fit its input: `code.filesystem`
-counts up to 20,000 entries of the tree it is about to walk and, above 12,000,
-scales its deadline in proportion, to at most 200 seconds, and reports
+counts up to 180,000 entries of the tree it is about to walk and, above 12,000,
+scales its deadline in proportion, to at most 1800 seconds, and reports
 `input is large; deadline raised to ...` in its progress output. The engine caps
 any connector's proposal at 30 minutes. A value you set, from a configuration
 file, `--connector-timeout-seconds` or `ScanConfig`, is used as it is and never
@@ -888,6 +889,8 @@ raised, and that includes 120: a configuration that spells out
 `connector_timeout_seconds: 120` gives a large repository 120 seconds and
 reports it incomplete. The sample configurations therefore leave the option
 out. Set it for a fixed bound, or for a tree larger than the probe can measure.
+The probe still stops after one second; reaching its time or entry bound
+requests the ceiling. A longer permitted deadline does not guarantee completion.
 
 Setup failures that name only paths, option names and positions are printed
 verbatim by the CLI: a missing inventory path or signature directory, a

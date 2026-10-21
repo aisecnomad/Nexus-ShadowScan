@@ -68,6 +68,27 @@ VALID_SIGNAL_TYPES = {
 }
 
 _NAME_NORMALISE = re.compile(r"[-_.]+")
+_ASSIGNMENT_PREFIX = r"(?i)\b[A-Z_][A-Z0-9_.-]*"
+_ASSIGNMENT_SUFFIX = r"""\b[ \t]*[=:][ \t]*["']?[A-Za-z0-9_./+=-]{16,256}"""
+
+
+def _linear_assignment_pattern(pattern: str) -> str:
+    """Avoid retrying a failed generic assignment at every dot or dash.
+
+    Only this exact grammar is safe to optimize: after the first possible
+    identifier start, its unbounded prefix can reach every later start in
+    that identifier. If the original attempt fails, none of those later
+    starts can succeed. SKIP/FAIL advances past that identifier without
+    yielding a match. Successful matches keep their original spans and order,
+    including searches resumed inside a prior candidate's truncated value.
+    Other patterns, including custom lookarounds, remain untouched.
+    """
+    if not pattern.startswith(_ASSIGNMENT_PREFIX) or not pattern.endswith(_ASSIGNMENT_SUFFIX):
+        return pattern
+    keyword = pattern[len(_ASSIGNMENT_PREFIX) : -len(_ASSIGNMENT_SUFFIX)]
+    if re.fullmatch(r"[A-Z]+(?:\[_-\]\?[A-Z]+)?", keyword) is None:
+        return pattern
+    return pattern + r"|\b[A-Z_][A-Z0-9_.-]*(*SKIP)(*FAIL)"
 
 
 def normalise_package_name(name: str) -> str:
@@ -117,7 +138,8 @@ class Signal:
         self.bounded_compiled = []
         for p in self.patterns:
             try:
-                self.bounded_compiled.append(regex.compile(p, regex.MULTILINE | regex.VERSION0))
+                bounded = _linear_assignment_pattern(p) if self.type == "secret" else p
+                self.bounded_compiled.append(regex.compile(bounded, regex.MULTILINE | regex.VERSION0))
             except regex.error as exc:
                 raise ValueError(f"invalid regex {p!r}: {exc}") from exc
         if self.type == "domain":

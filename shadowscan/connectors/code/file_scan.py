@@ -1625,7 +1625,7 @@ class FileScanner:
         """Remember the MCP tool names a source file registers, bounded per project."""
         if file.unparsed == ((0, len(file.text)),):
             return  # No independent tool-name pass may restore rejected source semantics.
-        text = _without_ipython_lines(file.text) if file.cells else file.text
+        text = _without_ipython_lines(file.text, file.cells) if file.cells else file.text
         if file.unparsed:
             text = _without_source_ranges(text, file.unparsed)
         tools = file.proj.mcp_tools
