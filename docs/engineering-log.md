@@ -62,6 +62,43 @@ Counts and figures quoted in an entry are those of its date.
   published release. The README is the PyPI project description, so its wording
   stays accurate on the 0.1.3 project page after publication.
 
+### Repository hygiene after the 0.1.3 candidate (October 21)
+
+- The publishing runbook gains step 8, "Record the publication": the list of
+  files that still describe 0.1.3 as prepared rather than published (README
+  and product-guide release state and PyPI Python-range note, the
+  installation guide, the connectors release-status table, the OpenSSF
+  criteria rows, the reviewer packet, roadmap, security policy, the dated
+  release headings and the consistency-test pins), to be updated in one
+  reviewed change on the day of the tag and upload. Opening the next
+  candidate becomes step 9. Neither PyPI nor TestPyPI serves 0.1.3 at the
+  time of this entry; nothing was tagged or uploaded.
+- `CONTRIBUTING.md` says why a branch is brought up to date locally with
+  `git merge --signoff`: GitHub's **Update branch** button and other web-flow
+  merges carry no trailer and fail the DCO check (the `CI gate` went red on
+  #286 for that reason on October 21), and the repository does not offer the
+  button. It also records that a clean merge of `main` keeps a pull request's
+  approvals while a conflict-resolving merge dismisses them, as observed while
+  #285, #283, #286 and #289 were merged in sequence.
+- `codespell` 2.4.3 runs as a pinned pre-commit hook with its skips and
+  accepted words in `pyproject.toml`. A sweep of the prose, comments and
+  shipped code found no misspelling; every hit was an identifier, a regex
+  stem, a file suffix or a deliberate foreign-language placeholder, and the
+  accepted-word list names each of them with its reason. The hook is not a
+  CI gate: adding it there would need the tool in the hash-locked CI set.
+- The consistency test that pins the in-sample benchmark disclosure read only
+  the newest changelog section, so opening the next candidate's `## Unreleased`
+  section (runbook step 9) would have failed it. It now reads from the newest
+  heading through the 0.1.3 section, where the disclosure stays.
+- Repository state, not tracked files: the labels `github_actions` (unused)
+  and `javascript` (one closed Dependabot pull request) were deleted because
+  `.github/labels.yml` does not declare them and the label workflow never
+  deletes. An inventory of the 255 remote branches found 112 whose pull
+  request merged, 90 whose pull request closed unmerged and 52 without a
+  pull request; their deletion, turning on deletion of merged branches, and
+  the non-provider-pattern and validity-check options of secret scanning are
+  maintainer actions and were not performed.
+
 ### Lock the sample Dockerfile's CLI dependency graph (October 20)
 
 The post-merge Scorecard report still found an unpinned global npm installation

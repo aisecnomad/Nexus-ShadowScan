@@ -442,6 +442,11 @@ You can sign off your commits with `git commit -s`, which adds a
 to check every commit in a pull request for a matching sign-off. Merge commits
 also need sign-off because conflict resolutions can introduce new authored
 content; use `git merge --signoff` when updating a branch by merging.
+GitHub's **Update branch** button and other web-flow merges add no trailer, so
+they fail this check; the repository therefore does not offer that button, and a
+branch is brought up to date locally. A merge of `main` that leaves the pull
+request's diff unchanged keeps its approvals; a merge that resolves conflicts
+is a reviewable push and dismisses them (observed 2026-10-21).
 The `CI gate` check requires successful DCO, documentation, and every Python
 matrix job, including the container smoke test. Whether that check is configured
 to block merges follows the live repository rules (see
