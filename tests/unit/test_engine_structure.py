@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import decimal
+import enum
 import inspect
 import os
 import re
@@ -526,6 +527,49 @@ def test_surrender_keeps_standard_sanitizer_scalars(value):
     assert stats.errors == []
 
 
+class _Flag(enum.IntEnum):
+    ON = 3
+
+
+class _Count(int):
+    pass
+
+
+class _Ratio(float):
+    pass
+
+
+class _Stamp(datetime.datetime):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (_Flag.ON, 3),
+        (_Count(7), 7),
+        (_Ratio(1.5), 1.5),
+        (
+            _Stamp(2026, 10, 20, 12, 30, tzinfo=datetime.UTC),
+            datetime.datetime(2026, 10, 20, 12, 30, tzinfo=datetime.UTC),
+        ),
+    ],
+    ids=["int-enum", "int-subclass", "float-subclass", "datetime-subclass"],
+)
+def test_surrender_keeps_a_scalar_subclass_as_its_standard_type(value, expected):
+    # Issue #264: a scalar subclass (an IntEnum, a numpy scalar, a datetime subclass)
+    # passed the sanitize pass unchanged and the detached copy, sharing only exact
+    # types, omitted the whole finding at surrender; a completed run reported it.
+    # The sanitize pass now rebuilds it as the standard type the copy shares.
+    finding = _finding(metadata={"value": value})
+    finding.sanitize()
+    assert type(finding.metadata["value"]) is type(expected)
+    [copy], stats = _surrendered([finding])
+    assert copy.metadata["value"] == expected
+    assert type(copy.metadata["value"]) is type(expected)
+    assert stats.errors == []
+
+
 def test_surrender_sanitizes_what_the_worker_changed_after_its_pass(sanitizer_calls):
     changed, unchanged = _worker_findings(2)
     changed.metadata["note"] = f"Authorization: Bearer {SECRET}"
@@ -811,3 +855,12 @@ def test_signal_compiled_view_is_lazy_and_outside_the_fingerprint():
         signature_from_dict(
             {"id": "org.broken", "category": "provider", "signals": [{"type": "domain", "values": ["re:("]}]}
         )
+
+
+def test_merged_incomplete_reasons_sums_duplicate_keys_across_parts():
+    # Issue #264: the one merge summary() and the split-run aggregation share.
+    parts = [
+        ScanStats(connector="a", started_at="now", incomplete_reasons={"timeout": 2, "other": 1}),
+        ScanStats(connector="b", started_at="now", incomplete_reasons={"timeout": 1, "oversize-file": 3}),
+    ]
+    assert models.merged_incomplete_reasons(parts) == {"timeout": 3, "other": 1, "oversize-file": 3}

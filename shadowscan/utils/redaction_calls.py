@@ -620,7 +620,6 @@ def _redact_credential_calls(text: str) -> str:
             if opening >= len(text) or text[opening] != "(":
                 continue
             argument_start = opening + 1
-        spans, state = readings.read(argument_start)
         callee = _qualified_callee(text, call)
         if imported and callee in _GO_SDK_METHODS:
             receiver = _go_sdk_receiver(text, call.start(), lexer)
