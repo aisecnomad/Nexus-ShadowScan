@@ -217,6 +217,36 @@ class _WalkBudget:
 
 # Returned by an entry check when the walk must stop (``_file_entry``).
 _STOP = object()
+# Files one root's walk reads a second time at link paths (``_alias_entries``). Past it a
+# link that stands for agent configuration stays blinding, as it was before such links
+# were read: many links to one large directory cannot multiply the walk.
+MAX_ALIAS_FILES = 5_000
+
+
+def _object_identity(path: Path) -> tuple[int, int] | None:
+    """The device and inode of ``path``, a resolved link target, without following a final link."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return None
+    return info.st_dev, info.st_ino
+
+
+def _same_object(real: Path, target: Path, identity: tuple[int, int]) -> bool:
+    """Whether ``real`` (a link target by its path below the root) is still the object the link named.
+
+    Rechecked before the target is listed: a component swapped for a link since
+    the walk classified it would list names outside the tree.
+    """
+    try:
+        info = os.lstat(real)
+    except OSError:
+        return False
+    return (
+        not stat.S_ISLNK(info.st_mode)
+        and (info.st_dev, info.st_ino) == identity
+        and os.path.realpath(real) == str(target)
+    )
 
 
 @dataclass
@@ -235,9 +265,10 @@ class _WalkCounters:
     budget: _WalkBudget = field(default_factory=_WalkBudget)
     link_gaps: int = 0  # links whose target the walk does not scan (each a coverage gap)
     # In-tree links that stand for agent configuration, read at the link path after the walk
-    # (``_alias_entries``): (link path, target below the root).
-    aliases: list[tuple[str, Path]] = field(default_factory=list)
+    # (``_alias_entries``): (link path, target below the root, the target's device and inode).
+    aliases: list[tuple[str, Path, tuple[int, int]]] = field(default_factory=list)
     in_alias: bool = False  # the walk is reading an alias: a link below it is not read again
+    alias_files: int = 0  # files read at link paths (``MAX_ALIAS_FILES``)
 
 
 def _project_root(
@@ -929,6 +960,10 @@ class TreeWalker:
         # Files of the current root's walk -> the project root it assigned them,
         # which decides whether the ci profile declares a gap there (``_declared_omission``).
         self._entry_projects: dict[str, str] = {}
+        # Files the current root's walk reads at a link path -> their real path (``alias_real_path``),
+        # and the path first charged a partial gap for each real file (``_ledger_gap``).
+        self._alias_real: dict[str, str] = {}
+        self._charged_gaps: dict[tuple[str, str, bool], str] = {}
         # Project roots of the current root's walk that are not deployable projects (a template's,
         # or one whose manifests do not parse) -> the root the ci profile judges paths in them by.
         self._declaring_roots: dict[str, str] = {}
@@ -1576,12 +1611,20 @@ class TreeWalker:
         is read at its own link path too; a directory link below one is judged
         as a link, never read again (``in_alias``), so a loop cannot multiply
         the walk. Every file read counts toward ``max_files`` and the walk's
-        entry budget, as at its own path.
+        entry budget, as at its own path, and at most ``MAX_ALIAS_FILES`` are
+        read at link paths: past that, and for a target that is no longer the
+        object the link named, the link stays blinding.
         """
         walk.in_alias = True
         try:
-            for rel, target in walk.aliases:
+            for rel, target, identity in walk.aliases:
                 real = root / target.relative_to(resolved_root)
+                if walk.alias_files >= MAX_ALIAS_FILES:
+                    self._unread_alias_gap(rel, f"{MAX_ALIAS_FILES:,} files already read at link paths")
+                    continue
+                if not _same_object(real, target, identity):
+                    self._unread_alias_gap(rel, "its target changed while the walk read the tree")
+                    continue
                 # The walk's stack of project roots holds only its last branch by now.
                 proj = _project_root(root, rel, walk.project_roots, budget=walk.budget)
                 if not real.is_dir():
@@ -1595,7 +1638,7 @@ class TreeWalker:
                     if entry is _STOP:
                         return
                     if entry is not None:
-                        yield cast(tuple[str, Path, str, int], entry)
+                        yield self._alias_entry(root, cast(tuple[str, Path, str, int], entry), walk)
                     continue
                 if not (yield from self._alias_directory_entries(root, resolved_root, rel, real, proj, walk)):
                     return
@@ -1628,6 +1671,9 @@ class TreeWalker:
                 self._note_declaring_root(Path(dirpath), rel_dir, here, filenames)
                 here = rel_dir
             for fn in sorted(filenames):
+                if walk.alias_files >= MAX_ALIAS_FILES:
+                    self._unread_alias_gap(rel, f"{MAX_ALIAS_FILES:,} files already read at link paths")
+                    return True
                 entry = self._file_entry(
                     root,
                     resolved_root,
@@ -1640,8 +1686,30 @@ class TreeWalker:
                 if entry is _STOP:
                     return False
                 if entry is not None:
-                    yield cast(tuple[str, Path, str, int], entry)
+                    yield self._alias_entry(root, cast(tuple[str, Path, str, int], entry), walk)
         return True
+
+    def _alias_entry(
+        self, root: Path, entry: tuple[str, Path, str, int], walk: _WalkCounters
+    ) -> tuple[str, Path, str, int]:
+        """Count an entry read at a link path and remember the real path it is read from."""
+        walk.alias_files += 1
+        self._alias_real[entry[0]] = _report_name(os.path.relpath(entry[1], root).replace(os.sep, "/"))
+        return entry
+
+    def alias_real_path(self, rel: str) -> str | None:
+        """The real path of a file the current root's walk reads at link path ``rel``, else None."""
+        return self._alias_real.get(rel)
+
+    def _unread_alias_gap(self, rel: str, why: str) -> None:
+        """Record a link that stands for agent configuration and is not read at its link path."""
+        self._ledger_gap(
+            rel,
+            f"code.filesystem: skipped symbolic link {rel}: not read at the link path, {why}; at the link "
+            "path its files are agent configuration; coverage incomplete",
+            blinding=True,
+            reason="unresolved-link",
+        )
 
     def _walked_directories(
         self,
@@ -1776,10 +1844,11 @@ class TreeWalker:
             agent
             and target is not None
             and not (walk.in_alias and target.is_dir())
-            and self._readable_alias(rel, target, resolved_root, alias)
+            and self._readable_alias(rel, link, target, resolved_root, alias)
+            and (identity := _object_identity(target)) is not None
         ):
             # Read at the link path once the walk ends (_alias_entries): no gap.
-            walk.aliases.append((rel, target))
+            walk.aliases.append((rel, target, identity))
             return True
         if not agent and self._walk_declared(root, rel, walk):
             # One representative note per root, like the gap below, and it
@@ -1904,6 +1973,7 @@ class TreeWalker:
             self._unread_settings = []
             self._lockfile_governed = {}
             self._entry_projects = {}
+            self._alias_real, self._charged_gaps = {}, {}
             self._declaring_roots = {}
             entries.extend(self._iter_entries(scan.root))
         except _WalkLimitError as exc:
@@ -2153,16 +2223,25 @@ class TreeWalker:
         Every gap of this connector reaches the ledger here, so each is weighed
         by ``_gap_relevance`` rather than by ``CoverageGap.relevance``'s own
         segment list, which knows neither ``include_tests`` nor test file names.
+
+        A file read both at its real path and at a link path (``_alias_entries``)
+        is one file of the tree: a partial gap of the same weight at the other
+        path is reported but not charged a second time.
         """
+        relevance = self._gap_relevance(rel)
+        entries = 1
+        if not blinding:
+            key = (self._alias_real.get(rel, rel), relevance, full_weight)
+            entries = int(self._charged_gaps.setdefault(key, rel) == rel)
         self.ctx.coverage_gap(
             message,
             path=rel,
-            entries=1,
+            entries=entries,
             blinding=blinding,
             quiet=quiet,
             full_weight=full_weight,
             reason=reason,
-            relevance=self._gap_relevance(rel),
+            relevance=relevance,
         )
 
     def _gap_relevance(self, rel: str) -> str:
@@ -2399,7 +2478,7 @@ class TreeWalker:
             incomplete=False,
         )
 
-    def _readable_alias(self, rel: str, target: Path, resolved_root: Path, alias: bool) -> bool:
+    def _readable_alias(self, rel: str, link: Path, target: Path, resolved_root: Path, alias: bool) -> bool:
         """Whether a link's in-tree ``target`` is read at the link path (``_alias_entries``).
 
         It is when the walk reads it at its own path: a directory it scans
@@ -2407,9 +2486,14 @@ class TreeWalker:
         file it reads (``_file_scanned_at_real_path``). An excluded or
         unselected target stays out of the scan at the link path too, and so
         does a directory behind a link named like a configuration file
-        (``CLAUDE.md -> docs``): no client reads a directory as that file.
+        (``CLAUDE.md -> docs``): no client reads a directory as that file. So
+        does a directory that holds the link itself (``.agents/skills ->
+        ../../``): read at the link path, it would walk the tree again below it.
         """
         if target.is_dir():
+            here = Path(os.path.realpath(link.parent))
+            if here == target or target in here.parents:
+                return False
             return alias and not self._agent_configuration(rel)
         return self._file_scanned_at_real_path(target, resolved_root)
 
