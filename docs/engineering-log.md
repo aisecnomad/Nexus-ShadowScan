@@ -11,7 +11,7 @@ for people who install and operate ShadowScan. Entries name the pull request
 they came from where one exists, and say what was deliberately not carried.
 Counts and figures quoted in an entry are those of its date.
 
-## 0.1.3 — 2026-11-20
+## 0.1.3 — 2026-10-22
 
 ### Blocking container vulnerabilities named as check annotations (October 21)
 

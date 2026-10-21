@@ -6,7 +6,7 @@ One summary per release. Detailed implementation history is maintained in the
 explain operator migrations. Earlier per-change entries are preserved in the
 [change-history archive](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/history/changelog-detail.md).
 
-## 0.1.3 — 2026-11-20
+## 0.1.3 — 2026-10-22
 
 - A blocked container scan names each blocking vulnerability (package, installed and
   fixed version) as a check annotation, so the pull request page shows why without the job log.

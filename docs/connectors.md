@@ -236,7 +236,7 @@ do not raise a connector's live-acceptance or field-evaluation status.
 
 Connector availability is not production acceptance. This summary describes
 published evidence, not private tenant work or guarantees for a deployment.
-The release status was refreshed on 2026-11-20 against the published 0.1.3
+The release status was refreshed on 2026-10-22 against the published 0.1.3
 release; the field and tenant evidence remains subject to the limits below.
 Unreleased changes require a new final-revision review and acceptance evidence.
 
