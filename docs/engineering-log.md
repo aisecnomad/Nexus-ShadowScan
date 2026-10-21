@@ -33,6 +33,13 @@ Counts and figures quoted in an entry are those of its date.
   to a quarter of the window), so the report keeps its "after N of M files"
   accounting; emission that still runs into the deadline records how many
   project findings it did not emit instead of dropping them silently.
+- Review follow-ups: the tree probe sized every file of one directory
+  before checking its limits, so one flat directory of 400,000 files took
+  1.7-2.4 s against the documented "180,000 entries or one second" (main:
+  0.3 s); the limits are now checked every 1,024 entries of a listing.
+  `.mts` and `.cts` count as source, the documented margin names its 250 ms
+  floor, and the emission diagnostic says it counts projects, whose project,
+  agent and tool findings were left out.
 
 ### Release readiness review (October 21)
 

@@ -617,6 +617,8 @@ class FilesystemConnector(BaseConnector):
     # engine's 1800-second ceiling without increasing the probe's time budget.
     _PROBE_LIMIT = 180_000
     _PROBE_SECONDS = 1.0
+    # Entries of one directory listed between checks of the probe's limits.
+    _PROBE_CHECK_ENTRIES = 1024
     #: Entries the default deadline comfortably covers. Above this the budget
     #: grows in proportion, because the walk's cost is roughly linear in
     #: entries once signature matching dominates.
@@ -636,7 +638,7 @@ class FilesystemConnector(BaseConnector):
     _SOURCE_BYTES_PER_DEFAULT_BUDGET = 12_000_000
     _READ_BYTES_PER_DEFAULT_BUDGET = 240_000_000
     #: Suffixes whose bytes cost source analysis (``_SOURCE_BYTES_PER_DEFAULT_BUDGET``).
-    _SOURCE_SUFFIXES = (".py", ".pyi", ".ipynb", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
+    _SOURCE_SUFFIXES = (".py", ".pyi", ".ipynb", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts")
 
     @classmethod
     def cache_roots_separately(cls, roots: list[Any], root_ids: Any, *, labelled: bool) -> bool:
@@ -1236,7 +1238,7 @@ class FilesystemConnector(BaseConnector):
             pending = [root]
             while pending:
                 probe.entries += 1
-                cls._probe_directory(probe, pending, pruned, size_limit, notebook_limit)
+                cls._probe_directory(probe, pending, pruned, size_limit, notebook_limit, stop)
                 if probe.entries >= cls._PROBE_LIMIT or time.monotonic() >= stop:
                     probe.entries = cls._PROBE_LIMIT
                     return probe
@@ -1250,11 +1252,21 @@ class FilesystemConnector(BaseConnector):
         pruned: AbstractSet[str],
         size_limit: int,
         notebook_limit: int,
+        stop: float,
     ) -> None:
-        """List the next pending directory into *probe*, queueing its unpruned subdirectories."""
+        """List the next pending directory into *probe*, queueing its unpruned subdirectories.
+
+        One flat directory can hold hundreds of thousands of entries, each sized
+        by a ``stat``: the entry limit and the ``stop`` time are checked every
+        ``_PROBE_CHECK_ENTRIES`` entries of the listing, not only between directories.
+        """
         try:
             with os.scandir(pending.pop()) as listing:
-                for entry in listing:
+                for listed, entry in enumerate(listing, start=1):
+                    if listed % cls._PROBE_CHECK_ENTRIES == 0 and (
+                        probe.entries >= cls._PROBE_LIMIT or time.monotonic() >= stop
+                    ):
+                        return
                     if entry.is_dir(follow_symlinks=False):
                         if entry.name not in pruned:
                             pending.append(Path(entry.path))
