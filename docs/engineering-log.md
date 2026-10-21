@@ -13,6 +13,25 @@ Counts and figures quoted in an entry are those of its date.
 
 ## 0.1.3 — 2026-11-20
 
+### Blocking container vulnerabilities named as check annotations (October 21)
+
+`container-security` failed on `main` from 08:01 UTC with no Dockerfile or
+lock change, and the check-run annotations said only "Process completed with
+exit code 1": the verifier prints the blocking findings to the job log, and
+the retained artifact holds them, neither of which a reader without log or
+artifact access can open. `python -m tools.container.verify annotations` now
+runs after a failed scan step, before the evidence upload, and prints one
+`::error` workflow command per blocking finding from the written
+`container-evidence.json` (vulnerability, severity, package type and name,
+installed and fixed version, status), at most ten, the last counting the
+rest. Field text keeps the verifier's printable-ASCII bound and is escaped
+with the workflow-command encoding, so report text can neither end the title
+nor start a command; a job that failed before the manifest exists names
+nothing, and a duplicate key in the manifest is refused. Its first run named
+CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
+20260909-r3, which the pinned base image's package set did not yet carry; the
+`bundle` command's stderr contract (no line starts with `::`) is unchanged.
+
 ### Release readiness review (October 21)
 
 - `tools/release/assets.py` looked up the release with `releases/tags/{tag}`,
