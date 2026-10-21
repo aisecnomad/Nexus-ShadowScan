@@ -154,11 +154,12 @@ class _SourceFile:
 
     @property
     def name(self) -> str:
-        return self.path.name
+        # The path a client reads: an agent-configuration link is read at its own name.
+        return PurePosixPath(self.rel).name
 
     @property
     def ext(self) -> str:
-        return self.path.suffix.lower()
+        return PurePosixPath(self.rel).suffix.lower()
 
 
 @dataclass
@@ -187,8 +188,17 @@ def _bundled_signature(signature: Signature) -> bool:
 
 
 def _on_disk_project(root: Path, path: Path, proj_root: str) -> Path:
-    """The project directory of ``path`` under its on-disk name; ``proj_root`` is the report-safe form."""
-    return root.joinpath(*path.relative_to(root).parts[: len(PurePosixPath(proj_root).parts)])
+    """The project directory of ``path`` under its on-disk name; ``proj_root`` is the report-safe form.
+
+    A file read at a link path (``TreeWalker._alias_entries``) is ``path`` on disk but
+    belongs to the link's project, which ``path`` need not lie in: its own directory
+    stands in, so no unrelated ancestor of it is probed for local modules.
+    """
+    parts = path.relative_to(root).parts
+    depth = len(PurePosixPath(proj_root).parts)
+    if depth >= len(parts) or PurePosixPath(*parts[:depth]) != PurePosixPath(proj_root):
+        return path.parent
+    return root.joinpath(*parts[:depth])
 
 
 def _local_module_predicate(root: Path, path: Path, proj_root: str) -> Callable[[str], bool]:

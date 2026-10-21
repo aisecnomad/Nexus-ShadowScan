@@ -382,7 +382,7 @@ def test_an_alias_under_a_generic_dot_directory_is_one_budgeted_entry(
         pytest.param(".github", "shared/github", "copilot-instructions.md", id="github"),
     ],
 )
-def test_an_alias_whose_files_are_configuration_at_its_path_stays_blinding(
+def test_an_alias_whose_files_are_configuration_at_its_path_is_read_there(
     tmp_path, run_connector, rel, target, name
 ):
     link = tmp_path / rel
@@ -394,9 +394,17 @@ def test_an_alias_whose_files_are_configuration_at_its_path_stays_blinding(
     )
     link.parent.mkdir(parents=True, exist_ok=True)
     link.symlink_to(target, target_is_directory=True)
-    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, profile="ci")
-    assert ctx.stats.incomplete and ctx.stats.declared_omissions == 0
-    assert ctx.stats.coverage["blinding_gaps"] == 1
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, profile="ci")
+    # Its files are read again at the link path, where they are configuration: no link gap,
+    # nothing declared. (What they hold is then judged there: this card is no valid A2A card,
+    # and a CODEOWNERS behind the .github link stays unread for ownership.)
+    assert "unresolved-link" not in ctx.stats.incomplete_reasons
+    assert ctx.stats.declared_omissions == 0 and not (ctx.stats.coverage or {}).get("blinding_gaps")
+    locations = {evidence.location for finding in findings for evidence in finding.evidence}
+    diagnostics = "\n".join(ctx.stats.errors + ctx.stats.warnings)
+    assert (
+        any(location.startswith(f"{rel}/{name}") for location in locations) or f"{rel}/{name}" in diagnostics
+    )
 
 
 @pytest.mark.parametrize("rel", ["web/public/.well-known", "tests/e2e/.github/instructions"])

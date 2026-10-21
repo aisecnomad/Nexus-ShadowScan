@@ -8,13 +8,81 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## 0.1.3 — 2026-11-20
 
-- The `benchmark-suite` companion pin moves to Nexus-ShadowBench `1ce0eee`
-  (documentation, an amendment ledger, a hardened code-surface fetch, certifi
-  2026.10.19 and a CI dependency audit); no benchmark evidence changed.
+- A blocked container scan names each blocking vulnerability (package, installed and
+  fixed version) as a check annotation, so the pull request page shows why without the job log.
 
 - Repository hygiene: workflows run on a pinned `ubuntu-24.04` image, and
   configuration left behind for benchmark paths that moved to the Nexus
   ShadowBench companion is removed.
+
+- The `benchmark-suite` companion pin moves to Nexus-ShadowBench `1ce0eee`
+  (documentation, an amendment ledger, a hardened code-surface fetch, certifi
+  2026.10.19 and a CI dependency audit); no benchmark evidence changed.
+
+- Prose and comments that name a credential-typed call without closing it
+  (`ClientSession(` in Markdown) no longer fail a scan closed: such a call is
+  read to its end within a per-text work budget, and the text from it to the
+  end of the file is withheld from excerpts, so the text before it keeps its
+  excerpts; the credential-call lexer crosses inert text in runs, 1.66x
+  faster with identical output.
+
+- Local scans start faster: built-in signature patterns compile on first use,
+  outside each input's matching budget (credential patterns in the linear form
+  the matcher runs), and `import shadowscan.cli` no longer loads `requests`,
+  `urllib3` or `ssl` for a local `shadowscan code` run.
+
+- A Python consumer whose unrelated imports lie past the dispatch inventory
+  is no longer incomplete: a dispatcher's verdict is resolved only for the
+  module a selected tool call reaches. Only consumers that import a model
+  provider's SDK (any of the 38 `category: provider` signatures) are queued
+  for nested dispatch, not those importing `platform.litellm` alone, so
+  litellm's own tree no longer fills the 16 MiB queue.
+
+- JSON is decided by its structure, not its bytes: a data file with a
+  repeated key (a provider catalog, an editor grammar) is one budgeted gap
+  when no reading of the key holds an MCP server table, a JSON Schema
+  that describes an `mcp_servers` field is not a server table, and an
+  oversize JSON file of up to 4 MiB is parsed to decide whether it is
+  blinding. A file without a repeated key is parsed once, text that opens
+  more than 100,000 containers stays undecided, and manifests, lockfiles
+  and agent configuration still fail closed.
+
+- Fewer false exit 3s from unparsed input: a Continue `uses:` block reference
+  is an MCP server finding, an empty manifest or MCP configuration is a note,
+  and unrendered template source (a file other than Python source under a
+  `{{cookiecutter...}}` directory, or one that parses once its Jinja
+  placeholders are filled in) is
+  one partial gap charged to the coverage budget instead of failing the scan.
+
+- Notebooks complete more often: more IPython syntax is read as IPython runs
+  it (`% pip install`, `files = !ls`, backslash-continued magics, graph-query
+  cell magics), notebooks made large by saved images are read for credentials
+  without their base64 output data, a notebook in which only some tutorial
+  cells do not parse is one budgeted gap, and repeated model-identifier
+  literals count once toward the per-file bound.
+
+- Large real modules are analyzed in full: the Python syntax-tree bound rises
+  from 50,000 to 200,000 nodes (`max_ast_nodes`), bound source calls from 512
+  to 2,048 and tool-loop flow steps to 800,000. Excerpt redaction runs under
+  an allowance of its own, so a file whose detection finished in its budget
+  no longer times out redacting its excerpts, and skill files are audited up
+  to 512 KiB.
+
+- The automatic `code.filesystem` deadline also scales with the bytes the
+  scan will analyse (one default per 12 MB of source, per 240 MB of other
+  read data such as supported lockfiles), not only with the entry count, and
+  the walk stops early enough to leave time for binding and finding emission.
+  Set an explicit deadline for untrusted repositories.
+
+- An in-tree symbolic link that stands for agent configuration
+  (`.agents/skills -> ../.claude/skills`, a lowercase `agents.md` linked to a
+  README) is read at its link path instead of failing the scan: the link is
+  never followed; its target is opened by its real path below the root and
+  reported under the link path. A link the walk does not follow is described
+  by what its target was found to be. Links out of the tree, to excluded
+  targets, inside their own target, or naming a file but pointing at a
+  directory still fail closed. A file read at its link path is judged by the
+  link's own name, and a credential in it is reported at both paths.
 
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the

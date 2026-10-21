@@ -198,21 +198,25 @@ def test_instruction_doc_alias_in_same_project_is_covered(run_connector, tmp_pat
 
 
 @needs_symlinks
-def test_instruction_doc_alias_into_another_project_stays_a_gap(run_connector, tmp_path):
+def test_instruction_doc_alias_into_another_project_is_read_at_the_link_path(run_connector, tmp_path):
+    # Read again at pkg/CLAUDE.md, the alias is that project's instruction file.
     write(tmp_path, "AGENTS.md", "Repository instructions.\n")
     write(tmp_path, "pkg/pyproject.toml", "[project]\nname = 'pkg'\n")
     (tmp_path / "pkg" / "CLAUDE.md").symlink_to("../AGENTS.md")
-    _, stats = scan(run_connector, tmp_path)
-    assert stats.incomplete
+    findings, stats = scan(run_connector, tmp_path)
+    assert not stats.incomplete, (stats.errors, stats.warnings)
+    assert "pkg/CLAUDE.md" in {evidence.location for finding in findings for evidence in finding.evidence}
 
 
 @needs_symlinks
-def test_instruction_doc_alias_from_a_test_path_stays_a_gap(run_connector, tmp_path):
+def test_instruction_doc_alias_from_a_test_path_is_read_at_the_link_path(run_connector, tmp_path):
+    # Read again at tests/CLAUDE.md, the alias keeps that path's test classification.
     write(tmp_path, "AGENTS.md", "Repository instructions.\n")
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "CLAUDE.md").symlink_to("../AGENTS.md")
-    _, stats = scan(run_connector, tmp_path)
-    assert stats.incomplete
+    findings, stats = scan(run_connector, tmp_path)
+    assert not stats.incomplete, (stats.errors, stats.warnings)
+    assert "tests/CLAUDE.md" in {evidence.location for finding in findings for evidence in finding.evidence}
 
 
 @needs_symlinks
@@ -844,6 +848,41 @@ def test_ci_profile_declares_the_gaps_of_a_templated_project(run_connector, tmp_
     assert not stats.incomplete and not stats.errors, stats.warnings
     assert stats.declared_omissions == (1 if valid else 3)
     assert all(path.startswith(f"{template}/") for path in stats.declared_paths)
+
+
+@pytest.mark.parametrize(
+    ("manifest", "templated", "real"),
+    [
+        ("pyproject.toml", '[project]\nname = "{{folder_name}}"\n', '[project]\nname = "flow"\n'),
+        (
+            "pyproject.toml",
+            '[tool.poetry]\nname = "{% if x %}a{% endif %}"\n',
+            '[tool.poetry]\nname = "flow"\n',
+        ),
+        ("Cargo.toml", '[package]\nname = "${crate}"\n', '[package]\nname = "flow"\n'),
+        ("package.json", '{"name": "{{folder_name}}"}\n', '{"name": "flow"}\n'),
+    ],
+)
+def test_ci_profile_declares_a_project_its_manifest_names_with_template_syntax(
+    run_connector, tmp_path, manifest, templated, real
+):
+    # Regression (crewAI's CLI scaffolds): the placeholders sit only inside TOML strings,
+    # so the manifest parses and its directory was a deployable project whose unparsed
+    # template source exited 3 under ci. No index or build backend accepts that name.
+    write(tmp_path, "pyproject.toml", '[project]\nname = "root"\nversion = "0.1"\n')
+    write(tmp_path, "src/app.py", "VALUE = 1\n")
+    write(tmp_path, f"templates/flow/{manifest}", templated)
+    write(tmp_path, "templates/flow/main.py", "class {{flow_name}}:\n    pass\n")
+    write(tmp_path, "templates/flow/src/{{folder_name}}/tool.py", "class {{class_name}}(BaseTool):\n")
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert not stats.incomplete and not stats.errors, stats.warnings
+    assert sorted(stats.declared_paths) == [
+        "templates/flow/main.py",
+        "templates/flow/src/{{folder_name}}/tool.py",
+    ]
+    write(tmp_path, f"templates/flow/{manifest}", real)
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert stats.incomplete and "templates/flow/main.py" not in stats.declared_paths
 
 
 @pytest.mark.parametrize("manifest", ["package.json", "pyproject.toml"])

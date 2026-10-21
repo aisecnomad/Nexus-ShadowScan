@@ -26,7 +26,7 @@ from shadowscan.connectors.code.semantic_config import (
     a2a_unsupported_protocol_version,
     validate_agent_manifest,
 )
-from shadowscan.connectors.code.skill_audit import MAX_TEXT_BYTES, audit_skill_text
+from shadowscan.connectors.code.skill_audit import audit_skill_text
 from shadowscan.connectors.common import apply_matches, failure_summary, finalize, name_matches
 from shadowscan.connectors.endpoint import a2a
 from shadowscan.connectors.endpoint.catalog import (
@@ -53,11 +53,17 @@ _MAX_OTEL_SPANS = 100_000
 # An ordinary reference URL alone is not an instruction: it stays a separately
 # explained zero-weight indicator (#214) and never establishes the tag, while
 # a model-provider API host still does through _HOST below.
+# The suffix of "send", "forward" or "exfiltrat" is bounded: an unbounded \w* after
+# them rescanned the rest of a word from every occurrence, quadratic in an
+# attacker's "sendsend..." description (8 s at 64 KiB).
 _POISONING = re.compile(
     r"<\s*IMPORTANT\s*>|ignore\s+(?:all\s+)?(?:previous|prior)\s+instructions|"
-    r"(?:exfiltrat|send|forward)\w*\s+(?:the\s+)?(?:data|secret|credential|prompt)",
+    r"(?:exfiltrat|send|forward)\w{0,32}\s+(?:the\s+)?(?:data|secret|credential|prompt)",
     re.IGNORECASE,
 )
+# The window a tool description is audited and searched in: the same for both, so
+# padding past it makes the audit incomplete instead of hiding a pattern.
+MAX_DESCRIPTION_BYTES = 64 * 1024
 _EXTERNAL_URL = re.compile(r"https?://", re.IGNORECASE)
 
 
@@ -722,7 +728,7 @@ class MCPInventoryConnector(_EndpointConnector):
             if malformed_description:
                 description = ""
             # A description is not a SKILL.md: a leading "---" is text, not front matter.
-            audit = audit_skill_text(description, front_matter=False)
+            audit = audit_skill_text(description, front_matter=False, max_bytes=MAX_DESCRIPTION_BYTES)
             if malformed_description:
                 audit = replace(
                     audit, incomplete=True, limitations=(*audit.limitations, "Tool description is not text.")
@@ -739,7 +745,7 @@ class MCPInventoryConnector(_EndpointConnector):
             # padding ahead of an <IMPORTANT> block, a URL or a tool reference must not hide
             # it. These patterns are linear, so a bounded window keeps the scan bounded; a
             # description past the window already makes ``audit`` incomplete above.
-            desc = self._text(description, MAX_TEXT_BYTES)
+            desc = self._text(description, MAX_DESCRIPTION_BYTES)
             tags: list[str] = []
             if (
                 _POISONING.search(desc)

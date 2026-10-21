@@ -61,7 +61,6 @@
     "shadowscan/connectors/code/source_semantics.py::python_may_bind": 17,
     "shadowscan/connectors/code/tool_attribution.py::python_tool_regions": 127,
     "shadowscan/connectors/code/tool_attribution.py::python_tool_regions.<locals>.resolve": 21,
-    "shadowscan/connectors/code/walk.py::TreeWalker._iter_entries": 23,
     "shadowscan/connectors/common.py::apply_matches": 25,
     "shadowscan/connectors/endpoint/runtime.py::MCPInventoryConnector.analyze": 30,
     "shadowscan/connectors/endpoint/runtime.py::_records": 23,
@@ -104,16 +103,16 @@
     "shadowscan/utils/http.py::validate_url": 18,
     "shadowscan/utils/jcs.py::_write": 16,
     "shadowscan/utils/redaction.py::_Sanitizer.discover": 28,
-    "shadowscan/utils/redaction_calls.py::_CallLexer.string_end": 17,
+    "shadowscan/utils/redaction_calls.py::_CallLexer.string_end": 18,
     "shadowscan/utils/redaction_calls.py::_go_sdk_credential_bindings": 20,
-    "shadowscan/utils/redaction_calls.py::_redact_credential_calls": 23,
+    "shadowscan/utils/redaction_calls.py::_redact_credential_calls": 17,
     "shadowscan/utils/redaction_commands.py::_aws_argument_tail_end": 16,
     "shadowscan/utils/redaction_commands.py::_aws_text_arguments": 17,
     "shadowscan/utils/redaction_formats.py::_dotted_token_reader": 23,
     "shadowscan/utils/redaction_markup.py::_redact_flow_records": 18,
     "shadowscan/utils/redaction_statements.py::_AssignmentScanner._scan": 24,
     "shadowscan/utils/redaction_statements.py::_indexed_assignment_candidates": 23,
-    "shadowscan/utils/text.py::notebook_to_source": 19,
+    "shadowscan/utils/text.py::notebook_to_source": 17,
     "shadowscan/utils/text.py::parse_timestamp": 17,
     "tools/check_secrets.py::_load_approvals": 17,
     "tools/container/verify.py::verify_bundle": 22,
@@ -124,11 +123,11 @@
   },
   "modules": {
     "shadowscan/connectors/cloud/aws.py": 3528,
-    "shadowscan/connectors/code/file_scan.py": 2264,
+    "shadowscan/connectors/code/file_scan.py": 2450,
     "shadowscan/connectors/code/source_semantics.py": 2784,
-    "shadowscan/connectors/code/walk.py": 2686,
+    "shadowscan/connectors/code/walk.py": 3161,
     "shadowscan/connectors/gateway/logs.py": 2112,
     "shadowscan/connectors/identity/entra.py": 2157,
-    "shadowscan/signatures/matcher.py": 2986
+    "shadowscan/signatures/matcher.py": 2984
   }
 }

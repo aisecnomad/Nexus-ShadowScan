@@ -59,5 +59,5 @@ GitHub or in a tenant.
 | [`governance/`](governance/), [`governance_check.py`](governance_check.py) | Prepares and audits the `main` rulesets against the committed merge policy | [docs/operations/merge-policy.md](../docs/operations/merge-policy.md) |
 | [`acceptance/`](acceptance/README.md) | Checks a deployment evidence packet against a policy chosen before evaluation | [its README](acceptance/README.md) |
 | [`canaries/`](canaries/) | Read-only, explicitly scoped tenant acceptance canaries | [docs/canaries.md](../docs/canaries.md) |
-| [`container/`](container/) | Verifies exact-image container scan evidence in CI | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) |
+| [`container/`](container/) | Verifies exact-image container scan evidence in CI; after a blocked scan, names each blocking vulnerability as an error annotation so the checks API shows it without the job log | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) |
 | [`ai_review/`](ai_review/) | The advisory AI review gate: validates and synthesizes model findings; it is not a review | [docs/security/ai-review-gate.md](../docs/security/ai-review-gate.md) |

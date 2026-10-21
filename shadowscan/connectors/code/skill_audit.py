@@ -15,7 +15,9 @@ import yaml
 
 from shadowscan.utils.safe_yaml import strict_bounded_safe_load
 
-MAX_TEXT_BYTES = 64 * 1024
+# The instruction-content inspector's bound (instruction_content.MAX_TEXT_BYTES): the audit
+# is linear in its lines, about 40 ms at this size. AutoGPT's pr-test/SKILL.md is 66,573 bytes.
+MAX_TEXT_BYTES = 512 * 1024
 MAX_LINE_CHARACTERS = 4096
 MAX_FRONTMATTER_BYTES = 8192
 MAX_INDICATORS_PER_RULE = 3
@@ -101,7 +103,9 @@ class InstructionAudit:
         }
 
 
-def audit_skill_text(text: str, *, front_matter: bool = True) -> InstructionAudit:
+def audit_skill_text(
+    text: str, *, front_matter: bool = True, max_bytes: int = MAX_TEXT_BYTES
+) -> InstructionAudit:
     """Inspect a bounded snapshot; emit locations and fixed descriptions only.
 
     The caller reports ``incomplete`` through its connector statistics. Input
@@ -111,6 +115,9 @@ def audit_skill_text(text: str, *, front_matter: bool = True) -> InstructionAudi
     last ``MAX_LINE_CHARACTERS`` characters and marks the audit ``partial``.
     No evidence weight or agent classification is assigned here.
 
+    ``max_bytes`` bounds the snapshot (``MAX_TEXT_BYTES`` for a skill file; an
+    MCP tool description is audited in its own, smaller window).
+
     ``front_matter``: a leading ``---`` line opens YAML front matter, of which
     only ``name`` and ``description`` are audited, as a skill loader reads a
     ``SKILL.md``. Text that is not such a document (an MCP tool description)
@@ -119,11 +126,11 @@ def audit_skill_text(text: str, *, front_matter: bool = True) -> InstructionAudi
     """
     limitations = list(_LIMITATIONS)
     incomplete = partial = False
-    encoded = text[: MAX_TEXT_BYTES + 1].encode("utf-8", errors="replace")
-    if len(text) > MAX_TEXT_BYTES or len(encoded) > MAX_TEXT_BYTES:
+    encoded = text[: max_bytes + 1].encode("utf-8", errors="replace")
+    if len(text) > max_bytes or len(encoded) > max_bytes:
         incomplete = True
         limitations.append("Instruction text exceeds the inspection byte limit; only a prefix was inspected.")
-        text = encoded[:MAX_TEXT_BYTES].decode("utf-8", errors="ignore")
+        text = encoded[:max_bytes].decode("utf-8", errors="ignore")
     lines = text.splitlines()
     body_start = 0
     indicators: list[InstructionIndicator] = []

@@ -57,7 +57,10 @@ Optional `diff_base` (`shadowscan code PATH --diff-base REF`) accepts a local
 Git branch, tag, or revision. It scans the files committed between the merge
 base and HEAD, plus every dependency manifest, `.env*` file and coding-agent
 settings file (Claude Code, Codex, Goose, OpenClaw) for context, so an
-unchanged settings file still bounds a changed one's approval gate. It
+unchanged settings file still bounds a changed one's approval gate, and every
+file read at the path of an in-tree agent-configuration link: Git records a link
+as its target string, so a change to the target, or a new directory link, never
+names the files a client reads there. It
 does not scan uncommitted or untracked files, changes inside submodules, or any
 other unchanged file. Findings carry `diff-scan` and `metadata.diff_scan`, and
 the connector records a warning with the changed-file count even when nothing
@@ -299,8 +302,11 @@ such as `bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0` attributes both
 the route's provider and the model's vendor. Each match weighs at most 0.5
 (`model:provider.anthropic`), lists the whole id under `metadata.models`, and
 is recorded at most three times per signature per file; a file is read for
-its first 400 literals that carry a vendor stem, with incomplete coverage
-(exit 3) when it holds more. Ordinary strings do not count toward that limit.
+its first 20,000 literals that carry a vendor stem and its first 2,000 distinct
+ones are matched (a repeated value is matched once), with incomplete coverage
+(exit 3) when it holds more. Ordinary strings do not count toward that limit,
+and neither do repeats: a package whose own module names carry a vendor's stem
+(`llama_index.core`) names them hundreds of times in its mapping files.
 A model id in a source
 file or notebook can anchor a project finding (a Python file whose only
 evidence is `MODEL = "claude-3-5-sonnet-20241022"` is reported, tagged
@@ -880,8 +886,20 @@ A syntax error in a file that is not coding-agent settings only skips its
 structured checks, with a warning; `.claude`, `.codex` and `.gemini` settings
 and `strict_coverage` keep such an error incomplete. A notebook larger than
 `max_file_size` because of saved outputs is analyzed by its code cells up to
-`max_notebook_size` (default 20 MiB); its outputs are then not scanned for
-credentials, which leaves coverage incomplete unless `scan_secrets` is off.
+`max_notebook_size` (default 20 MiB). Its outputs are scanned for credentials
+with the base64 image, audio, video and PDF data of output bundles
+(`outputs[*].data`) and attachments emptied (`image/*` except `image/svg+xml`,
+`audio/*`, `video/*`, `application/pdf`), which is what makes such a notebook
+large. Only a value that is strict base64 (its lines of one width, padding
+only at its end, the whole value decoding), decodes to the signature of such a
+file and holds nothing the credential pass matches (a key spelled in the base64
+alphabet can sit on a line of a valid image) is emptied: text under a
+binary MIME key, and every value in cell or notebook metadata, is still read.
+Every line keeps its number, and a file note says how much was left out. A
+notebook that is not valid JSON is not rebuilt this way. When the text outputs alone are over `max_file_size`
+they are not scanned, and the notebook is one oversize gap of the coverage
+budget at a whole entry (never declared by the `ci` profile; an error under
+`strict_coverage`).
 A file the scanner reads that is a Git LFS pointer (a checkout or offline clone
 made without git-lfs) is not the content it stands for: it is reported as
 `Git LFS pointer file, not the content it stands for; coverage incomplete` (an
@@ -895,8 +913,9 @@ the scan incomplete. Deciding this takes time linear in the module and at most
 4,096 distinct import statement matches, 512 of them for attributes; a module
 that needs more, which ordinary code does not, is treated like one that imports
 a signature's library. Any other Python module over `max_ast_nodes` (default
-50000) keeps its lexical evidence without import-bound analysis: a warning in
-test code, an error elsewhere. A call into a signature's library is analyzed
+200000; litellm's 90,611-node `proxy_server.py` binds in about 3 s of CPU and
+100 MB) or over 2,048 bound source calls keeps its lexical evidence without
+import-bound analysis: a warning in test code, an error elsewhere. A call into a signature's library is analyzed
 from its first 65,536 characters in Python, JavaScript and TypeScript alike;
 agent constructions carry their instructions and tool definitions inline and
 routinely pass the 8,192 characters this limit used to be. A longer JavaScript
@@ -917,7 +936,14 @@ favour of the installed package, so it does not hide that SDK's imports.
 
 A notebook's IPython magic (`%pip`, `%%time`) and shell (`!pip`) lines are read
 as inert expressions, as IPython rewrites them, so they do not keep the import
-binder from the notebook. Supported package-manager commands without `%`, such
+binder from the notebook. So are a line magic spelled with a space before its
+name (`% pip install x`), an assigned shell escape or magic (`files = !ls`,
+which keeps its target), and the lines a backslash continues after one
+(`%pip install a \`), which become blank lines so every line keeps its number.
+As in IPython, an escape counts only at the start of a logical line: inside
+brackets or after a backslash, `% name` is the modulo operator. `%time`,
+`%timeit` and `%prun` without options keep the statement they run, so it is
+bound. Supported package-manager commands without `%`, such
 as `pip install openai` and `uv pip install openai`, are treated as automagic
 only when the entire input cell is a single line. Unknown command forms and
 invalid multiline cells remain unparsed coverage gaps. Command-looking text
@@ -927,7 +953,8 @@ Jupyter runs code cells one at a time, so each cell is
 lexed on its own. A cell can be declared another language: by a cell magic that
 runs, renders or writes its body as something else (`%%bash`, `%%sh`,
 `%%script bash`, `%%html`, `%%javascript`, `%%latex`, `%%markdown`, `%%sql`,
-`%%R`, `%%writefile requirements.txt`), or, for every cell, by notebook metadata
+`%%R`, graph and query languages such as `%%ngql`, `%%cypher`, `%%sparql` and
+`%%kql`, `%%writefile requirements.txt`), or, for every cell, by notebook metadata
 that names another kernel language (an R or Julia notebook). The declaration is
 the scanned repository's own text, and Jupyter starts a kernel by its name, not
 by its `language` field, so such a cell is still parsed: one that parses as
@@ -940,8 +967,13 @@ as `%%script python3`, `%%script env python3` or `%%script ipython`) hold Python
 A Python cell that still does not parse (an unfinished scratch cell) is left out
 of import binding on its own: the warning
 `import-bound analysis skipped for notebook cell N, which does not parse;
-lexical evidence retained` names it and makes coverage incomplete, and the other
-cells are bound as usual. A string left open in one cell no longer masks the
+lexical evidence retained` names it, and the other cells are bound as usual.
+While other Python cells parsed and hold code (blank, comment-only,
+magic-only and foreign cells do not count), the notebook is one partial gap charged to the
+coverage budget at a whole entry (tutorial notebooks hold placeholders such as
+`api_key = <YOUR API KEY>` on purpose); a notebook none of whose cells parse,
+one that is agent configuration (in an agent definition directory such as `.cursor/rules/`), and
+every one under `strict_coverage`, leaves coverage incomplete. A string left open in one cell no longer masks the
 cells after it, and a cell that stops (`raise SystemExit`, `sys.exit()`,
 `exit()` or `quit()` to halt Run All) ends only its own statements: the later
 cells stay reachable.
@@ -1139,7 +1171,18 @@ when its launch names no registry package or could fetch or run something else:
 - a command whose `env` table or `args` list cannot be read (an array where an
   object is expected, an argument that is not a string): the field is reported
   and dropped, and the record is marked `launch_unidentified: true`, since the
-  dropped entry may be what changes the launch.
+  dropped entry may be what changes the launch;
+- a Continue block reference (`mcpServers: [{uses: owner/block, with: {...},
+  override: {...}}]`, exactly those keys, `uses` a non-empty string): the
+  referenced hub block or local block file defines the launch and is never
+  fetched or followed (a local block inside the tree is scanned on its own), so
+  the record carries `block_reference` (sanitized like a server URL: userinfo
+  and query tokens redacted) and `launch_unidentified: true`, and projects the
+  `override` as the server's own fields. A credential-looking literal in `with`
+  is attributed like one in `env` (`secret_locations: ["with"]`), and one in a
+  `uses` URL as `uses`. A reference with any other key, a `uses` that is not a
+  string, or an `override` or `with` that is not an object stays an input
+  defect.
 
 So does a URL that is templated, carries user information (redacted when the
 configuration is parsed, and able to name another host to the client:
@@ -1264,7 +1307,7 @@ line start or after sentence punctuation), so an instruction in its middle is
 reported. A single sentence over 4,096 characters is audited in its first and
 last 4,096 characters; its middle is not, so the audit is marked
 `partial: true` (status `partial` when nothing was found) and the scan stays
-complete. Text over 64 KiB, malformed
+complete. Text over 512 KiB (the instruction-content bound), malformed
 or oversized YAML front matter and an unclosed fence make the audit and the
 scan incomplete.
 

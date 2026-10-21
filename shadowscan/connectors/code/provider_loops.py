@@ -33,7 +33,10 @@ from collections.abc import Callable, Iterator
 
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
 
-MAX_FLOW_STEPS = 100_000
+# Four steps per syntax-tree node the binder accepts (source_semantics.MAX_AST_NODES):
+# litellm's 487 KB test_common_request_processing.py takes 201,156 in 2.7 s of CPU.
+# The per-input CPU budget is checked every 256 steps as well.
+MAX_FLOW_STEPS = 800_000
 
 
 class _Imports(dict[str, str]):
@@ -41,7 +44,10 @@ class _Imports(dict[str, str]):
 
     ``dispatchers`` holds names whose project source snapshots prove dispatch.
     ``vetoed`` holds names whose local source was read but proves nothing: their
-    interface shape alone cannot establish dispatch. ``dispatcher_lines`` maps
+    interface shape alone cannot establish dispatch. Both are filled lazily by
+    :meth:`resolve`, only for a name a selected call actually reaches, so a
+    dispatch-inventory limit on an import whose verdict is never read cannot
+    make the consumer incomplete. ``dispatcher_lines`` maps
     names bound by unconditional module-level imports to the import's line, for
     the interface-shape path over modules outside the read project sources.
     Textual order is deliberately conservative for calls in function bodies:
@@ -53,6 +59,26 @@ class _Imports(dict[str, str]):
         self.dispatchers: set[str] = set()
         self.vetoed: set[str] = set()
         self.dispatcher_lines: dict[str, int] = {}
+        self.resolver: Callable[[str, str], bool | None] | None = None
+        self.resolved: set[str] = set()
+
+    def resolve(self, name: str) -> None:
+        """Record the project-source verdict for one imported name, once.
+
+        A resolver limit (``DispatchLimitError``) propagates uncached, so every
+        selected call through a module the inventory could not keep fails closed.
+        """
+        if name in self.resolved or self.resolver is None:
+            return
+        module, _, symbol = self.get(name, "").rpartition(".")
+        verdict = self.resolver(module, symbol) if module else None
+        self.resolved.add(name)
+        if verdict:
+            self.dispatchers.add(name)
+        elif verdict is False:
+            # The module's local source was read and proves nothing: the
+            # interface shape alone must not establish dispatch through it.
+            self.vetoed.add(name)
 
 
 # Calls that execute whatever the model selected: its tool input reaches a
@@ -82,6 +108,16 @@ class _Budget:
             raise MatchTimeoutError("provider tool-loop analysis budget exceeded")
         if self.steps % 256 == 0:
             pattern_timeout()
+
+    def followed(self, selected: list[ast.stmt], rest: list[ast.stmt]) -> list[ast.stmt]:
+        """``selected`` then ``rest``, the copy charged a step per statement.
+
+        A constant guard continues on its one reachable branch with the statements
+        after it; nesting such guards copies the rest of the body at every level.
+        """
+        self.steps += len(selected) + len(rest)
+        self.tick()
+        return [*selected, *rest]
 
     def walk(self, node: ast.AST, *, nested_scopes: bool = False) -> Iterator[ast.AST]:
         pending = [node]
@@ -256,24 +292,10 @@ def _imports(
         if name in {"exec", "eval"} and name not in names:
             names[name] = ""  # a local binding shadows the builtin sink
     names.dispatcher_lines = _module_dispatchers(tree, names, has_wildcard="*" in bindings)
-    _resolve_dispatchers(names, resolve_dispatch)
+    # Verdicts are resolved lazily in _selected_dispatcher: eager resolution
+    # would raise inventory limits for imports no selected call ever reaches.
+    names.resolver = resolve_dispatch
     return names
-
-
-def _resolve_dispatchers(names: _Imports, resolver: Callable[[str, str], bool | None] | None) -> None:
-    if resolver is None:
-        return
-    for name, target in names.items():
-        module, _, symbol = target.rpartition(".")
-        if not module:
-            continue
-        verdict = resolver(module, symbol)
-        if verdict:
-            names.dispatchers.add(name)
-        elif verdict is False:
-            # The module's local source was read and proves nothing: the
-            # interface shape alone must not establish dispatch through it.
-            names.vetoed.add(name)
 
 
 def _execution_sink(func: ast.expr, imports: _Imports) -> bool:
@@ -347,6 +369,7 @@ def _selected_dispatcher(call: ast.Call, values: dict[str, str], imports: _Impor
         return False
     if imports.dispatcher_lines.get(name, call.lineno) >= call.lineno:
         return False
+    imports.resolve(name)
     if name in imports.dispatchers:
         return True
     if name in imports.vetoed:
@@ -559,7 +582,7 @@ def _tool_iteration(
                 # break/return cannot turn later feedback into loop evidence.
                 selected = action.body if bool(action.test.value) else action.orelse
                 return _tool_iteration(
-                    [*selected, *body[number + 1 :]],
+                    budget.followed(selected, body[number + 1 :]),
                     local,
                     history,
                     budget,
@@ -620,7 +643,7 @@ def _statements(
             if isinstance(statement.test, ast.Constant):
                 selected = statement.body if bool(statement.test.value) else statement.orelse
                 return _statements(
-                    [*selected, *statements[number + 1 :]],
+                    budget.followed(selected, statements[number + 1 :]),
                     values,
                     history,
                     budget,

@@ -480,6 +480,25 @@ configured file/total limits within their hard ceilings when appropriate.
 The line limit is fixed, so a single oversize record requires an upstream
 export with bounded records rather than a larger file limit.
 
+`code.filesystem` reads a notebook over `max_file_size` (up to
+`max_notebook_size`) for credentials with the base64 image, audio, video and
+PDF data of its output bundles and attachments left out. Only strict base64
+under those MIME keys (lines of one width, padding only at the end, the whole
+value decoding) that decodes to such a file's signature and holds nothing the
+credential pass matches is left out, so text under a binary MIME key, a key
+spelled on a line of a valid image, and anything in metadata, is still read. When the
+remaining text is over `max_file_size`, the notebook is one oversize gap of the
+coverage budget (an error under `strict_coverage`). A notebook with cells that
+do not parse, beside other Python cells that parsed and hold code, is one
+partial gap of the budget. Scans that exited 3 only for such notebooks may now
+complete; see [incomplete scans](getting-started/incomplete-scans.md).
+
+`code.filesystem` binds a Python module of up to `max_ast_nodes` syntax-tree
+nodes (200,000 by default since the October 21 analysis-bounds change; set
+`max_ast_nodes: 50000` to keep the earlier ceiling) and redacts a file's
+excerpts on a CPU allowance of its own within the file's wall cap; see the
+[migration notes](production-migrations.md#october-21-analysis-bounds-unreleased).
+
 Shared HTTP JSON responses are streamed and limited to 16 MiB of decoded
 content by default. Each network attempt has a response-acquisition budget of
 twice the client timeout (60 seconds by default), covering connection, request
@@ -515,7 +534,19 @@ bytes) per file.
 YAML parsing checks input size, composed nodes, alias count, nesting, expanded
 nodes/content and merge work before object construction. Sanitization has a
 separate expanded-structure and total-work budget, so valid YAML aliases cannot
-cause unbounded report serialization. CODEOWNERS patterns use bounded iterative
+cause unbounded report serialization. Credential-call redaction reads each
+argument list for at most 8,192 steps; a credential-typed call that is still
+open there (often prose naming `` `ClientSession(` ``) is read on to its end
+within an extension budget of 8 work units per character of the text, shared
+by all such calls in it, and inside the shared 128 Mi-unit redaction work
+limit. A call read on to its end withholds the text from its first argument
+to the end of the text, with the line count kept; the text before it keeps
+its excerpts, as main's rules show them, and the scan completes. Where its
+comment markers (`#`, `//`, `/*`) can be read two ways it keeps both
+readings. A call past either
+budget, nested more than 32 deep under either reading, or whose completed
+reading no longer pairs a credential key the bounded one paired, still withholds
+the file's excerpts (sanitization-limit, exit 3). CODEOWNERS patterns use bounded iterative
 matching with a per-lookup work budget.
 
 `code.filesystem` reserves incomplete coverage (exit 3) for content it would
@@ -548,7 +579,13 @@ user-agent discount tokenizes only lines naming `mozilla/`, in linear time, so
 a planted file of escaped quotes cannot hold the connector either. Symbolic
 links count toward `max_files` together with regular files. A checkout with
 more links than the remaining `max_files` budget needs a larger `max_files` or
-an `exclude` entry for the link directories. The walk lists a root's entries
+an `exclude` entry for the link directories. An in-tree link that stands for
+agent configuration (`.agents/skills -> ../.claude/skills`) is read a second
+time at its link path, so its files count twice toward `max_files`, and at
+most 5,000 files a root are read at link paths; past that the link fails
+closed. Scans that exited 3 only for such links may now complete, and the
+link path's findings are new, a credential in such a file included (it is
+reported at both paths), and a budgeted gap of such a file is charged once. The walk lists a root's entries
 before it scans them in priority order; listing, including the checks of file
 and directory links, stops after half of the time in which a file can still
 start, with the error `connector deadline: listing stopped after N entries`,
@@ -573,7 +610,7 @@ A limit hit is a diagnostic and incomplete coverage, not proof of absence. Exit 
 must remain a failed gate in CI. Exit 2 means a complete scan exceeded the chosen
 risk threshold. `connector_timeout_seconds` defaults to 120 seconds and must be a strictly positive
 finite number. Left unset, it is a starting point that `code.filesystem` raises to fit a large
-tree (to at most 1800 seconds); a value you set, 120 included, is a fixed deadline that is never
+tree, by its entries and the bytes it will analyse (to at most 1800 seconds); a value you set, 120 included, is a fixed deadline that is never
 raised, so leave the option out of a configuration unless you mean to fix it
 ([connector deadlines](scanning.md#connector-deadlines-and-parallelism)). It starts when the
 connector worker begins, and split filesystem

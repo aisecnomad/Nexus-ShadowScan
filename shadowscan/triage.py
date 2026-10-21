@@ -44,12 +44,14 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from shadowscan.models import Finding, RiskLevel, Surface
 from shadowscan.signatures import SignatureIndex
-from shadowscan.utils.http import HttpClient
 from shadowscan.utils.redaction import sanitize
+
+if TYPE_CHECKING:  # the transport loads only when triage runs, never for an untriaged scan
+    from shadowscan.utils.http import HttpClient
 
 PROVIDERS = {
     "anthropic": ("https://api.anthropic.com", "/v1/messages", "ANTHROPIC_API_KEY"),
@@ -419,6 +421,8 @@ class Triage:
             headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
         else:
             headers = {"Authorization": f"Bearer {key}"}
+        from shadowscan.utils.http import HttpClient
+
         try:
             self.client = client or HttpClient(
                 base_url=base,
@@ -499,6 +503,8 @@ class Triage:
             reason = f"budget_seconds ({budget:g} s) exhausted"
         now = _monotonic()
         stop_at = now + budget
+        from shadowscan.utils.http import HttpClient
+
         http = self.client if isinstance(self.client, HttpClient) else None
         client_deadline = http.deadline if http is not None else None
         for limit in (deadline, client_deadline):

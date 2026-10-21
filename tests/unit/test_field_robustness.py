@@ -7,6 +7,7 @@ notebook whose saved outputs push it over ``max_file_size``.
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 
@@ -137,7 +138,7 @@ def test_structural_budget_is_a_distinct_timeout(index):
         bound_source_matches(index, _huge_module(600), "python", [], max_ast_nodes=1_000)
     assert isinstance(caught.value, MatchTimeoutError)
     assert bound_source_matches(index, _huge_module(10), "python", []) != []
-    assert MAX_AST_NODES == 50_000
+    assert MAX_AST_NODES == 200_000
 
 
 def test_oversized_test_module_warns_and_keeps_lexical_evidence(tmp_path, index):
@@ -167,7 +168,12 @@ def test_max_ast_nodes_is_validated(tmp_path, index, value):
 
 
 # ----------------------------------------------------------- notebooks
-def _notebook(code: str, output_bytes: int) -> str:
+def _png_base64(characters: int) -> str:
+    """About ``characters`` of strict base64 encoding a PNG's signature and then data."""
+    return base64.b64encode(b"\x89PNG\r\n\x1a\n" + bytes(characters * 3 // 4)).decode()
+
+
+def _notebook(code: str, output_bytes: int, mime: str = "image/png") -> str:
     return json.dumps(
         {
             "cells": [
@@ -175,7 +181,8 @@ def _notebook(code: str, output_bytes: int) -> str:
                 {
                     "cell_type": "code",
                     "source": code.splitlines(keepends=True),
-                    "outputs": [{"output_type": "display_data", "data": {"image/png": "A" * output_bytes}}],
+                    # Base64 of a PNG: its signature, then data.
+                    "outputs": [{"output_type": "display_data", "data": {mime: _png_base64(output_bytes)}}],
                 },
             ],
             "metadata": {},
@@ -194,15 +201,25 @@ CREW_CODE = (
 
 
 def test_notebook_with_large_outputs_is_analyzed_by_code_cells(tmp_path, index):
-    (tmp_path / "demo.ipynb").write_text(_notebook(CREW_CODE, 30_000))
+    (tmp_path / "demo.ipynb").write_text(_notebook(CREW_CODE, 30_000, mime="text/plain"))
     findings, ctx = _run(index, tmp_path, max_file_size=10_000)
     project = next(f for f in findings if f.resource_type == "project")
     assert "framework.crewai" in project.frameworks and project.kind == Kind.AGENT
-    # The saved outputs were not read for credentials: an honest gap.
-    assert ctx.stats.incomplete and not ctx.stats.errors
-    assert any("code cells analyzed" in w and "coverage incomplete" in w for w in ctx.stats.warnings)
+    # The text outputs were not read for credentials: an honest gap, one whole
+    # entry of the budget, which a one-file tree exceeds.
+    assert ctx.stats.incomplete
+    assert all("over the 2.0% budget" in e for e in ctx.stats.errors), ctx.stats.errors
+    assert any("code cells analyzed" in w and "coverage gap" in w for w in ctx.stats.warnings)
     _, strict = _run(index, tmp_path, max_file_size=10_000, strict_coverage=True)
     assert any("saved outputs not scanned" in e for e in strict.stats.errors)
+
+
+def test_notebook_made_large_by_images_is_read_for_credentials(tmp_path, index):
+    # Base64 image data is emptied before the outputs are scanned: nothing is left unread.
+    (tmp_path / "demo.ipynb").write_text(_notebook(CREW_CODE, 30_000))
+    findings, ctx = _run(index, tmp_path, max_file_size=10_000)
+    assert any(f.resource_type == "project" and f.kind == Kind.AGENT for f in findings)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
 
 
 def test_notebook_outputs_are_no_gap_when_credentials_are_not_scanned(tmp_path, index):

@@ -17,6 +17,8 @@ _DIGEST = re.compile(r"[0-9a-f]{64}")
 # Report text is printed into CI logs: keep it to one printable line per field.
 _UNPRINTABLE = re.compile(r"[^\x20-\x7e]")
 _MAX_LISTED = 200
+# GitHub keeps at most 10 error annotations per step.
+_MAX_ANNOTATIONS = 10
 # The operating-system package families the worker image may be built on, with
 # the package URL prefix the scanner records for each.
 OS_PACKAGE_PURLS = {"debian": "pkg:deb/debian/", "wolfi": "pkg:apk/wolfi/"}
@@ -237,6 +239,62 @@ def _blocked_summary(findings: list[dict[str, str]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+_FINDING_FIELDS = (
+    "vulnerability",
+    "severity",
+    "package",
+    "installed_version",
+    "fixed_version",
+    "status",
+    "package_type",
+)
+
+
+def _printable(value: Any) -> str:
+    return _UNPRINTABLE.sub("?", value)[:200] if isinstance(value, str) else ""
+
+
+def _escape_data(text: str) -> str:
+    return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _escape_property(text: str) -> str:
+    return _escape_data(text).replace(":", "%3A").replace(",", "%2C")
+
+
+def blocking_annotations(directory: Path) -> list[str]:
+    """One ``::error`` workflow command per blocking finding in a written evidence manifest.
+
+    A blocked scan's findings are otherwise named only in the job log and the
+    retained artifact; check-run annotations are what the pull request page and
+    the checks API show. A job that failed before the manifest was written has
+    nothing to name.
+    """
+    if not (directory / "container-evidence.json").is_file():
+        return []
+    manifest = _read_json(directory, "container-evidence.json")
+    findings = manifest.get("blocking_vulnerabilities") if isinstance(manifest, dict) else None
+    if not isinstance(findings, list):
+        raise ValueError("container evidence lists no blocking vulnerabilities")
+    lines = []
+    shown = findings if len(findings) <= _MAX_ANNOTATIONS else findings[: _MAX_ANNOTATIONS - 1]
+    for entry in shown:
+        if not isinstance(entry, dict):
+            raise ValueError("container evidence holds a malformed finding")
+        finding = {key: _printable(entry.get(key)) for key in _FINDING_FIELDS}
+        package = f"{finding['package_type']}:{finding['package']}"
+        title = f"{finding['vulnerability']} {finding['severity']} in {package}"
+        message = (
+            f"{package} {finding['installed_version']} status={finding['status'] or '-'} "
+            f"fixed={finding['fixed_version'] or '-'}"
+        )
+        lines.append(f"::error title={_escape_property(title)}::{_escape_data(message)}")
+    if len(findings) > len(shown):
+        more = f"{len(findings) - len(shown)} more blocking vulnerabilities in container-evidence.json"
+        lines.append(f"::error title=Container scan blocked::{more}")
+    return lines
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -250,10 +308,15 @@ def main() -> None:
     bundle.add_argument("--scanner-sha256", required=True)
     bundle.add_argument("--scan-exit", type=int, required=True)
     bundle.add_argument("--os-type", choices=sorted(OS_PACKAGE_PURLS), required=True)
+    commands.add_parser("annotations").add_argument("directory", type=Path)
     args = parser.parse_args()
     try:
         if args.command == "database":
             verify_database(args.directory)
+            return
+        if args.command == "annotations":
+            for line in blocking_annotations(args.directory):
+                print(line)
             return
         manifest = verify_bundle(
             args.directory,

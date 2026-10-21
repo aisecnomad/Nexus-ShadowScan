@@ -39,10 +39,28 @@ that are never silent:
   `.github/instructions`, `.github/agents`, `.cursor/rules/team`,
   `.well-known`): one generic dot-directory on its path does not make it so
   (`.github/actions/setup` holds no file `.github/copilot-instructions.md`
-  names). An alias of a scanned directory there stays blinding when a file it
-  holds would be configuration at the alias path (`.cursor` aliasing a
-  directory with `mcp.json` or `rules/`): under that path its files are
-  configuration, at their real path they are not. One that holds none
+  names). An alias of a scanned directory there, when a file it holds would
+  be configuration at the alias path (`.cursor` aliasing a directory with
+  `mcp.json` or `rules/`, AutoGPT's `.agents/skills -> ../.claude/skills`),
+  and a link to a scanned file whose own name makes it agent configuration
+  (a lowercase `agents.md` pointing at a README), are read a second time at
+  the link path: the link is not followed, its target is opened by its real
+  path below the root, as any file is, and analyzed and reported under the
+  link path, where a client reads it as configuration. Its files count
+  toward `max_files`, and at most 5,000 files a root are read at link paths.
+  Below such an alias, a file link is read at its own link path and a
+  directory link is judged as a link, not read again. A file read at its
+  link path is judged by the link's own name (`.vscode/settings.json` linked
+  to `settings.json.example` is a settings file), an exclude that leaves a
+  file out at its real path leaves it out at the link path too, a credential
+  found at both paths is reported at both (the real path may be
+  documentation, the link path is configuration), and a budgeted gap of such
+  a file is charged once. A link to an excluded or unselected target stays
+  blinding. So does a directory behind a link named like a configuration
+  file (`CLAUDE.md -> docs`), which no client reads as that file, and a link
+  inside its own target (`.agents/skills -> ../../`), which would walk the
+  tree again below it. So does a link past the 5,000-file cap, or one whose
+  target changed while the walk read the tree. One that holds none
   (`web/public/.well-known` aliasing `static/well-known` without an MCP
   manifest or agent card) is an alias like any other, one entry. The `ci`
   profile never declares a link that stands for configuration. So does a
@@ -241,7 +259,11 @@ partial gap is counted under it. The categories are `oversize-file` (a file
 over `max_file_size` or `max_notebook_size`), `unresolved-link` (a symbolic
 link, gitlink or submodule not followed), `unparsed-input` (content that did
 not parse or could not be decoded, or an input defect, including a structured
-document whose excerpts were withheld because it did not parse),
+document whose excerpts were withheld because it did not parse; a manifest,
+agent manifest or MCP configuration that is empty or holds only whitespace and
+a byte-order mark declares nothing and leaves nothing unread, so it is a file
+note (`analyzed in full with a note (empty ...)`) rather than a gap, still
+counted under `strict_coverage`, and a file with a NUL byte stays undecodable),
 `sanitization-limit` (a sanitizer or parser resource limit that left the
 credential-redaction context unestablished, so excerpts were withheld),
 `timeout` (a file's matching budget, a connector deadline or a job deadline,
@@ -462,6 +484,39 @@ applied in this order:
    beside other gaps: a 200-file service with four binary fixtures and one
    dangling certificate link exits 3 (see
    [test and fixture code](#test-and-fixture-code)).
+   **Unrendered template source** is charged the same way, at a whole entry:
+   a file that does not parse, holds Jinja syntax (`{{` or `{%`) and lies
+   under a directory whose name holds Jinja syntax (cookiecutter's
+   `{{cookiecutter.package_name}}/pyproject.toml`) is read by no tool until a
+   generator renders it, so its gap is partial and its warning says
+   `unrendered template source`. Python source is the exception: Python runs
+   a module under such a directory as written, and a newer interpreter than
+   the scanner's parses grammar the scanner cannot, so a Python module or
+   notebook there is template source only by the content rule below, however
+   many `{{ }}` its prompt strings hold. A shell-style `${env}/` directory, or a file
+   without Jinja syntax of its own, is judged as anywhere else. So is a
+   Python, TOML or JSON file under an ordinary name that parses once each
+   Jinja placeholder is filled in and each tag line dropped (crewAI's
+   `templates/crew/crew.py`, `class {{crew_name}}():`); a file broken in any
+   other way still fails. A placeholder holds no quote, separator or
+   bracket and a tag is a line of its own, so neither can swallow the
+   strings, values or statements around it. The scanner analyzes the
+   rendering (stand-ins of each placeholder's length, tag lines blanked, so
+   every line and character position is kept; an analysis limit reached on
+   the rendering fails the scan as it does for any source):
+   a templated manifest's dependencies and a templated module's imports are
+   still evidence. Only a parse failure is explained this way: a repeated
+   JSON key, a redaction limit or any other gap under a template-named
+   directory is judged as anywhere else. A plain JSON data file with a
+   repeated key is charged to the budget when no reading of the key (first
+   value kept, last value kept, repeated objects merged) holds an MCP server
+   table and no detector that needs a parse reads any reading as anything
+   but data (a structured agent definition, a CloudFormation or ARM
+   template, a deployment such as an ECS task definition, a configuration
+   document) or stops at a limit on it; a manifest, a lockfile and agent
+   configuration never are. Agent configuration there is
+   never discounted, strict accounting keeps the gap, and a tree seeded with
+   such files still exhausts the budget.
 5. **Budget.** Every other partial gap is charged to the budget; a blinding
    one marks the scan incomplete.
 
@@ -871,19 +926,42 @@ once per process. Configure only one YAML key; supplying both is rejected.
 Legacy YAML `connector_timeout: null` uses the 120-second default; it does not
 disable the deadline. Left unset, the default is raised for a large input
 when the connector can measure it: `code.filesystem` counts up to 180,000
-entries within a one-second probe and scales the deadline above 12,000,
-to at most 1800 seconds. An
+entries within a one-second probe and scales the deadline with the tree's
+entries above 12,000 and with the bytes it will analyse, to at most 1800
+seconds. An
 explicit value, 120 included, is honoured unchanged, so a configuration that
 sets `connector_timeout_seconds: 120` turns that scaling off; a larger tree
 needs an explicit, larger deadline.
 
 Leaving the option out and setting it are not the same. Left out (or given as
 legacy `connector_timeout: null`), the 120 seconds is where a connector starts,
-and a connector may raise its own deadline to fit its input: `code.filesystem`
-counts up to 180,000 entries of the tree it is about to walk and, above 12,000,
-scales its deadline in proportion, to at most 1800 seconds, and reports
-`input is large; deadline raised to ...` in its progress output. The engine caps
-any connector's proposal at 30 minutes. A value you set, from a configuration
+and a connector may raise its own deadline to fit its input. Before it walks a
+tree, `code.filesystem` probes it without opening a file or following a link
+(for at most 180,000 entries or one second) and takes the larger of two
+scales: one default per 12,000 entries, and one default per 12 MB of source
+(Python, JavaScript, TypeScript and the code share of notebooks) plus one per
+240 MB of anything else it reads, such as data files and the supported
+lockfiles (`uv.lock`, `poetry.lock`, `pnpm-lock.yaml`, `Cargo.lock`). Only
+files at or under `max_file_size` (`max_notebook_size` for a notebook) count,
+because the reader skips larger ones. A monorepo with a lockfile per package or
+many megabytes of source therefore gets a longer deadline than its file count
+suggests. It reports `input is large; deadline raised to ...` in its progress
+output. The engine caps any connector's proposal at 30 minutes. Because bytes count, a tree with few entries can reach
+that cap by padding source or lockfiles up to `max_file_size`; when you scan
+an untrusted repository, set `--connector-timeout-seconds` or
+`--job-deadline-seconds` to the time you are willing to spend.
+
+When the deadline does end a walk, the walk stops early enough to leave time for
+the work that follows it (re-export binding and finding emission): five percent
+of its window, or 5 ms per file it read (images and other files it never
+opens do not count), whichever is larger (the per-file
+share capped at a quarter of the window), and never less than 250 ms. The report then says how far it got (`connector deadline
+reached after N of M files`), and the findings are a subset. If emission itself
+runs into the deadline, the connector records `connector deadline reached during
+finding emission; the findings of N of M projects ... not emitted` rather
+than dropping them silently. Only the per-project emission, the costly part, is
+checked against the deadline; the findings that follow it (MCP configurations,
+manifests, workflows, infrastructure and credentials) are emitted in full. Either way the scan exits 3. A value you set, from a configuration
 file, `--connector-timeout-seconds` or `ScanConfig`, is used as it is and never
 raised, and that includes 120: a configuration that spells out
 `connector_timeout_seconds: 120` gives a large repository 120 seconds and
