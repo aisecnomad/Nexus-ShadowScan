@@ -76,6 +76,39 @@ Counts and figures quoted in an entry are those of its date.
   withheld only the paired value, so its other strings (a positional
   password the value rules do not classify) reached the excerpt main
   withheld by failing closed; such a call now withholds every literal too.
+- An adversarial pass over that rule found literal-picking unsafe in itself:
+  the call lexer knows no regex literal or heredoc, so a quote inside one
+  shifts every literal boundary after it, and a credential mid-argument (a
+  conditional or concatenation) is no literal start under any reading.
+  Withholding the call's whole region instead was tried and not carried: a
+  differential fuzz (9,592 texts from the review's generators) found the
+  text after the region losing context a later pass needs, since the region
+  withholds a credential key that `_redact_extended` withholds the value
+  after the call by (`key="OPENAI_API_KEY", "v")default="..."` on one line).
+  Main fails closed on every such call, so a completed credential-relevant
+  call (credential-named, an SDK client, or pairing a credential key) now
+  withholds the text from its first argument to the end of the text, with
+  the line count kept, and the text before it keeps its excerpts and the
+  scan completes; `_literal_index` and the per-call literal lookup are gone.
+  Against main with each fail-closed raise in the call pass replaced by that
+  same withholding, the fuzz finds nothing shown that main's own rules do
+  not show, and 6 texts withheld more. A value main's per-call rules show in
+  the text before such a call (a pairing key past the step bound of a call
+  main does not complete, or a line rule out of reach) is now shown where
+  main withheld the file; that is main's rule for the same text without the
+  call. Six regression shapes (a call in a comment and a template, a regex
+  quote, a mid-argument value, a JavaScript conditional, a key that is the
+  context after the call, a value after it in an unclosed outer call) fail
+  on the earlier rules and pass now; prose naming `ClientSession(` keeps the
+  lines before it, and the self-scan still completes.
+- The same pass found the output assembly dropping a withheld span that
+  starts inside an earlier one: a credential constructor's literal
+  `"setBearerToken("` was withheld, the call it opens was read to the end,
+  and its span, starting inside the literal, was skipped, so the rest of the
+  text was shown where main fails closed. A span that runs past the one
+  before it now withholds the rest
+  (`test_a_call_opening_inside_a_withheld_literal_still_withholds_the_rest_of_the_text`).
+  Spans that nest are unchanged; partly overlapping ones only withhold more.
 
 ### Companion pin to Nexus-ShadowBench 1ce0eee (October 21)
 
