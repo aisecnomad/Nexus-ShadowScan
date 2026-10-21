@@ -10,6 +10,33 @@ summarise them for operators, and the
 [candidate change history](history/production-change-history.md) keeps the
 full dated log.
 
+## October 20 unparsed-input triage (Unreleased)
+
+- A Continue `mcpServers` block reference (`{uses, with?, override?}`) is now
+  an `mcp-server` finding instead of an input defect. The record gains
+  `block_reference` (sanitized) and `launch_unidentified: true`; its `override`
+  is projected as the server's fields, and a literal credential in `with` sets
+  `secrets_inline` with `secret_locations: ["with"]`. Repositories with such
+  configs gain findings and may stop exiting 3; re-baseline. Finding identity of
+  existing servers is unchanged (unnamed list entries keep index names).
+- An empty or whitespace/BOM-only manifest, agent manifest or MCP configuration
+  is a file note instead of an `unparsed-input` gap. `strict_coverage` still
+  counts it; NUL-bearing files stay undecodable gaps.
+- Under `--profile ci`, a directory whose manifest names its project with
+  template syntax is judged as a template, so its gaps are declared (counted in
+  `declared_omissions`), as for a manifest that does not parse.
+- Unrendered template source is one partial gap charged to the coverage
+  budget instead of an `unparsed-input` failure. That is a Python, TOML or
+  JSON file that parses once its Jinja placeholders are filled in and its tag
+  lines dropped, or a file with Jinja syntax under a directory named with
+  Jinja syntax (`{{cookiecutter.package_name}}/`). Its rendering is
+  analyzed, so its dependencies and imports stay evidence. Scans that exited
+  3 only for such files may complete; `strict_coverage` keeps them
+  incomplete, and agent configuration is never discounted.
+
+These are authored regression fixes measured on offline corpus clones; they do
+not supply live-tenant or independent acceptance.
+
 ## October 19 dependency floors (Unreleased)
 
 - The package now requires PyJWT 2.15.1 and regex 2026.9.29, and the cloud

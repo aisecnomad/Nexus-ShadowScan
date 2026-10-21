@@ -107,6 +107,8 @@ def _marks_project(directory: Path, names: Iterable[str]) -> bool:
 # Template syntax in a path segment: cookiecutter and copier (``{{cookiecutter.slug}}``,
 # ``{% if x %}``) and shell-style (``${name}``) placeholders a generator fills in.
 _TEMPLATE_SYNTAX = re.compile(r"\{\{|\{%|\$\{")
+# Jinja syntax in a directory name: a generator's template directory (``_template_source_gap``).
+_JINJA_DIRECTORY = re.compile(r"\{\{|\{%")
 # A manifest larger than this is not read to tell whether it parses: it counts as one.
 _MANIFEST_PROBE_BYTES = 1024 * 1024
 _JSON_MANIFESTS = frozenset({"package.json", "composer.json"})
@@ -138,12 +140,32 @@ def _manifest_parses(path: Path, name: str) -> bool:
     try:
         text = data.decode("utf-8-sig")
         if name in _JSON_MANIFESTS:
-            json.loads(text, parse_constant=_refuse_constant)
+            document = json.loads(text, parse_constant=_refuse_constant)
         else:
-            tomllib.loads(text)
+            document = tomllib.loads(text)
     except (UnicodeDecodeError, ValueError, RecursionError):  # TOMLDecodeError is a ValueError
         return False
-    return True
+    return not _templated_project_name(document)
+
+
+def _templated_project_name(document: object) -> bool:
+    """Whether a parsed manifest names its project with template syntax (``name = "{{folder_name}}"``).
+
+    No package index or build backend accepts such a name, so the manifest is a
+    generator's template rendered elsewhere, as one that does not parse is.
+    """
+    if not isinstance(document, dict):
+        return False
+    names = [document.get("name")]
+    for table, key in (("project", "name"), ("package", "name")):
+        section = document.get(table)
+        if isinstance(section, dict):
+            names.append(section.get(key))
+    tool = document.get("tool")
+    poetry = tool.get("poetry") if isinstance(tool, dict) else None
+    if isinstance(poetry, dict):
+        names.append(poetry.get("name"))
+    return any(isinstance(value, str) and _TEMPLATE_SYNTAX.search(value) for value in names)
 
 
 def _marks_deployable_project(directory: Path, rel_dir: str, names: Iterable[str]) -> bool:
@@ -889,6 +911,10 @@ class TreeWalker:
         self._default_skipped: dict[str, int] = {}
         # Files that were read but not as clean text, by what was done to them (see ``note_file``).
         self._file_notes: dict[str, list[str]] = {}
+        # Defects in content no client reads as written: path -> (kind of defect, why) (``budget_defects``).
+        self._budgeted_defects: dict[str, tuple[str, str]] = {}
+        # Files whose text holds Jinja placeholders or tags (``note_template_syntax``).
+        self._template_syntax: set[str] = set()
         self._symlink_warnings: set[Path] = set()
         self._declared_link_notes: set[Path] = set()
         self._blinding_link_notes: set[Path] = set()
@@ -1658,6 +1684,7 @@ class TreeWalker:
         self._default_skipped = {}
         fixtures_before = self.skipped_oversize_test_fixtures
         self._file_notes = {}
+        self._budgeted_defects, self._template_syntax = {}, set()
         try:
             self._walk_entries(scan, scan_file, unread_settings)
         except _WalkLimitError as exc:
@@ -2087,6 +2114,61 @@ class TreeWalker:
         """
         return not self.include_tests and _is_test_path(rel) and not self._agent_configuration(rel)
 
+    def budget_defects(self, rel: str, why: str, *, kind: str = "parse") -> None:
+        """Record that ``rel``'s ``kind`` of defect is in content no client reads as written, and ``why``.
+
+        The file scanner, which holds the text, decides this: a template that
+        parses once its placeholders are filled in
+        (``template_source.rendered_template``) is a ``parse`` defect. Only a
+        gap of the same kind recorded for ``rel`` afterwards is charged to the
+        budget (``_template_source_gap``); any other gap the file has, a
+        redaction limit or an integrity failure, is judged as without it.
+        """
+        self._budgeted_defects[rel] = (kind, why)
+
+    def note_template_syntax(self, rel: str) -> None:
+        """Record that ``rel``'s text holds Jinja placeholders or tags (``{{`` or ``{%``)."""
+        self._template_syntax.add(rel)
+
+    def _template_source_gap(
+        self, rel: str, *, full_weight: bool = False, kind: str | None = None
+    ) -> str | None:
+        """Why a gap in ``rel`` is in content no client reads as written, such as unrendered template source.
+
+        Jinja syntax in a directory name (cookiecutter's
+        ``{{cookiecutter.package_name}}/pyproject.toml``, copier's ``{% if %}``
+        paths) means no tool reads the file where it is: the generator fills in
+        its placeholders, and its Jinja blocks
+        (``{%- if cookiecutter.depends_on_core -%}``) are not TOML, JSON or
+        YAML. The file's own text must hold Jinja syntax too
+        (``note_template_syntax``): a module of newer Python syntax under such
+        a directory, or under a shell-style ``${env}``, is broken source, and
+        keeps its gap. A file under an ordinary name is template source when it fails
+        to parse only because of its placeholders (``budget_defects``):
+        crewAI's ``templates/crew/crew.py`` declares ``class {{crew_name}}():``.
+        Such a file that does not parse is charged to the coverage budget
+        as one partial gap, like a malformed test fixture, instead of failing
+        the scan outright; a tree seeded with them still exhausts the budget.
+        Agent configuration is never discounted (``_agent_configuration``): a
+        client started in the rendered project reads it as written. Strict
+        accounting, and a caller that found MCP servers by structure
+        (``full_weight``), keep the gap. ``kind`` is the defect the gap records:
+        only a ``parse`` failure is one a template explains, so an integrity
+        failure (a repeated JSON key), a redaction limit or anything else under
+        a template-named directory keeps its gap. None when the gap is not one
+        of these.
+        """
+        if kind is None or full_weight or self._strict_accounting() or self._agent_configuration(rel):
+            return None
+        if (
+            kind == "parse"
+            and rel in self._template_syntax
+            and _JINJA_DIRECTORY.search(rel.rpartition("/")[0])
+        ):
+            return "unrendered template source (template syntax in its directory)"
+        recorded = self._budgeted_defects.get(rel)
+        return recorded[1] if recorded is not None and recorded[0] == kind else None
+
     def _discounted_gap(
         self,
         rel: str,
@@ -2097,8 +2179,14 @@ class TreeWalker:
         full_weight: bool = False,
         reason: str | None = None,
         charged_in_full: bool = False,
+        defect: str | None = None,
     ) -> None:
-        """Record ``message`` about ``rel`` as a gap (``_gap``), or charge it to the budget in test code.
+        """Record ``message`` about ``rel`` as a gap (``_gap``), or charge it to the budget in test code
+        or unrendered template source (``_template_source_gap``, a whole entry).
+
+        ``defect`` names the kind of defect the gap records (``parse`` for content
+        that does not parse); only a caller that names one can have its gap
+        explained by unrendered template source.
 
         A ``ci`` profile declaration takes precedence over the discount, so the
         omission is counted in ``declared_omissions`` like every other one the
@@ -2124,6 +2212,15 @@ class TreeWalker:
                 rel,
                 f"{message}; test code is discounted evidence (include_tests is false); coverage gap",
                 full_weight=charged_in_full,
+                reason=reason,
+            )
+        elif (template := self._template_source_gap(rel, full_weight=full_weight, kind=defect)) and not (
+            self._declared_omission(rel)
+        ):
+            self._ledger_gap(
+                rel,
+                f"{message}; {template}; coverage gap",
+                full_weight=True,
                 reason=reason,
             )
         else:

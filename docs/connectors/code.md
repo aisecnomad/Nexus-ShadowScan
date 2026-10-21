@@ -1139,7 +1139,18 @@ when its launch names no registry package or could fetch or run something else:
 - a command whose `env` table or `args` list cannot be read (an array where an
   object is expected, an argument that is not a string): the field is reported
   and dropped, and the record is marked `launch_unidentified: true`, since the
-  dropped entry may be what changes the launch.
+  dropped entry may be what changes the launch;
+- a Continue block reference (`mcpServers: [{uses: owner/block, with: {...},
+  override: {...}}]`, exactly those keys, `uses` a non-empty string): the
+  referenced hub block or local block file defines the launch and is never
+  fetched or followed (a local block inside the tree is scanned on its own), so
+  the record carries `block_reference` (sanitized like a server URL: userinfo
+  and query tokens redacted) and `launch_unidentified: true`, and projects the
+  `override` as the server's own fields. A credential-looking literal in `with`
+  is attributed like one in `env` (`secret_locations: ["with"]`), and one in a
+  `uses` URL as `uses`. A reference with any other key, a `uses` that is not a
+  string, or an `override` or `with` that is not an object stays an input
+  defect.
 
 So does a URL that is templated, carries user information (redacted when the
 configuration is parsed, and able to name another host to the client:

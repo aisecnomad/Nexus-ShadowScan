@@ -139,6 +139,55 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   re-export did not count before this change either.
   `test_only_provider_consumers_add_nested_dispatch_deferral` now expects a
   litellm-only consumer not to be queued.
+### Unparsed-input triage and unrendered template source (October 21)
+
+- Three misjudgements made ordinary repositories exit 3. A Continue
+  `mcpServers` block reference (`{uses, with?, override?}`, Continue's own
+  schema) was an input defect; it is now an `mcp-server` finding whose
+  `override` is projected as the server's fields
+  (`docs/production-migrations.md`). An empty or whitespace-only manifest,
+  agent manifest or MCP configuration fails its parser without hiding a byte;
+  it is a file note, which strict accounting still counts. Under
+  `--profile ci` a directory whose manifest names its project with template
+  syntax is judged a template, as one whose manifest does not parse.
+- microsoft/autogen exited 3 on
+  `python/templates/new-package/{{cookiecutter.package_name}}/pyproject.toml`,
+  whose `{%- if cookiecutter.depends_on_core -%}` block is not TOML. A file
+  that does not parse under a directory whose name holds template syntax is
+  now one partial gap charged to the coverage budget at a whole entry.
+- crewAIInc/crewAI exited 3 on six templates `crewai create` renders, kept
+  under ordinary names (`templates/crew/crew.py` declares
+  `class {{crew_name}}():`, `templates/crew/pyproject.toml` a
+  `{{folder_name}} = ...` key). A Python, TOML or JSON file that fails its
+  parser, holds Jinja placeholders or tags, and parses once each placeholder
+  is replaced by a stand-in and each one-line tag is dropped is now
+  unrendered template source too (`connectors/code/template_source.py`). The
+  file scanner records the verdict against the path
+  (`TreeWalker.budget_defects`) and the walker charges the gap. A file broken
+  in any other way still fails; agent configuration, strict accounting and
+  MCP configuration found by structure keep the gap, and a tree of templates
+  exhausts the budget. The scanner analyzes the rendering itself: a
+  templated manifest's dependencies are inventoried from it and a templated
+  module is bound from it (crewAI's `crew.py` is then an agent), so a
+  placeholder added to a deployed file cannot hide what surrounds it.
+- Review follow-ups. An independent review found that the first version
+  budgeted every gap of a file under a template-named directory, a repeated
+  JSON key under `deploy/${env}/` included, and that adding `{{ x }}` to a
+  deployed `pyproject.toml` dropped its dependency findings while the scan
+  completed. The directory rule and the content rule now explain only parse
+  failures (`_discounted_gap(defect="parse")`, a registry scoped by kind),
+  and the rendering is analyzed as above.
+- A second review found that a placeholder or tag span could cross string
+  delimiters and swallow structure: a root `package.json` whose
+  `dependencies` (with a JSON5 trailing comma) sat between `"{%` and `%}"`
+  on one line rendered as valid JSON without them, so a scan main reports
+  incomplete completed with no findings. A placeholder now holds a Jinja
+  expression without quotes, separators, brackets, `=`, `:`, `;` or `#`, and
+  a tag must be a whole line with no `%}` before its end. The same seven
+  corpus files are recognized as before. The directory rule also budgeted
+  any parse failure under `${env}/`, so a module of newer Python syntax
+  there completed; it now needs Jinja syntax in the directory name and in
+  the file's own text (`TreeWalker.note_template_syntax`).
 
 ### Release readiness review (October 21)
 

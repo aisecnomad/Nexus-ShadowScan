@@ -458,3 +458,78 @@ def test_nested_mcp_block_is_detected_structurally(tmp_path: Path, run_connector
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     assert [f.metadata["servers"][0]["name"] for f in findings if f.kind == Kind.MCP_SERVER] == ["fs"]
+
+
+def _continue(entry: object) -> tuple[list[dict[str, object]], list[str]]:
+    return _parse({"mcpServers": [entry]}, ".continue/config.yaml")
+
+
+def test_continue_block_reference_is_a_server_whose_launch_is_unidentified() -> None:
+    servers, errors = _continue({"uses": "anthropic/memory-mcp"})
+    assert errors == []
+    assert len(servers) == 1
+    assert servers[0]["block_reference"] == "anthropic/memory-mcp"
+    assert servers[0]["launch_unidentified"] is True
+    assert servers[0]["secrets_inline"] is False
+
+
+def test_continue_block_reference_projects_its_override() -> None:
+    servers, errors = _continue(
+        {"uses": "./mcp/local.yaml", "override": {"command": "node", "args": ["evil.js"]}}
+    )
+    assert errors == []
+    assert servers[0]["command"] == "node"
+    assert servers[0]["args"] == ["evil.js"]
+    assert servers[0]["launch_unidentified"] is True
+
+
+def test_continue_block_reference_override_env_is_attributed_like_env() -> None:
+    literal = {"env": {"API_KEY": "Zq7xV2mK9pL4wR8tY3nB6cD1aB"}}
+    reference, ref_errors = _continue({"uses": "x/y", "override": {"command": "node", **literal}})
+    plain, plain_errors = _continue({"command": "node", **literal})
+    assert ref_errors == plain_errors == []
+    assert reference[0]["secret_locations"] == plain[0]["secret_locations"] == ["env"]
+    assert reference[0]["env_names"] == plain[0]["env_names"] == ["API_KEY"]
+
+
+def test_continue_block_reference_with_literal_credential_is_inline() -> None:
+    secret = "Zq7xV2mK9pL4wR8tY3nB6cD1aB"
+    servers, errors = _continue({"uses": "x/y", "with": {"API_KEY": secret}, "override": {"args": [secret]}})
+    assert errors == []
+    assert servers[0]["secrets_inline"] is True
+    assert "with" in servers[0]["secret_locations"]
+    assert secret not in json.dumps(servers)
+    referenced, _ = _continue({"uses": "x/y", "with": {"API_KEY": "${{ secrets.API_KEY }}"}})
+    assert referenced[0]["secrets_inline"] is False
+
+
+def test_continue_block_reference_url_is_redacted() -> None:
+    # Assembled at run time, so the repository's secret check sees no credential-bearing URL literal.
+    userinfo = "u:" + "tok0123456789"
+    servers, errors = _continue({"uses": f"https://{userinfo}@host.example/x?token=abcdefghijkl1234"})
+    assert errors == []
+    block = str(servers[0]["block_reference"])
+    assert "tok0123456789" not in block and "abcdefghijkl1234" not in block
+    assert servers[0]["secrets_inline"] is True
+    assert "uses" in servers[0]["secret_locations"]
+
+
+@pytest.mark.parametrize(
+    ("entry", "error"),
+    [
+        ({"uses": "x/y", "override": "node"}, "MCP block reference override must be an object"),
+        ({"uses": "x/y", "with": ["A"]}, "MCP block reference with must be an object"),
+        ({"uses": 1}, "MCP server entry has no command, URL, or valid package"),
+        ({"uses": "x/y", "name": "y"}, "MCP server entry has no command, URL, or valid package"),
+    ],
+)
+def test_malformed_continue_block_reference_is_reported(entry: object, error: str) -> None:
+    _, errors = _continue(entry)
+    assert error in errors
+
+
+def test_block_reference_with_a_server_key_is_judged_as_a_server() -> None:
+    servers, errors = _continue({"uses": "x/y", "command": "node"})
+    assert errors == []
+    assert servers[0]["command"] == "node"
+    assert "block_reference" not in servers[0]

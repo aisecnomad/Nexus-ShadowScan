@@ -32,6 +32,11 @@ explain operator migrations. Earlier per-change entries are preserved in the
   provider's SDK (any of the 38 `category: provider` signatures) are queued
   for nested dispatch, not those importing `platform.litellm` alone, so
   litellm's own tree no longer fills the 16 MiB queue.
+- Fewer false exit 3s from unparsed input: a Continue `uses:` block reference
+  is an MCP server finding, an empty manifest or MCP configuration is a note,
+  and unrendered template source (a file under a `{{cookiecutter...}}`
+  directory, or one that parses once its Jinja placeholders are filled in) is
+  one partial gap charged to the coverage budget instead of failing the scan.
 
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the

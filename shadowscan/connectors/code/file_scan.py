@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 from bisect import bisect_right
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import replace
 from functools import partial
@@ -130,6 +130,7 @@ from shadowscan.connectors.code.source_text import (
     _without_xml_comments,
     foreign_cell,
 )
+from shadowscan.connectors.code.template_source import rendered_template
 from shadowscan.connectors.code.tool_attribution import ToolRegions
 from shadowscan.connectors.code.walk import (
     _AGENT_DEFINITION_DIRS,
@@ -520,6 +521,8 @@ class FileScanner:
             else:
                 self.walker._gap(rel, message, reason="unscanned-input")
             return None
+        if "{{" in text or "{%" in text:
+            self.walker.note_template_syntax(rel)  # read by _template_source_gap
         if path.suffix.lower() != ".ipynb":
             return text, None, (), ()
         return self._notebook_source(rel, text)
@@ -641,6 +644,7 @@ class FileScanner:
             suffix=False,
             full_weight=full_weight,
             reason="unparsed-input",
+            defect="parse",
         )
 
     # Syntax/shape defects get a distinct diagnostic so operators can find
@@ -653,6 +657,24 @@ class FileScanner:
         "invalid agent manifest syntax",
         "MCP servers must be an object or array",
     )
+
+    def _declaration_errors(
+        self, file: _SourceFile, issues: Collection[str], empty_note: str, *, full_weight: bool = False
+    ) -> bool:
+        """Record a declaring file's parser issues as input defects; False when the file is blank.
+
+        A manifest, agent manifest or MCP configuration that holds only whitespace (and a
+        byte-order mark) fails its parser, yet no byte of it went unread and no parser reads a
+        declaration from it: it is noted (``empty_note``), which strict accounting still counts,
+        rather than recorded as a gap. A file with a NUL byte never reaches this as text.
+        """
+        if issues and _blank(file.text):
+            self.walker.note_file(file.rel, empty_note)
+            return False
+        if issues:
+            self._note_template(file)
+        self.file_errors(file.rel, issues, defect=True, full_weight=full_weight)
+        return True
 
     def file_errors(
         self, rel: str, issues: Iterable[str], *, defect: bool = False, full_weight: bool = False
@@ -747,7 +769,7 @@ class FileScanner:
         file.card_kind = agent_manifest_kind(file.rel)
         if file.card_kind:
             validation = parse_agent_manifest(file.rel, file.text, file.card_kind)
-            self.file_errors(file.rel, validation.errors, defect=True)
+            self._declaration_errors(file, validation.errors, "empty agent manifest; it declares no agent")
             file.card_valid = validation.valid
             file.card_incomplete = validation.incomplete
         for m in file.file_matches:
@@ -884,7 +906,12 @@ class FileScanner:
             mcp_errors: list[str] = []
             file.mcp_servers = _parse_mcp_servers(file.rel, file.text, mcp_errors, document)
             # An MCP configuration is reported at full weight in test code, so its defects are gaps there.
-            self.file_errors(file.rel, dict.fromkeys(mcp_errors), defect=True, full_weight=True)
+            self._declaration_errors(
+                file,
+                dict.fromkeys(mcp_errors),
+                "empty MCP configuration; it declares no server",
+                full_weight=True,
+            )
             dedicated = file.name.lower() in _DEDICATED_MCP_CONFIG_NAMES
             if not file.mcp_servers and not mcp_errors and not dedicated:
                 # The content heuristic (an "mcp" and a "servers" key anywhere
@@ -990,7 +1017,14 @@ class FileScanner:
         manifest = parse_manifest(rel, file.text, self._parsed_document(file, (".json",), strict=True))
         if not manifest:
             return
-        self.file_errors(rel, dict.fromkeys(manifest.errors), defect=True)
+        if not self._declaration_errors(
+            file, dict.fromkeys(manifest.errors), "empty manifest; it declares nothing"
+        ):
+            return
+        if manifest.errors and (rendered := rendered_template(rel, file.text)) is not None:
+            # Unrendered template source (its gap is recorded above): the manifest a
+            # generator renders from it declares these dependencies, placeholders aside.
+            manifest = parse_manifest(rel, rendered) or manifest
         for dep in manifest.deps:
             file.proj.deps.append(dep)
             for m in self.index.match_dependency(dep.ecosystem, dep.name):
@@ -1440,7 +1474,27 @@ class FileScanner:
                 f"code.filesystem: {file.rel}: import-bound analysis skipped ({exc}); "
                 "lexical evidence retained",
             )
-            return [], whole
+            rendered = None if file.cells else rendered_template(file.rel, content_text)
+            if rendered is None:
+                return [], whole
+            # Unrendered template source (its gap is recorded above): bind the
+            # rendering, so a placeholder cannot hide the imports around it.
+            try:
+                bound = bound_source_matches(
+                    self.index,
+                    rendered,
+                    lang,
+                    ignored,
+                    is_local_module=is_local_module if lang == "python" else None,
+                    max_ast_nodes=self.max_ast_nodes,
+                    truncated=truncated,
+                    resolve_import=resolve_import,
+                    resolve_javascript_tool=resolve_javascript_tool,
+                    resolve_dispatch=resolve_dispatch,
+                )
+            except (SourceBudgetExceeded, SourceNotParsed):
+                return [], whole
+            file.unparsed = ()
         if truncated:
             # An option past the limit (tools, a stop condition) was not read: the
             # call-analysis budget is a coverage gap like the one above, but the
@@ -2084,10 +2138,27 @@ class FileScanner:
         A gap goes through ``_gap``, so the ci profile declares it under a
         template, example or test path, and is counted as unparsed input.
         """
-        if self._syntax_gap(file):
-            self.walker._gap(file.rel, message, suffix=False, reason="unparsed-input")
-        else:
+        if not self._syntax_gap(file):
             self.ctx.warn(message, incomplete=False)
+        elif self._note_template(file):
+            self.walker._discounted_gap(
+                file.rel, message, suffix=False, reason="unparsed-input", defect="parse"
+            )
+        else:
+            self.walker._gap(file.rel, message, suffix=False, reason="unparsed-input")
+
+    def _note_template(self, file: _SourceFile) -> bool:
+        """Whether ``file``, which did not parse, is unrendered template source; record one found by content.
+
+        A file under a directory named with template syntax is one by its path
+        (``_template_source_gap``); one under an ordinary name is one when it
+        parses once its Jinja placeholders are filled in (``unrendered_template``).
+        """
+        if rendered_template(file.rel, file.text) is not None:
+            self.walker.budget_defects(
+                file.rel, "unrendered template source (parses once its placeholders are filled in)"
+            )
+        return self.walker._template_source_gap(file.rel, kind="parse") is not None
 
     def _scan_undecodable_file(
         self,
@@ -2262,3 +2333,8 @@ def _content_declares_mcp(rel: str, text: str, document: Any) -> bool:
 def _text_may_declare_mcp(text: str) -> bool:
     """``_may_declare_mcp`` of decoded text: its bytes lower-cased, without NUL characters."""
     return _may_declare_mcp(text.replace("\x00", "").encode("utf-8", "replace").lower())
+
+
+def _blank(text: str) -> bool:
+    """Whether ``text`` holds nothing but JSON, YAML and TOML whitespace (and a byte-order mark)."""
+    return not text.strip(" \t\r\n\ufeff")

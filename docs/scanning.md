@@ -241,7 +241,11 @@ partial gap is counted under it. The categories are `oversize-file` (a file
 over `max_file_size` or `max_notebook_size`), `unresolved-link` (a symbolic
 link, gitlink or submodule not followed), `unparsed-input` (content that did
 not parse or could not be decoded, or an input defect, including a structured
-document whose excerpts were withheld because it did not parse),
+document whose excerpts were withheld because it did not parse; a manifest,
+agent manifest or MCP configuration that is empty or holds only whitespace and
+a byte-order mark declares nothing and leaves nothing unread, so it is a file
+note (`analyzed in full with a note (empty ...)`) rather than a gap, still
+counted under `strict_coverage`, and a file with a NUL byte stays undecodable),
 `sanitization-limit` (a sanitizer or parser resource limit that left the
 credential-redaction context unestablished, so excerpts were withheld),
 `timeout` (a file's matching budget, a connector deadline or a job deadline,
@@ -462,6 +466,26 @@ applied in this order:
    beside other gaps: a 200-file service with four binary fixtures and one
    dangling certificate link exits 3 (see
    [test and fixture code](#test-and-fixture-code)).
+   **Unrendered template source** is charged the same way, at a whole entry:
+   a file that does not parse, holds Jinja syntax (`{{` or `{%`) and lies
+   under a directory whose name holds Jinja syntax (cookiecutter's
+   `{{cookiecutter.package_name}}/pyproject.toml`) is read by no tool until a
+   generator renders it, so its gap is partial and its warning says
+   `unrendered template source`. A shell-style `${env}/` directory, or a file
+   without Jinja syntax of its own, is judged as anywhere else. So is a
+   Python, TOML or JSON file under an ordinary name that parses once each
+   Jinja placeholder is filled in and each tag line dropped (crewAI's
+   `templates/crew/crew.py`, `class {{crew_name}}():`); a file broken in any
+   other way still fails. A placeholder holds no quote, separator or
+   bracket and a tag is a line of its own, so neither can swallow the
+   strings, values or statements around it. The scanner analyzes the
+   rendering (stand-ins for the placeholders, tags dropped, every line kept):
+   a templated manifest's dependencies and a templated module's imports are
+   still evidence. Only a parse failure is explained this way: a repeated
+   JSON key, a redaction limit or any other gap under a template-named
+   directory is judged as anywhere else. Agent configuration there is
+   never discounted, strict accounting keeps the gap, and a tree seeded with
+   such files still exhausts the budget.
 5. **Budget.** Every other partial gap is charged to the budget; a blinding
    one marks the scan incomplete.
 
