@@ -422,7 +422,8 @@ class _CallReadings:
         credential at an argument start (a comment's comma read as a
         separator under one rule, an unbalanced bracket in it under the
         other), so every string literal of the call is withheld too
-        (``region_literals``, joining its values and literals).
+        (``region_literals``, joining its values and literals), as it is
+        for a call any reading pairs with a credential key.
 
         The extension is discarded, and the call keeps its first reading and
         fails closed, when a reading stops for length too (with the shared
@@ -444,7 +445,7 @@ class _CallReadings:
                     for reading, reading_state in readings
                 ]
                 sensitive = any(reading_sensitive for reading_sensitive, _ in judged)
-                region = self._region_literals(start, readings)
+                region = self._region_literals(start, readings, sensitive)
                 if region is not None and (sensitive or not self._judged(start)[0]):
                     kept = readings
                     self.region_literals[start] = region
@@ -454,10 +455,16 @@ class _CallReadings:
         return self.completed[start]
 
     def _region_literals(
-        self, start: int, readings: list[tuple[list[tuple[int, int]], str]]
+        self, start: int, readings: list[tuple[list[tuple[int, int]], str]], sensitive: bool
     ) -> list[tuple[int, int]] | None:
-        """No literals when the readings agree on the call's spans; else every literal of the call."""
-        if all(spans == readings[0][0] for spans, _ in readings[1:]):
+        """Every literal of the call when it pairs a credential key or its readings split it; else none.
+
+        Main fails closed on every call past the step bound, so a completed call
+        that pairs a credential key emits none of its literals either: the value
+        rules withhold only the paired value, and a call's other strings (a
+        positional password) reached the excerpt main withheld.
+        """
+        if not sensitive and all(spans == readings[0][0] for spans, _ in readings[1:]):
             return []
         return self.lexer.string_literals(start, max(spans[-1][1] for spans, _ in readings))
 

@@ -68,6 +68,10 @@ Counts and figures quoted in an entry are those of its date.
   that agree keep the exact rules, and prose naming a credential-typed call
   still completes. Six regression tests: five such shapes fail on the union
   and pass now, and a control keeps the other literals of an unambiguous call.
+  The same review noted that a completed call pairing a credential key
+  withheld only the paired value, so its other strings (a positional
+  password the value rules do not classify) reached the excerpt main
+  withheld by failing closed; such a call now withholds every literal too.
 
 ### Companion pin to Nexus-ShadowBench 1ce0eee (October 21)
 
