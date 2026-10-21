@@ -888,7 +888,8 @@ with the base64 image, audio, video and PDF data of output bundles
 (`outputs[*].data`) and attachments emptied (`image/*` except `image/svg+xml`,
 `audio/*`, `video/*`, `application/pdf`), which is what makes such a notebook
 large and which the scanner reads nowhere else. Only a value that is strict
-base64 and decodes to the signature of such a file is emptied: text under a
+base64 (its lines of one width, padding only at its end, the whole value
+decoding) and decodes to the signature of such a file is emptied: text under a
 binary MIME key, and every value in cell or notebook metadata, is still read.
 Every line keeps its number, and a file note says how much was left out. A
 notebook that is not valid JSON is not rebuilt this way. When the text outputs alone are over `max_file_size`

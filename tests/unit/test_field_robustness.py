@@ -7,6 +7,7 @@ notebook whose saved outputs push it over ``max_file_size``.
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 
@@ -167,6 +168,11 @@ def test_max_ast_nodes_is_validated(tmp_path, index, value):
 
 
 # ----------------------------------------------------------- notebooks
+def _png_base64(characters: int) -> str:
+    """About ``characters`` of strict base64 encoding a PNG's signature and then data."""
+    return base64.b64encode(b"\x89PNG\r\n\x1a\n" + bytes(characters * 3 // 4)).decode()
+
+
 def _notebook(code: str, output_bytes: int, mime: str = "image/png") -> str:
     return json.dumps(
         {
@@ -176,9 +182,7 @@ def _notebook(code: str, output_bytes: int, mime: str = "image/png") -> str:
                     "cell_type": "code",
                     "source": code.splitlines(keepends=True),
                     # Base64 of a PNG: its signature, then data.
-                    "outputs": [
-                        {"output_type": "display_data", "data": {mime: "iVBORw0KGgo" + "A" * output_bytes}}
-                    ],
+                    "outputs": [{"output_type": "display_data", "data": {mime: _png_base64(output_bytes)}}],
                 },
             ],
             "metadata": {},

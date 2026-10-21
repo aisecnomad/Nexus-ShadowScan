@@ -486,8 +486,8 @@ def _binary_mime(key: str) -> bool:
     return key.startswith(("audio/", "video/")) or key == "application/pdf"
 
 
-# Standard base64 as nbformat writes it, optionally wrapped in lines.
-_BASE64_DATA = re.compile(r"[A-Za-z0-9+/\r\n]++={0,2}[\r\n]*+")
+# Standard base64 as nbformat writes it: the alphabet, with padding only at the very end.
+_BASE64_DATA = re.compile(r"[A-Za-z0-9+/]*+={0,2}")
 # Leading bytes of the image, audio, video and PDF formats a notebook embeds.
 _BINARY_SIGNATURES = (
     b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a", b"%PDF-", b"II*\x00", b"MM\x00*",
@@ -496,17 +496,26 @@ _BINARY_SIGNATURES = (
 
 
 def _base64_binary(parts: list[str]) -> bool:
-    """Whether ``parts`` (one value, maybe split in lines) are base64 of an image, audio, video or PDF."""
-    if not parts or not all(_BASE64_DATA.fullmatch(part) for part in parts):
+    """Whether ``parts`` (one value, maybe split in lines) are strict base64 of an image, audio, video or PDF.
+
+    The value is read whole: its lines joined, every line but the last of one
+    width (as a writer wraps it), padding only at its very end, and the whole
+    of it decoding (``validate``) to bytes that begin with such a file's
+    signature. Anything looser stays text and is scanned: a key spelled in the
+    alphabet after a padded first line is not image data.
+    """
+    if not parts:
         return False
-    head = ""
-    for part in parts:  # the first 64 base64 characters, without joining a large value
-        head += part[:96].replace("\r", "").replace("\n", "")
-        if len(head) >= 64:
-            break
-    head = head[:64]
+    lines = "".join(parts).replace("\r\n", "\n").split("\n")
+    if lines and not lines[-1]:
+        lines.pop()
+    if not lines or any(len(line) != len(lines[0]) for line in lines[:-1]) or len(lines[-1]) > len(lines[0]):
+        return False
+    value = "".join(lines)
+    if len(value) % 4 or not _BASE64_DATA.fullmatch(value):
+        return False
     try:
-        data = base64.b64decode(head[: len(head) - len(head) % 4], validate=True)
+        data = base64.b64decode(value, validate=True)
     except ValueError:
         return False
     return data.startswith(_BINARY_SIGNATURES) or (

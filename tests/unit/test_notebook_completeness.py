@@ -30,7 +30,7 @@ AGENT_CELL = (
 )
 # A credential-shaped value in a text output: the outputs are read only for credentials.
 LEAKED = "OPENAI_API_KEY=sk-proj-" + "Q7v2Lm9Xr4Tz8Kp1Wn6Ys3Bd5Hf0Jc2Ge7Ua4Ri9Oe1Nl6Mq3Vt8Zx5Cw2Pb7Sd4"
-IMAGE = "iVBORw0KGgo" + "A" * 6_000
+IMAGE = base64.b64encode(b"\x89PNG\r\n\x1a\n" + bytes(4_500)).decode()  # a PNG's signature, then data
 
 
 def _cell(source: str, outputs: list[dict] | None = None) -> dict:
@@ -208,6 +208,40 @@ def test_binary_output_data_is_emptied_and_every_line_keeps_its_number():
     assert data["image/svg+xml"] == "<svg><text>kept</text></svg>"
     assert data["text/plain"] == ["<Figure size 640x480 with 1 Axes>"]
     assert parsed["cells"][1]["attachments"]["a.png"]["image/png"] == ""
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        # A PNG header line, then a key spelled in the base64 alphabet.
+        [
+            base64.b64encode(b"\x89PNG\r\n\x1a\n\x00").decode() + "\n",
+            "AIzaSyQ7v2Lm9Xr4Tz8Kp1Wn6Ys3Bd5Hf0Jc2Ge7\n",
+        ],
+        # The same with the header line padded ("="), the key line no wider.
+        [
+            base64.b64encode(b"\x89PNG\r\n\x1a\n" + bytes(24)).decode() + "\n",
+            "AIzaSyQ7v2Lm9Xr4Tz8Kp1Wn6Ys3Bd5Hf0Jc2Ge7\n",
+        ],
+        # Lines of uneven width are not one wrapped value.
+        [IMAGE[:76] + "\n", IMAGE[76:100] + "\n", IMAGE[100:176] + "\n"],
+        # Padding in the middle of a single string.
+        IMAGE[:96] + "==" + IMAGE[96:194],
+    ],
+    ids=["header-then-key", "padded-header-then-key", "uneven-lines", "inner-padding"],
+)
+def test_loose_base64_under_a_binary_key_is_kept(value):
+    output = {"output_type": "display_data", "metadata": {}, "data": {"image/png": value}}
+    document = _notebook(_cell("show()\n", [output]))
+    out, removed = _without_binary(document)
+    assert removed == 0 and json.loads(out)["cells"][0]["outputs"][0]["data"]["image/png"] == value
+
+
+def test_wrapped_base64_lines_of_one_width_are_emptied():
+    lines = [IMAGE[i : i + 76] + "\n" for i in range(0, len(IMAGE), 76)]
+    output = {"output_type": "display_data", "metadata": {}, "data": {"image/png": lines}}
+    out, removed = _without_binary(_notebook(_cell("show()\n", [output])))
+    assert removed == len(IMAGE) + 2 * len(lines)  # every line's text and its escaped line break
 
 
 def test_only_base64_binary_in_output_bundles_and_attachments_is_emptied():
