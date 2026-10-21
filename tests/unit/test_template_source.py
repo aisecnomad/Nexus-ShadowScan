@@ -116,9 +116,9 @@ def test_a_tree_of_templates_exhausts_the_budget(tmp_path, run_connector):
 
 
 def test_an_integrity_failure_under_a_template_named_directory_still_fails(tmp_path, run_connector):
-    # A repeated JSON key is no unrendered template: the directory name explains parse failures only.
-    duplicate = '{"model": "gpt-4o", "api_base": "https://api.openai.com", "model": "x"}'
-    _project(tmp_path, {"deploy/${env}/llm.json": duplicate})
+    # A repeated key is no unrendered template: the directory name explains parse failures only.
+    duplicate = "model: gpt-4o\napi_base: https://api.openai.com\nmodel: x\n"
+    _project(tmp_path, {"deploy/${env}/llm.yaml": duplicate})
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete
 
