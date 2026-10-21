@@ -58,6 +58,16 @@ Counts and figures quoted in an entry are those of its date.
   regression tests in `test_credential_call_syntax.py` fail on the earlier
   extension and pass now; the linearity test keeps its bound with input that
   neither reading closes or nests.
+- A parallel review of that fix found that both readings can misplace every
+  argument start: a false marker hides a comma under the comment reading
+  while the real comment holds an unbalanced bracket or a stray triple quote
+  under the other, so neither places the credential at an argument start and
+  the union withheld nothing. A call whose readings split it differently now
+  withholds every string literal it holds, scanned under both comment rules
+  and charged to the extension budget (a spent budget fails closed); readings
+  that agree keep the exact rules, and prose naming a credential-typed call
+  still completes. Six regression tests: five such shapes fail on the union
+  and pass now, and a control keeps the other literals of an unambiguous call.
 
 ### Companion pin to Nexus-ShadowBench 1ce0eee (October 21)
 
