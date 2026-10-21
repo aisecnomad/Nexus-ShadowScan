@@ -10,6 +10,9 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 - A blocked container scan names each blocking vulnerability (package, installed and
   fixed version) as a check annotation, so the pull request page shows why without the job log.
+- Repository hygiene: workflows run on a pinned `ubuntu-24.04` image, and
+  configuration left behind for benchmark paths that moved to the Nexus
+  ShadowBench companion is removed.
 
 - Release-evidence attachment now finds the maintainer's draft release, which
   `releases/tags/{tag}` never returns; the TestPyPI smoke test runs outside the

@@ -23,7 +23,7 @@ jobs:
     permissions:
       contents: read
   docs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -86,7 +86,7 @@ jobs:
         if: failure()
         run: python -m tools.test_annotations "$RUNNER_TEMP"/junit-*.xml
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The untraced legs run on one pytest-xdist worker per CPU (10 to 13
     # minutes; 25 serially). The coverage-traced 3.11 leg runs serially (37 to
     # 50 minutes): under tracing plus worker contention its wall-clock and
@@ -263,7 +263,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
   container-security:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -480,7 +480,7 @@ jobs:
   benchmark-tests:
     # The optional companion stays outside ordinary scanner installs. Its
     # exact gitlink is tested here, so extraction never drops harness coverage.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -514,7 +514,7 @@ jobs:
     name: CI gate
     if: always()
     needs: [dco, docs, test-macos, test, container-security, benchmark-tests]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
     steps:

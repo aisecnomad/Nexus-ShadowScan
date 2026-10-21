@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "metadata": {
-    "name": "Project Nexus realistic multi-file repository cases",
+    "name": "ShadowScan realistic multi-file repository cases",
     "type": "synthetic",
     "provenance": "Handwritten multi-file repository snapshots written from scratch by the maintainers to resemble real projects; no copied third party code, no live repositories, no independently adjudicated field sample",
     "known_gap_policy": {

@@ -1,6 +1,6 @@
 ## Summary
 
-<!-- What does this PR do? Link any related issues with "Closes #NNN". -->
+<!-- What does this PR do? Link related issues; write "Fixes #NNN" only when this PR resolves the issue completely. -->
 
 ## Type of change
 
