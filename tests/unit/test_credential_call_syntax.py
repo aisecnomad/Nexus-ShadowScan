@@ -425,3 +425,16 @@ def test_a_completed_call_whose_readings_agree_keeps_its_other_literals():
     )
     safe = sanitize_text(source)
     assert SYNTHETIC not in safe and "https://vault.example.invalid/" in safe
+
+
+def test_a_completed_call_pairing_a_credential_key_withholds_its_other_literals():
+    # Main fails closed on every call past the step bound. Completed, a call that pairs a
+    # credential key withheld only the paired value, so its other strings (a positional
+    # password the value rules do not classify) reached the excerpt main withheld.
+    other = "plain" + "pass12345leakvalueZ"
+    source = f'configure("api_key", "{SYNTHETIC}", "{other}", ' + "0, " * 4500 + "0)\n"
+    try:
+        safe = sanitize_text(source)
+    except SanitizationLimitError:
+        return  # failing closed is safe too
+    assert SYNTHETIC not in safe and other not in safe

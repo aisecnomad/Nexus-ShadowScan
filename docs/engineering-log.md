@@ -128,6 +128,10 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   that agree keep the exact rules, and prose naming a credential-typed call
   still completes. Six regression tests: five such shapes fail on the union
   and pass now, and a control keeps the other literals of an unambiguous call.
+  The same review noted that a completed call pairing a credential key
+  withheld only the paired value, so its other strings (a positional
+  password the value rules do not classify) reached the excerpt main
+  withheld by failing closed; such a call now withholds every literal too.
 
 ### Faster local start: deferred pattern compilation, no HTTP stack on import (October 21)
 
