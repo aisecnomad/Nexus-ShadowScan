@@ -426,3 +426,25 @@ def test_distinct_model_literals_past_the_bound_are_still_disclosed(tmp_path, ru
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete
     assert any("distinct literals only" in diagnostic for diagnostic in ctx.stats.warnings + ctx.stats.errors)
+
+
+@pytest.mark.parametrize("layout", ["lines", "one-string"])
+def test_a_credential_in_a_valid_image_value_is_still_read(tmp_path, run_connector, layout):
+    # A key spelled in the base64 alphabet can sit in a value that is still strict base64
+    # of a PNG (its own line, or after a '/'): emptying it left an oversize notebook's key unread.
+    key = "AKIAQ7V2LM9XR4TZ8KP1"
+    image = base64.b64encode(b"\x89PNG\r\n\x1a\n" + bytes(57 * 80 - 8)).decode()  # 80 lines, no padding
+    if layout == "lines":
+        value: str | list[str] = [image[i : i + 76] + "\n" for i in range(0, len(image), 76)] + [key]
+    else:
+        value = image + "/" + key + "///"
+    assert base64.b64decode("".join(value).replace("\n", ""), validate=True).startswith(b"\x89PNG")
+    output = {"output_type": "display_data", "metadata": {}, "data": {"image/png": value}}
+    _project(tmp_path, {"docs/plot.ipynb": _notebook(_cell("show()\n", [output]), _cell(AGENT_CELL))})
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, max_file_size=5_000)
+    secrets = [finding for finding in findings if finding.kind == Kind.SECRET]
+    gaps = [gap["path"] for gap in (ctx.stats.coverage or {}).get("details", [])]
+    if layout == "lines":  # the other lines are emptied, so the key is read and reported
+        assert secrets and secrets[0].resource.endswith("docs/plot.ipynb"), [f.title for f in findings]
+    else:  # the value is kept whole, so the text outputs are over the limit: an oversize gap
+        assert secrets or "docs/plot.ipynb" in gaps, (gaps, ctx.stats.warnings)

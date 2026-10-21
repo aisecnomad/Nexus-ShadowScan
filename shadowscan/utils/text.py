@@ -567,8 +567,9 @@ def notebook_without_binary_data(document: str, binary: list[str]) -> tuple[str,
     (``"image/png": "iVBOR..."``), and that data is most of a large notebook.
     ``binary`` holds those strings in document order (``notebook_to_source``
     collects them: only from output bundles and attachments, only strict base64
-    that decodes to such a file's signature), so emptying them loses nothing
-    the scanner would read: it reads no image anywhere else. Every text output
+    that decodes to such a file's signature, and the file scanner keeps any the
+    credential pass matches), so emptying them loses no credential the scanner
+    would read. Every text output
     (streams, tracebacks, ``text/plain``, HTML, JSON, SVG) and all metadata stay.
     A string is found by its JSON encoding, which holds no quote or raw line
     break, so each match is one whole string and every line keeps its number;
