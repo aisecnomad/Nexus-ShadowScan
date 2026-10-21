@@ -7,8 +7,15 @@ import pytest
 from shadowscan.connectors.code import file_scan
 
 
-@pytest.mark.parametrize("provider", [None, "from openai import OpenAI", "from litellm import completion"])
-def test_only_provider_consumers_add_nested_dispatch_deferral(tmp_path, run_connector, monkeypatch, provider):
+@pytest.mark.parametrize(
+    ("provider", "expected"),
+    # litellm is a platform signature, not a provider one: its requests never reach
+    # provider_tool_loop_lines, the only reader of the nested dispatch verdict.
+    [(None, False), ("from openai import OpenAI", True), ("from litellm import completion", False)],
+)
+def test_only_provider_consumers_add_nested_dispatch_deferral(
+    tmp_path, run_connector, monkeypatch, provider, expected
+):
     package = tmp_path / "worker"
     package.mkdir()
     (package / "__init__.py").write_text("")
@@ -27,7 +34,7 @@ def test_only_provider_consumers_add_nested_dispatch_deferral(tmp_path, run_conn
     monkeypatch.setattr(file_scan.FileScanner, "resolve_reexport_sources", capture)
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
     assert not ctx.stats.incomplete, ctx.stats.errors
-    assert ("worker/consumer.py" in queued) == bool(provider)
+    assert ("worker/consumer.py" in queued) is expected
 
 
 @pytest.mark.parametrize("provider", [False, True])

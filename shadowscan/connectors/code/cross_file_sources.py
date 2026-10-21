@@ -59,10 +59,12 @@ class CrossFileSources:
             # consumers additionally need SDK import evidence: ordinary local
             # imports cannot produce provider loops and need no queued pass
             # (or the eager excerpt redaction that queued sources require).
-            provider_imported = any(
-                match.signature.category == "provider" or match.signature_id == "platform.litellm"
-                for match in source.imports
-            )
+            # Only openai/anthropic-bound requests reach provider_tool_loop_lines,
+            # the sole reader of the dispatch verdict; any provider import is
+            # queued (the wider, safe side), while non-provider platform imports
+            # such as litellm would only fill the scan-wide queue with consumers
+            # that cannot use it.
+            provider_imported = any(match.signature.category == "provider" for match in source.imports)
             candidate = root_reexport or provider_imported and has_dispatch_import(file.text, local)
         else:
             candidate = False

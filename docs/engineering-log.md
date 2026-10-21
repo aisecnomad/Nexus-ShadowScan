@@ -118,6 +118,27 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   utils.http`. The scope and policy helpers a local scan needs move to
   `utils.http_scope`; `tests/unit/test_startup_imports.py` pins that a local
   scan imports none of them.
+### Dispatch verdicts resolved only where a selected call reaches (October 21)
+
+- The dispatch inventory was consulted for every imported name a consumer
+  held, so an unrelated import past the inventory's cut raised
+  `DispatchLimitError` and left the consumer incomplete. Verdicts are now
+  resolved inside `_selected_dispatcher`, after the call-shape and
+  import-ordering checks: a limit is raised only for a module a selected
+  (function name, arguments) call actually reaches. Limits are not cached and
+  still fail closed; every numeric bound is unchanged.
+- The nested re-export and dispatch queue admitted any consumer importing a
+  provider or `platform.litellm` signature. litellm's requests never reach
+  `provider_tool_loop_lines`, the only reader of the nested dispatch verdict,
+  so scanning BerriAI/litellm filled the scan-wide 16 MiB queue with
+  consumers that cannot use it. The predicate keeps
+  `signature.category == "provider"` (all 38 provider signatures, wider than
+  the OpenAI and Anthropic requests that reader binds) and drops the litellm
+  clause. It reads the consumer's own imports: an aliased provider import
+  counts, and a consumer that reaches a provider client only through a local
+  re-export did not count before this change either.
+  `test_only_provider_consumers_add_nested_dispatch_deferral` now expects a
+  litellm-only consumer not to be queued.
 
 ### Release readiness review (October 21)
 
