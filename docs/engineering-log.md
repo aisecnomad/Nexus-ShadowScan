@@ -31,6 +31,18 @@ Counts and figures quoted in an entry are those of its date.
   `test_reading_past_the_step_bound_stays_linear` caught. Over 4,500 corpus
   and adversarial texts the output and exceptions are identical to the
   per-character lexer, in 17.9 s against 29.7 s.
+- Review found a fail-open in the extension: with the shared budget nearly
+  spent, an extended reading could stop before the step-bound reading had,
+  and it replaced that reading. A call pairing a credential key with a
+  value (`setdefault(default=..., key="OPENAI_API_KEY", ...)`) was then
+  judged on the shorter reading, which no longer held the key, and the
+  value reached the excerpt where main fails closed. An extension that
+  stops for length is now discarded, and the call keeps its step-bound
+  reading and fails closed. A differential fuzz (8,000 texts, step bound 64,
+  extension budgets 0-8 per character, a credential-shaped value) found 781
+  values the old extension emitted and main withheld, and none after the
+  fix. The lexer also skips the run pattern at a character that cannot start
+  a run, which brings delimiter-dense text back to main's cost.
 
 ### Release readiness review (October 21)
 

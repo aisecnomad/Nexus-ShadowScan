@@ -271,6 +271,25 @@ def test_reading_past_the_step_bound_shares_one_budget_and_fails_closed(monkeypa
         redaction._redact_credential_calls("#getToken(\n" * 3 + tail)
 
 
+@pytest.mark.parametrize(
+    "call",
+    [
+        'os.environ.setdefault(default="{value}", key="OPENAI_API_KEY", ',
+        'settings.get("providers.openai.api_key", default="{value}", ',
+    ],
+    ids=["key-after-value", "setting-path"],
+)
+def test_an_extension_cut_short_keeps_the_longer_reading_and_fails_closed(monkeypatch, call):
+    # With the shared budget spent, extending a call could stop before the step-bound
+    # reading did. Judging that shorter reading lost the credential key it held, so
+    # the call was not sensitive and its value reached the excerpt (main fails closed).
+    monkeypatch.setattr(redaction, "_MAX_CALL_STEPS", 64)
+    monkeypatch.setattr(redaction, "_CALL_EXTENSION_PER_CHAR", 0)
+    text = call.format(value="synthetic-value-4f9c2a") + "more " * 200 + ")\n"
+    with pytest.raises(SanitizationLimitError, match="credential call length limit"):
+        sanitize_text(text)
+
+
 def test_reading_past_the_step_bound_stays_linear(monkeypatch):
     # Credential-named and ordinary callees cost the same up to the step bound;
     # the credential ones then read on only within the text's extension budget.

@@ -68,6 +68,10 @@ _OPENERS = {")": "(", "]": "[", "}": "{"}
 # steps counted and trips at the same place; only the Python overhead goes.
 _ARGUMENT_RUN = re.compile(r"[^\"'`#/()\[\]{},]++")
 _STRING_RUN = re.compile(r"[^\\\"'`#{}$@\n]++")
+# The characters each run excludes: at one of them no run starts, so the lexer
+# steps over it without trying the pattern (delimiter-dense text is common).
+_ARGUMENT_STOPS = frozenset("\"'`#/()[]{},")
+_STRING_STOPS = frozenset("\\\"'`#{}$@\n")
 
 
 class _CallLexer:
@@ -185,7 +189,11 @@ class _CallLexer:
         braces = 0
         end = len(text)
         while position < len(text):
-            run = _STRING_RUN.match(text, position, position + max(_MAX_REDACTION_WORK - self.work, 0) + 1)
+            run = (
+                None
+                if text[position] in _STRING_STOPS
+                else _STRING_RUN.match(text, position, position + max(_MAX_REDACTION_WORK - self.work, 0) + 1)
+            )
             if run is not None:
                 self.tick(run.end() - position)
                 position = run.end()
@@ -256,9 +264,11 @@ class _CallLexer:
             # A run is matched no further than the step after the bound, which trips
             # where the per-character loop tripped: an unclosed call in a long
             # paragraph-free text stops at the bound instead of crossing all of it.
-            allowed = _MAX_CALL_STEPS - steps if until is None else until - self.work
-            allowed = min(allowed, _MAX_REDACTION_WORK - self.work)
-            run = _ARGUMENT_RUN.match(text, position, position + max(allowed, 0) + 1)
+            run = None
+            if text[position] not in _ARGUMENT_STOPS:
+                allowed = _MAX_CALL_STEPS - steps if until is None else until - self.work
+                allowed = min(allowed, _MAX_REDACTION_WORK - self.work)
+                run = _ARGUMENT_RUN.match(text, position, position + max(allowed, 0) + 1)
             length = 1 if run is None else run.end() - position
             self.tick(length)
             steps += length
@@ -353,12 +363,17 @@ class _CallReadings:
 
         Only a ``length`` reading is extended, so every other call keeps the
         spans it had; the judged values of an extended call are recomputed.
+        An extension that stops for length too is discarded: with the shared
+        budget nearly spent it can stop before the step-bound reading did,
+        and judging that shorter reading could miss the credential key the
+        longer one holds, so the call keeps its first reading and fails closed.
         """
         spans, state = self.read(start)
         if state == "length":
-            spans, state = self.lexer.complete_arguments(start)
-            self.lexed[start] = spans, state
-            self.judged.pop(start, None)
+            extended = self.lexer.complete_arguments(start)
+            if extended[1] != "length":
+                spans, state = self.lexed[start] = extended
+                self.judged.pop(start, None)
         return spans, state
 
     def judge(self, start: int) -> tuple[str, bool, list[tuple[int, int]]]:
