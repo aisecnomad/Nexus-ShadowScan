@@ -51,7 +51,7 @@ from shadowscan.connectors.code.manifests import (
     manifest_comment_projection,
     parse_manifest,
 )
-from shadowscan.connectors.code.mcp_config import _parse_mcp_servers
+from shadowscan.connectors.code.mcp_config import _parse_mcp_servers, json_readings_declare_mcp
 from shadowscan.connectors.code.mcp_tools import MCPToolLimitError, mcp_tool_names
 from shadowscan.connectors.code.model_artifacts import (
     ARTIFACT_SUFFIXES,
@@ -131,6 +131,7 @@ from shadowscan.connectors.code.source_text import (
     _without_xml_comments,
     foreign_cell,
 )
+from shadowscan.connectors.code.template_source import unrendered_template
 from shadowscan.connectors.code.tool_attribution import ToolRegions
 from shadowscan.connectors.code.walk import (
     _AGENT_DEFINITION_DIRS,
@@ -648,6 +649,14 @@ class FileScanner:
             # Detection still runs, but without an established
             # structured context none of this file's excerpts can
             # safely be emitted.
+            if (
+                isinstance(exc, JSONIntegrityError)
+                and rel.endswith(".json")
+                and json_readings_declare_mcp(text) is False
+            ):
+                self.walker.budget_defects(
+                    rel, "ambiguous JSON data that neither reading makes MCP configuration"
+                )
             self._withhold_excerpts(rel, exc, "parsing")
             return None, False
 
@@ -721,6 +730,8 @@ class FileScanner:
         if issues and _blank(file.text):
             self.walker.note_file(file.rel, empty_note)
             return False
+        if issues:
+            self._note_template(file)
         self.file_errors(file.rel, issues, defect=True, full_weight=full_weight)
         return True
 
@@ -2195,8 +2206,23 @@ class FileScanner:
                 full_weight=True,
                 reason="unparsed-input",
             )
+        elif self._note_template(file):
+            self.walker._discounted_gap(file.rel, message, suffix=False, reason="unparsed-input")
         else:
             self.walker._gap(file.rel, message, suffix=False, reason="unparsed-input")
+
+    def _note_template(self, file: _SourceFile) -> bool:
+        """Whether ``file``, which did not parse, is unrendered template source; record one found by content.
+
+        A file under a directory named with template syntax is one by its path
+        (``_template_source_gap``); one under an ordinary name is one when it
+        parses once its Jinja placeholders are filled in (``unrendered_template``).
+        """
+        if unrendered_template(file.rel, file.text):
+            self.walker.budget_defects(
+                file.rel, "unrendered template source (parses once its placeholders are filled in)"
+            )
+        return self.walker._template_source_gap(file.rel) is not None
 
     def _scan_undecodable_file(
         self,
@@ -2360,6 +2386,9 @@ def _content_declares_mcp(rel: str, text: str, document: Any) -> bool:
         declared = _document_declares_mcp(document)
         return declared if declared is not None else _names_mcp_key(rel, text)
     if not _text_may_declare_mcp(text):
+        return False
+    if rel.endswith(".json") and json_readings_declare_mcp(text) is False:
+        # JSON the integrity checks refused (a repeated key): neither reading holds a table.
         return False
     if rel.endswith(_YAML_SUFFIXES):
         declared = _yaml_declares_mcp(text)

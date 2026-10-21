@@ -13,6 +13,41 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Generator templates, ambiguous catalogs and large modules no longer leave crewAI and litellm incomplete (October 21)
+
+- crewAIInc/crewAI exited 3 on six files: the project templates `crewai
+  create` renders, kept under ordinary names (`templates/crew/crew.py`
+  declares `class {{crew_name}}():`, `templates/crew/pyproject.toml` a
+  `{{folder_name}} = ...` key) or under `{{folder_name}}/`, whose Python
+  sources the directory rule did not reach. A Python, TOML or JSON file that
+  fails its parser, holds Jinja placeholders or tags, and parses once each
+  placeholder is replaced by a stand-in and each one-line tag dropped is now
+  unrendered template source: one partial gap at a whole entry, like a file
+  under a template-named directory. A file broken in any other way still
+  fails; agent configuration, strict accounting and MCP configuration found
+  by structure keep the gap. The scan now completes, with 11 tolerated gaps.
+- litellm: `provider_endpoints_support.json` lists one provider twice. A
+  JSON file with a repeated key is now parsed under both readings (first
+  value kept, last value kept); when neither holds an MCP server table its
+  integrity gaps are charged to the budget instead of failing the scan, and
+  it is not treated as MCP configuration. A repeated key that hides a table
+  from either reading still fails.
+- litellm's 1.86 MB `proxy/_lazy_openapi_snapshot.json` was a blinding
+  oversize gap because its bytes name `mcp_servers`: an OpenAPI schema
+  field. The server-table walk no longer takes a field of a JSON Schema
+  object's `properties` whose value holds schema keywords only for a server
+  table, and an oversize JSON file of up to 8 MiB whose bytes name a key is
+  parsed to decide by its structure; one that does not parse stays blinding.
+- Python syntax-tree bounds rise from 50,000 to 200,000 nodes
+  (`max_ast_nodes`, MCP tool and source-identity walks alike) and bound
+  source calls from 512 to 2,048: litellm's `proxy_server.py` (90,611 nodes),
+  `router.py` (74,983) and `llm_http_handler.py` (56,791) bind in 2-3.5 s of
+  CPU and about 100 MB each; 1,024 calls sufficed for all three.
+- The credential-call lexer skips runs of characters that cannot open or
+  close a string, comment or bracket in one step, charging their length to
+  the same work bound: 1.6x faster, byte-identical output and exceptions over
+  5,991 corpus files.
+
 ### Notebooks no longer leave llama_index incomplete (October 21)
 
 - A default scan of run-llama/llama_index still exited 3 after the October 20

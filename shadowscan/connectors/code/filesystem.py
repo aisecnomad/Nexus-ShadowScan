@@ -710,7 +710,7 @@ class FilesystemConnector(BaseConnector):
             "notebook are not scanned for credentials"
         ),
         "max_ast_nodes": (
-            "Python syntax-tree nodes analyzed per file for import-bound evidence (default 50000); a larger "
+            "Python syntax-tree nodes analyzed per file for import-bound evidence (default 200000); a larger "
             "file keeps its lexical evidence and is reported as partially analyzed: a warning under test "
             "paths, an error elsewhere"
         ),

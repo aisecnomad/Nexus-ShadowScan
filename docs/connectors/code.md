@@ -905,8 +905,9 @@ the scan incomplete. Deciding this takes time linear in the module and at most
 4,096 distinct import statement matches, 512 of them for attributes; a module
 that needs more, which ordinary code does not, is treated like one that imports
 a signature's library. Any other Python module over `max_ast_nodes` (default
-50000) keeps its lexical evidence without import-bound analysis: a warning in
-test code, an error elsewhere. A call into a signature's library is analyzed
+200000; litellm's 90,611-node `proxy_server.py` binds in about 3 s of CPU and
+100 MB) or over 2,048 bound source calls keeps its lexical evidence without
+import-bound analysis: a warning in test code, an error elsewhere. A call into a signature's library is analyzed
 from its first 65,536 characters in Python, JavaScript and TypeScript alike;
 agent constructions carry their instructions and tool definitions inline and
 routinely pass the 8,192 characters this limit used to be. A longer JavaScript

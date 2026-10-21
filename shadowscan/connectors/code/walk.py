@@ -24,11 +24,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, BinaryIO
 
 from shadowscan.connectors.base import ConnectorContext, ConnectorError, incomplete_reason
 from shadowscan.connectors.code.lockfiles import LOCKFILE_NAMES
 from shadowscan.connectors.code.manifests import is_manifest_name
+from shadowscan.connectors.code.mcp_config import json_readings_declare_mcp
 from shadowscan.connectors.code.model_artifacts import ARTIFACT_SUFFIXES
 from shadowscan.connectors.code.path_context import _is_test_path, negative_context
 from shadowscan.connectors.code.scan_records import (
@@ -940,6 +941,8 @@ class TreeWalker:
         self._default_skipped: dict[str, int] = {}
         # Files that were read but not as clean text, by what was done to them (see ``note_file``).
         self._file_notes: dict[str, list[str]] = {}
+        # Defects in content no client reads as written, by why (``budget_defects``).
+        self._budgeted_defects: dict[str, str] = {}
         self._symlink_warnings: set[Path] = set()
         self._declared_link_notes: set[Path] = set()
         self._blinding_link_notes: set[Path] = set()
@@ -1763,6 +1766,7 @@ class TreeWalker:
         self._default_skipped = {}
         fixtures_before = self.skipped_oversize_test_fixtures
         self._file_notes = {}
+        self._budgeted_defects = {}
         try:
             self._walk_entries(scan, scan_file, unread_settings)
         except _WalkLimitError as exc:
@@ -2198,15 +2202,33 @@ class TreeWalker:
         """
         return not self.include_tests and _is_test_path(rel) and not self._agent_configuration(rel)
 
-    def _template_source_gap(self, rel: str, *, full_weight: bool = False) -> bool:
-        """Whether a gap in ``rel`` is in unrendered template source, which a generator renders first.
+    def budget_defects(self, rel: str, why: str) -> None:
+        """Record that the defects of ``rel`` are in content no client reads as written, and ``why``.
+
+        The file scanner, which holds the text, decides this: a template that
+        parses once its placeholders are filled in
+        (``template_source.unrendered_template``), or JSON whose repeated keys
+        neither reading makes MCP configuration
+        (``mcp_config.json_readings_declare_mcp``). A gap recorded for ``rel``
+        afterwards is charged to the budget (``_template_source_gap``).
+        """
+        self._budgeted_defects[rel] = why
+
+    def _template_source_gap(self, rel: str, *, full_weight: bool = False) -> str | None:
+        """Why a gap in ``rel`` is in content no client reads as written, such as unrendered template source.
 
         Template syntax in a directory name (cookiecutter's
         ``{{cookiecutter.package_name}}/pyproject.toml``, copier's ``{% if %}``
         paths, a shell-style ``${name}``) means no tool reads the file where it
         is: the generator fills in its placeholders, and its Jinja blocks
         (``{%- if cookiecutter.depends_on_core -%}``) are not TOML, JSON or
-        YAML. Such a file that does not parse is charged to the coverage budget
+        YAML. A file under an ordinary name is template source when it fails
+        to parse only because of its placeholders (``budget_defects``):
+        crewAI's ``templates/crew/crew.py`` declares ``class {{crew_name}}():``.
+        So is the ambiguity of a JSON data file whose duplicate keys neither
+        reading makes MCP configuration (a provider catalog that lists one
+        provider twice). None when the gap is not one of these.
+        Such a file that does not parse is charged to the coverage budget
         as one partial gap, like a malformed test fixture, instead of failing
         the scan outright; a tree seeded with them still exhausts the budget.
         Agent configuration is never discounted (``_agent_configuration``): a
@@ -2214,13 +2236,11 @@ class TreeWalker:
         accounting, and a caller that found MCP servers by structure
         (``full_weight``), keep the gap.
         """
-        directory = rel.rpartition("/")[0]
-        return (
-            not full_weight
-            and not self._strict_accounting()
-            and bool(_TEMPLATE_SYNTAX.search(directory))
-            and not self._agent_configuration(rel)
-        )
+        if full_weight or self._strict_accounting() or self._agent_configuration(rel):
+            return None
+        if _TEMPLATE_SYNTAX.search(rel.rpartition("/")[0]):
+            return "unrendered template source (template syntax in its directory)"
+        return self._budgeted_defects.get(rel)
 
     def _discounted_gap(
         self,
@@ -2262,10 +2282,12 @@ class TreeWalker:
                 full_weight=charged_in_full,
                 reason=reason,
             )
-        elif self._template_source_gap(rel, full_weight=full_weight) and not self._declared_omission(rel):
+        elif (template := self._template_source_gap(rel, full_weight=full_weight)) and not (
+            self._declared_omission(rel)
+        ):
             self._ledger_gap(
                 rel,
-                f"{message}; unrendered template source (template syntax in its directory); coverage gap",
+                f"{message}; {template}; coverage gap",
                 full_weight=True,
                 reason=reason,
             )
@@ -2535,20 +2557,29 @@ class TreeWalker:
         analyzed or excerpted. An MCP registry manifest (``server.json``)
         declares its server without such a key, and a file the check cannot
         read, or one longer than the bytes it reads, may declare servers too.
+
+        A JSON file of at most ``_MCP_STRUCTURE_BYTES`` whose bytes name a key
+        is then decided by its structure, under both readings of a repeated
+        key (``json_readings_declare_mcp``): an OpenAPI snapshot that describes
+        an ``mcp_servers`` field holds no server table. One that does not
+        parse as UTF-8 JSON keeps the byte check's answer.
         """
         if on_disk.name.lower() == "server.json":
             return True
+        structured = on_disk.name.lower().endswith(".json")
         try:
             with open_confined_file(on_disk, label="file", dir_fd=root_fd) as (fh, _):
-                window, read = b"", 0
+                window, read, kept = b"", 0, bytearray()
                 while read < _MCP_CHECK_BYTES:
                     chunk = fh.read(_MCP_CHECK_CHUNK)
                     if not chunk:
                         return False
                     read += len(chunk)
+                    if structured and read <= _MCP_STRUCTURE_BYTES:
+                        kept += chunk
                     window = window[-_MCP_CHECK_OVERLAP:] + chunk.replace(b"\x00", b"").lower()
                     if _may_declare_mcp(window):
-                        return True
+                        return not (structured and _json_holds_no_server_table(fh, kept, read))
         except (OSError, ValueError):
             pass
         return True
@@ -2709,6 +2740,29 @@ _MCP_CHECK_CHUNK = 1024 * 1024
 # eleven characters written as a ten-byte escape after a 256-blank fold, is
 # shorter than 3,200 bytes.
 _MCP_CHECK_OVERLAP = 4096
+
+
+# Bytes of an oversize JSON file parsed to decide by its structure whether it
+# holds a server table (``_file_may_declare_mcp``); a larger one keeps the byte check's answer.
+_MCP_STRUCTURE_BYTES = 8 * 1024 * 1024
+
+
+def _json_holds_no_server_table(fh: BinaryIO, kept: bytearray, read: int) -> bool:
+    """Whether a JSON file, of which ``kept`` holds the first ``read`` bytes, provably holds no server table.
+
+    The rest of the file is read up to ``_MCP_STRUCTURE_BYTES``; a longer file,
+    or one that is not UTF-8 JSON, is not proven to hold none.
+    """
+    if read > _MCP_STRUCTURE_BYTES:
+        return False
+    rest = fh.read(_MCP_STRUCTURE_BYTES - read + 1)
+    if len(kept) + len(rest) > _MCP_STRUCTURE_BYTES:
+        return False
+    try:
+        text = (bytes(kept) + rest).decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return False
+    return json_readings_declare_mcp(text) is False
 
 
 def _escaped_key_character(match: re.Match[bytes]) -> bytes:
