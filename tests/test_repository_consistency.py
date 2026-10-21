@@ -108,21 +108,15 @@ def _relative(path: Path) -> str:
 # --- Markdown -----------------------------------------------------------------
 
 
-# The ShadowBench estate's authored files: the fictional organization's repositories and home
-# directories, each frozen by digest in FREEZE.json. Their Markdown is scan input written as that
-# organization's own files, not this repository's documentation (repo-site's index.md links the
-# shipping-faq.html its site generator would emit, which does not exist here), and correcting it
-# would change a frozen file. Everything else under benchmarks/ is checked. That includes the run
-# reports under results/, which are generated and committed with their run: they pass, so a failure
-# there would mean that something a report links or names has moved.
-_FROZEN_MARKDOWN = ROOT / "benchmarks" / "shadowbench" / "estate" / "artifacts"
+# The benchmark corpora, frozen artifacts and run reports moved to the pinned Nexus ShadowBench
+# companion (``benchmark-suite/``), which keeps its own checks; only benchmarks/README.md remains.
 
 
 def _markdown_files() -> list[Path]:
     files = sorted(ROOT.glob("*.md"))
     for folder in (".github", "archive", "benchmarks", "docs", "examples", "tools"):
         files.extend(sorted((ROOT / folder).rglob("*.md")))
-    return [path for path in files if not path.is_relative_to(_FROZEN_MARKDOWN)]
+    return files
 
 
 def _benchmark_documents() -> list[Path]:
@@ -288,16 +282,12 @@ _REPOSITORY_LINK = re.compile(
 
 # The repository was renamed from aisecnomad/Project-Nexus to aisecnomad/Nexus-ShadowScan so
 # that its URL, the NexusShadowScan distribution and the brand match. These paths record
-# history as it happened and keep the former name: retained reviews, frozen benchmark
-# corpora, results and the harnesses that reproduce them, and GitHub's recorded ruleset
-# responses. Released changelog entries are history too; the Unreleased section is not.
+# history as it happened and keep the former name: retained reviews and GitHub's recorded
+# ruleset responses. The benchmark corpora and harnesses that kept it moved to the pinned
+# Nexus ShadowBench companion. Released changelog entries are history too; the newest section is
+# not.
 _FORMER_NAME_RECORDS = (
     "archive/",
-    "benchmarks/",
-    "tools/benchmark/",
-    "tools/benchmark_realworld/",
-    "tools/discovery_benchmark/",
-    "tools/shadowbench/",
     ".github/rulesets/observed/",
 )
 _FORMER_NAME = re.compile(r"aisecnomad(?:/|%2F|\.github\.io/)Project-Nexus", re.IGNORECASE)
@@ -2355,13 +2345,15 @@ def test_estate_benchmark_documents_say_later_shadowscan_runs_are_in_sample() ->
         "fewer errors on it are not evidence of better field accuracy",
     ):
         assert statement in benchmarks, f"README Benchmarks no longer says: {statement!r}"
-    # The disclosure belongs to the newest section: ``## Unreleased`` while the changes are
-    # unreleased, and the version that ships them once the release headings are dated.
+    # The disclosure belongs to the section that ships the tuned detection: ``## Unreleased``
+    # while it was unreleased, the dated 0.1.3 section since the headings were dated. An
+    # ``## Unreleased`` section opened above it for the next candidate does not move it.
     changelog = _read(ROOT / "CHANGELOG.md")
     start = changelog.index("\n## ")
-    newest = " ".join(changelog[start : changelog.index("\n## ", start + 1)].split())
-    assert "in-sample" in newest
-    assert re.search(r"Wudpecker and Tactiq[^.]*\(benchmark-derived", newest)
+    release = changelog.index("\n## 0.1.3")
+    shipping = " ".join(changelog[start : changelog.index("\n## ", release + 1)].split())
+    assert "in-sample" in shipping
+    assert re.search(r"Wudpecker and Tactiq[^.]*\(benchmark-derived", shipping)
 
 
 _PIP_COMMANDS = frozenset(

@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "metadata": {
-    "name": "Project Nexus code and MCP regression cases",
+    "name": "ShadowScan code and MCP regression cases",
     "type": "synthetic",
     "provenance": "Handwritten, isolated examples for regression testing; no live repositories, tenants, or independently adjudicated field sample"
   },

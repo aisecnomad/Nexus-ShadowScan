@@ -15,7 +15,9 @@ merge, and dismissal of stale approvals after a new push. The 2026-10-10
 administrator readback found both `main` rulesets active, with `CI gate`
 required, every required check bound to GitHub Actions, and last-push approval
 and review-thread resolution on. Both rulesets also listed four `always`
-bypass actors, which the versioned policy forbids. Ruleset enforcement has
+bypass actors, which the versioned policy forbids; the 2026-10-18 administrator
+readback found `bypass_actors: []` on both and on the release-tag ruleset.
+Ruleset enforcement has
 been switched on and off several times since 2026-09; a disabled ruleset
 blocks nothing, and an enabled one blocks nothing for a bypass actor. The
 author cannot approve their own change; the single maintainer therefore needs a
@@ -28,20 +30,22 @@ Repository settings may change. Consult the
 [verification commands](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#merge-gate-and-review-status)
 before relying on enforcement. The versioned policy requires no bypass actors.
 The 2026-10-10 readback listed four `always` bypass actors on both rulesets,
-the repository administrator role and three integrations, so an administrator
-can merge without the non-author approval until they are removed. A ruleset
+the repository administrator role and three integrations; the
+[2026-10-18 readback](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/operations/merge-policy.md#october-18-readback)
+lists none. That is not evidence of continuous enforcement since. A ruleset
 only blocks anything while it is enabled. The [versioned policy and verification procedure](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/operations/merge-policy.md)
 require the complete CI gate, final-push approval and an empty bypass list;
 applying that policy needs repository administration access. Do not weaken it,
 bypass review or checks, or count a green workflow as an independent review.
 The release-evidence workflow reads the live ruleset back and verifies it
 before building a candidate; a prepared settings update is not evidence that
-an administrator applied it. Proposed updates for both existing rulesets,
-including removal of the bypass actors, are prepared under
-[.github/rulesets](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/.github/rulesets).
-The observed snapshots there record the 2026-10-10 readback, on which
-`tools.governance_check` fails with `bypass_actors_not_empty`; merging those
-files does not activate them.
+an administrator applied it. The update payloads for both existing rulesets
+are kept under
+[.github/rulesets](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/.github/rulesets),
+with both readbacks under `observed/`: `tools.governance_check` fails the
+2026-10-10 snapshots with `bypass_actors_not_empty`, and passes the 2026-10-18
+snapshot of the CI ruleset (23913372). Merging those files changes no live
+setting.
 
 ## Roles
 
