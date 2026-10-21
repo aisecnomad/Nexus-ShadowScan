@@ -103,6 +103,21 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   values the old extension emitted and main withheld, and none after the
   fix. The lexer also skips the run pattern at a character that cannot start
   a run, which brings delimiter-dense text back to main's cost.
+- Review of the integration branch found a second fail-open in the
+  extension. `#`, `//` and `/*` start comments only in some languages, and
+  the extension kept whichever of its two readings (comment rules, or the
+  markers as text) closed. The two can split one call differently (a comma
+  in a real comment, a `this.#field` read as a comment), and either can
+  leave the credential mid-argument, where neither the literal rule nor the
+  key/value pairing reaches it: the value reached the excerpt of a scan
+  reported complete, where main fails closed. An extension that skipped a
+  marker now keeps both readings, and the call withholds what either holds.
+  It still fails closed when either reading stops at a bound, and when the
+  step-bound reading paired a credential key that no completed reading does
+  (a key literal that, read to its end, is a computed expression). Five
+  regression tests in `test_credential_call_syntax.py` fail on the earlier
+  extension and pass now; the linearity test keeps its bound with input that
+  neither reading closes or nests.
 
 ### Faster local start: deferred pattern compilation, no HTTP stack on import (October 21)
 
