@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import codecs
 import io
+import json
 import math
 import re
 import tokenize
@@ -400,17 +402,37 @@ def read_credential_text(
 _PYTHON_KERNEL = re.compile(r"(?:i?python|xpython)[\d.]*|conda-(?:root|env-.+)-py", re.IGNORECASE)
 
 
+def _kernel_language(metadata: Any) -> str | None:
+    """The kernel language notebook ``metadata`` declares, lower-cased (see ``notebook_to_source``)."""
+    if not isinstance(metadata, dict):
+        return None
+    kernelspec, info = metadata.get("kernelspec"), metadata.get("language_info")
+    spec: dict[str, Any] = kernelspec if isinstance(kernelspec, dict) else {}
+    kernel, declared = spec.get("name"), spec.get("language")
+    if isinstance(kernel, str) and _PYTHON_KERNEL.fullmatch(kernel.strip()):
+        declared = "python"
+    elif not isinstance(declared, str) or not declared.strip():
+        declared = info.get("name") if isinstance(info, dict) else None
+    if isinstance(declared, str) and declared.strip():
+        return declared.strip().lower()
+    return None
+
+
 def notebook_to_source(
     text: str,
     errors: list[str] | None = None,
     *,
     cells: list[str] | None = None,
     language: list[str] | None = None,
+    binary: list[str] | None = None,
 ) -> str:
     """Extract code cells from a Jupyter notebook as a python source blob.
 
     The cells are joined by line breaks; ``cells``, when given, receives each
     code cell's source in order, so a caller can treat them one at a time.
+    ``binary``, when given, receives the base64 image, audio, video and PDF
+    strings of the cells' outputs and attachments, in document order (see
+    ``notebook_without_binary_data``).
     ``language``, when given, receives the kernel language the notebook's
     metadata declares, lower-cased, if it declares one: ``python`` when
     ``kernelspec.name`` names a Python kernel (Jupyter starts the kernel its
@@ -427,23 +449,16 @@ def notebook_to_source(
         if errors is not None:
             errors.append("notebook cells must be an array")
         return ""
-    metadata = nb.get("metadata")
-    if language is not None and isinstance(metadata, dict):
-        kernelspec, info = metadata.get("kernelspec"), metadata.get("language_info")
-        spec: dict[str, Any] = kernelspec if isinstance(kernelspec, dict) else {}
-        kernel, declared = spec.get("name"), spec.get("language")
-        if isinstance(kernel, str) and _PYTHON_KERNEL.fullmatch(kernel.strip()):
-            declared = "python"
-        elif not isinstance(declared, str) or not declared.strip():
-            declared = info.get("name") if isinstance(info, dict) else None
-        if isinstance(declared, str) and declared.strip():
-            language.append(declared.strip().lower())
+    if language is not None and (declared := _kernel_language(nb.get("metadata"))) is not None:
+        language.append(declared)
     out: list[str] = []
     for cell in nb.get("cells", []):
         if not isinstance(cell, dict):
             if errors is not None:
                 errors.append("notebook cell must be an object")
             continue
+        if binary is not None:
+            binary.extend(_binary_output_data(cell))
         if cell.get("cell_type") != "code":
             continue
         src = cell.get("source", "")
@@ -463,11 +478,6 @@ def notebook_to_source(
     return "\n".join(out)
 
 
-# The JSON tokens of a notebook document (already parsed as strict JSON, so its
-# strings hold no raw line break): strings, punctuation, scalars and blanks.
-_NOTEBOOK_JSON_TOKEN = re.compile(r'"(?:[^"\\\n]|\\.)*+"|[{}\[\]:,]|[^\s{}\[\]:,"]++|\s++')
-
-
 def _binary_mime(key: str) -> bool:
     """Whether a MIME bundle key holds base64-encoded binary data, as nbformat stores it."""
     key = key.lower()
@@ -476,42 +486,89 @@ def _binary_mime(key: str) -> bool:
     return key.startswith(("audio/", "video/")) or key == "application/pdf"
 
 
-def notebook_without_binary_data(document: str) -> tuple[str, int]:
-    """``document`` with every value under a binary MIME key emptied, and the characters removed.
+# Standard base64 as nbformat writes it, optionally wrapped in lines.
+_BASE64_DATA = re.compile(r"[A-Za-z0-9+/\r\n]++={0,2}[\r\n]*+")
+# Leading bytes of the image, audio, video and PDF formats a notebook embeds.
+_BINARY_SIGNATURES = (
+    b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a", b"%PDF-", b"II*\x00", b"MM\x00*",
+    b"\x00\x00\x01\x00", b"OggS", b"fLaC", b"ID3", b"\xff\xfb", b"\xff\xf3", b"\xff\xf2", b"\x1aE\xdf\xa3",
+)  # fmt: skip
+
+
+def _base64_binary(parts: list[str]) -> bool:
+    """Whether ``parts`` (one value, maybe split in lines) are base64 of an image, audio, video or PDF."""
+    if not parts or not all(_BASE64_DATA.fullmatch(part) for part in parts):
+        return False
+    head = ""
+    for part in parts:  # the first 64 base64 characters, without joining a large value
+        head += part[:96].replace("\r", "").replace("\n", "")
+        if len(head) >= 64:
+            break
+    head = head[:64]
+    try:
+        data = base64.b64decode(head[: len(head) - len(head) % 4], validate=True)
+    except ValueError:
+        return False
+    return data.startswith(_BINARY_SIGNATURES) or (
+        data[4:8] == b"ftyp" or (data[:4] == b"RIFF" and data[8:12] in {b"WEBP", b"WAVE", b"AVI "})
+    )
+
+
+def _binary_output_data(cell: dict[str, Any]) -> list[str]:
+    """The base64 binary strings of a cell's output MIME bundles and attachments, in document order.
+
+    Only ``outputs[*].data`` and ``attachments.*`` are MIME bundles in nbformat 4;
+    a binary MIME key anywhere else (cell or notebook metadata) holds ordinary data.
+    """
+    bundles: list[Any] = []
+    for key, value in cell.items():
+        if key == "outputs" and isinstance(value, list):
+            bundles.extend(output.get("data") for output in value if isinstance(output, dict))
+        elif key == "attachments" and isinstance(value, dict):
+            bundles.extend(value.values())
+    found: list[str] = []
+    for bundle in bundles:
+        if not isinstance(bundle, dict):
+            continue
+        for key, value in bundle.items():
+            parts = [value] if isinstance(value, str) else value
+            if (
+                isinstance(key, str)
+                and _binary_mime(key)
+                and isinstance(parts, list)
+                and all(isinstance(part, str) for part in parts)
+                and _base64_binary(parts)
+            ):
+                found.extend(parts)
+    return found
+
+
+def notebook_without_binary_data(document: str, binary: list[str]) -> tuple[str, int]:
+    """``document`` with the ``binary`` output strings emptied, and the characters removed.
 
     A notebook keeps rendered images, audio, video and PDFs of its outputs and
     markdown attachments as base64 strings under their MIME type
     (``"image/png": "iVBOR..."``), and that data is most of a large notebook.
-    The scanner reads no image anywhere else, so emptying those strings loses
-    nothing it would read, while every text output (streams, tracebacks,
-    ``text/plain``, HTML, JSON, SVG) stays. Each emptied value is a string or an
-    array of strings on its own lines, so every line keeps its number and only
-    columns after it move. ``document`` must be valid JSON (``notebook_to_source``
-    has parsed it).
+    ``binary`` holds those strings in document order (``notebook_to_source``
+    collects them: only from output bundles and attachments, only strict base64
+    that decodes to such a file's signature), so emptying them loses nothing
+    the scanner would read: it reads no image anywhere else. Every text output
+    (streams, tracebacks, ``text/plain``, HTML, JSON, SVG) and all metadata stay.
+    A string is found by its JSON encoding, which holds no quote or raw line
+    break, so each match is one whole string and every line keeps its number;
+    one that is not found (an unusual escape) is kept and read.
     """
     out: list[str] = []
-    removed = 0
-    # One frame per open container: [is_object, key of the value being read,
-    # expecting a key, inside an array under a binary key].
-    stack: list[list[Any]] = []
-    for match in _NOTEBOOK_JSON_TOKEN.finditer(document):
-        piece = match.group()
-        frame = stack[-1] if stack else None
-        if piece in "{[":
-            binary_array = piece == "[" and frame is not None and frame[0] and _binary_mime(frame[1] or "")
-            stack.append([piece == "{", None, True, binary_array])
-        elif piece in "}]":
-            stack.pop()
-        elif piece == ",":
-            if frame is not None and frame[0]:
-                frame[2] = True
-        elif piece.startswith('"') and frame is not None:
-            if frame[0] and frame[2]:
-                frame[1], frame[2] = strict_json_loads(piece), False
-            elif (frame[0] and _binary_mime(frame[1] or "")) or (not frame[0] and frame[3]):
-                removed += len(piece) - 2
-                piece = '""'
-        out.append(piece)
+    removed = position = 0
+    for part in binary:
+        encoded = json.dumps(part)
+        at = document.find(encoded, position)
+        if at < 0:
+            continue
+        out.extend((document[position:at], '""'))
+        removed += len(encoded) - 2
+        position = at + len(encoded)
+    out.append(document[position:])
     return "".join(out), removed
 
 

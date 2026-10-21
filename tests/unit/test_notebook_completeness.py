@@ -10,7 +10,9 @@ carries a model vendor's stem (``llama_index.core``).
 
 from __future__ import annotations
 
+import base64
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -18,7 +20,7 @@ import pytest
 from shadowscan.connectors.code.model_identifiers import MAX_MODEL_LITERALS_PER_FILE
 from shadowscan.connectors.code.source_text import _without_ipython_lines
 from shadowscan.models import Kind
-from shadowscan.utils.text import notebook_without_binary_data
+from shadowscan.utils.text import notebook_to_source, notebook_without_binary_data
 
 AGENT_CELL = (
     "from langchain.agents import AgentExecutor, create_tool_calling_agent\n"
@@ -43,6 +45,12 @@ def _cell(source: str, outputs: list[dict] | None = None) -> dict:
 
 def _notebook(*cells: dict) -> str:
     return json.dumps({"cells": list(cells), "metadata": {}, "nbformat": 4, "nbformat_minor": 5}, indent=1)
+
+
+def _without_binary(document: str) -> tuple[str, int]:
+    binary: list[str] = []
+    notebook_to_source(document, binary=binary)
+    return notebook_without_binary_data(document, binary)
 
 
 def _project(root: Path, files: dict[str, str]) -> Path:
@@ -94,10 +102,58 @@ def test_ipython_syntax_llama_index_uses_keeps_the_import_binder(tmp_path, run_c
         "y = x != z\n",
         "pip in installed\n",
         "ratio = total % size\n",
+        # Black splits a long modulo before its operator: inside brackets, or after a
+        # backslash, "% name" continues an expression (IPython reads an escape only at
+        # the start of a logical line), whatever the name.
+        "label = (\n    '%.3f'\n    % precision\n)\n",
+        "elapsed = (\n    start\n    % time.time()\n)\n",
+        "rows = [\n    '%s' %\n    x for x in xs\n]\n",
+        "label = '%s' \\\n    % pip\n",
+        "call(\n    a,\n    %matplotlib\n)\n",
     ],
 )
 def test_python_lines_are_left_as_they_are(line):
     assert _without_ipython_lines(line) == line
+
+
+def test_a_magic_after_a_closed_bracket_is_still_masked():
+    cell = "values = (1,\n          2)\n% pip install openai\n"
+    assert _without_ipython_lines(cell).splitlines()[-1].strip() == "0"
+
+
+@pytest.mark.parametrize(
+    ("line", "masked"),
+    [
+        (
+            "% time executor = AgentExecutor(agent=agent, tools=[])\n",
+            "0;     executor = AgentExecutor(agent=agent, tools=[])\n",
+        ),
+        ("%timeit run(agent)\n", "0;      run(agent)\n"),
+        ("result = %prun agent.invoke(x)\n", "result = 0;    agent.invoke(x)\n"),
+        ("%timeit -n 10 run(agent)\n", "0" + " " * 23 + "\n"),  # options: the whole line, as before
+    ],
+)
+def test_a_timing_magic_keeps_the_statement_it_runs(line, masked):
+    assert _without_ipython_lines(line) == masked
+
+
+def test_a_timed_statement_is_bound_like_the_plain_one(tmp_path, run_connector):
+    evidence = {}
+    for name, cell in (
+        ("plain", AGENT_CELL),
+        ("timed", AGENT_CELL.replace("executor = ", "% time executor = ")),
+    ):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "demo.ipynb").write_text(_notebook(_cell(cell)))
+        findings, ctx = run_connector("code.filesystem", path=str(tmp_path / name), use_git=False)
+        assert not ctx.stats.warnings and not ctx.stats.errors
+        evidence[name] = sorted(
+            (e.signal, e.weight)
+            for finding in findings
+            if finding.kind == Kind.AGENT
+            for e in finding.evidence
+        )
+    assert evidence["timed"] and evidence["timed"] == evidence["plain"]
 
 
 def test_a_rewritten_magic_keeps_every_offset_and_line():
@@ -143,7 +199,7 @@ def test_binary_output_data_is_emptied_and_every_line_keeps_its_number():
             "attachments": {"a.png": {"image/png": IMAGE}},
         },
     )
-    out, removed = notebook_without_binary_data(document)
+    out, removed = _without_binary(document)
     assert out.count("\n") == document.count("\n")
     assert removed == 2 * len(IMAGE) + 200
     parsed = json.loads(out)
@@ -152,6 +208,75 @@ def test_binary_output_data_is_emptied_and_every_line_keeps_its_number():
     assert data["image/svg+xml"] == "<svg><text>kept</text></svg>"
     assert data["text/plain"] == ["<Figure size 640x480 with 1 Axes>"]
     assert parsed["cells"][1]["attachments"]["a.png"]["image/png"] == ""
+
+
+def test_only_base64_binary_in_output_bundles_and_attachments_is_emptied():
+    text_as_base64 = base64.b64encode(LEAKED.encode()).decode()
+    document = _notebook(
+        {
+            **_cell(
+                "plot()\n",
+                [
+                    {
+                        "output_type": "display_data",
+                        "metadata": {"image/png": LEAKED},  # metadata holds ordinary data
+                        "data": {
+                            "image/png": LEAKED,  # not base64
+                            "image/gif": text_as_base64,  # base64, but of text
+                            "application/pdf": "JVBERi0" + "x-y_z" * 40,  # not strict base64
+                            "image/jpeg": IMAGE,
+                        },
+                    }
+                ],
+            ),
+            "metadata": {"image/png": "iVBORw0KGgo" + "B" * 600},
+        },
+    )
+    out, removed = _without_binary(document)
+    assert removed == len(IMAGE)
+    parsed = json.loads(out)
+    data = parsed["cells"][0]["outputs"][0]["data"]
+    assert data["image/png"] == LEAKED and data["image/gif"] == text_as_base64
+    assert data["application/pdf"].startswith("JVBERi0") and data["image/jpeg"] == ""
+    assert parsed["cells"][0]["outputs"][0]["metadata"] == {"image/png": LEAKED}
+    assert parsed["cells"][0]["metadata"] == {"image/png": "iVBORw0KGgo" + "B" * 600}
+
+
+@pytest.mark.parametrize("where", ["data", "metadata", "pdf"])
+def test_a_credential_under_a_binary_mime_key_is_still_read(tmp_path, run_connector, where):
+    # Emptying went by the key's name: plaintext under "image/png" anywhere was not read.
+    output: dict = {"output_type": "display_data", "metadata": {}, "data": {"image/png": IMAGE}}
+    if where == "data":
+        output["data"]["image/jpeg"] = LEAKED
+    elif where == "metadata":
+        output["metadata"] = {"image/png": LEAKED}
+    else:
+        output["data"]["application/pdf"] = LEAKED
+    _project(tmp_path, {"docs/plot.ipynb": _notebook(_cell("show()\n", [output]), _cell(AGENT_CELL))})
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, max_file_size=5_000)
+    secrets = [finding for finding in findings if finding.kind == Kind.SECRET]
+    assert secrets and secrets[0].resource.endswith("docs/plot.ipynb")
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
+
+
+def test_an_oversize_notebook_that_does_not_parse_stays_an_oversize_gap(tmp_path, run_connector):
+    # A stray bracket used to raise IndexError in the output view: reason "other".
+    output = {"output_type": "display_data", "metadata": {}, "data": {"image/png": IMAGE}}
+    broken = _notebook(_cell("show()\n", [output]), _cell(AGENT_CELL)) + "]"
+    (tmp_path / "plot.ipynb").write_text(broken)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, max_file_size=5_000)
+    assert ctx.stats.incomplete
+    reasons = {gap["reason"] for gap in ctx.stats.coverage["details"]}
+    assert reasons and reasons <= {"oversize-file", "unparsed-input"}, reasons
+
+
+def test_the_output_view_of_a_large_notebook_is_linear(tmp_path):
+    outputs = [{"output_type": "display_data", "metadata": {}, "data": {"image/png": IMAGE}}] * 2_500
+    document = _notebook(_cell("show()\n", outputs))  # 15 MB of images
+    started = time.perf_counter()
+    out, removed = _without_binary(document)
+    assert time.perf_counter() - started < 3.0
+    assert removed == 2_500 * len(IMAGE) and len(out) < len(document) // 50
 
 
 def test_a_large_notebook_of_images_is_read_in_full_for_credentials(tmp_path, run_connector):
@@ -202,6 +327,19 @@ def test_a_tutorial_cell_with_a_placeholder_is_one_budgeted_gap(tmp_path, run_co
         ("docs/examples/ai21.ipynb", "partial", "unparsed-input")
     ]
     assert any(finding.kind == Kind.AGENT for finding in findings)  # the other cell was bound
+
+
+@pytest.mark.parametrize(
+    "other",
+    ["", "# Setup\n", "%pip install openai\n", "%%bash\necho hi\n", '"""Notes."""\n'],
+    ids=["blank", "comment", "magic", "foreign", "docstring"],
+)
+def test_a_broken_cell_beside_cells_without_code_stays_a_gap(tmp_path, run_connector, other):
+    # Only parsed Python cells that hold a statement were "the other cells analyzed".
+    notebook = _notebook(_cell("client = OpenAI(api_key=<YOUR KEY>)\n"), _cell(other))
+    _project(tmp_path, {"docs/examples/openai.ipynb": notebook})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
 
 
 def test_a_notebook_none_of_whose_cells_parse_stays_a_gap(tmp_path, run_connector):

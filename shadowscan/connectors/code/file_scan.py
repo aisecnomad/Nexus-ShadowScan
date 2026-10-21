@@ -542,7 +542,8 @@ class FileScanner:
         raw_notebook = None if oversized_notebook else document
         sources: list[str] = []
         language: list[str] = []
-        text = notebook_to_source(document, notebook_errors, cells=sources, language=language)
+        binary: list[str] = []
+        text = notebook_to_source(document, notebook_errors, cells=sources, language=language, binary=binary)
         self.file_errors(rel, dict.fromkeys(notebook_errors), defect=True)
         python_kernel = not language or language[0] in {"python", "python3", "ipython", "ipython3"}
         # The cells are joined by one line break each.
@@ -563,8 +564,11 @@ class FileScanner:
         elif oversized_notebook and self.scan_secrets:
             # Code cells are analyzed as usual. Saved outputs are read only for
             # credentials: their text, once the base64 images, audio, video and
-            # PDFs that make a notebook large are emptied, when that fits.
-            outputs, removed = notebook_without_binary_data(document)
+            # PDFs that make a notebook large are emptied, when that fits. A
+            # notebook that did not parse whole is not rebuilt.
+            outputs, removed = document, 0
+            if not notebook_errors:
+                outputs, removed = notebook_without_binary_data(document, binary)
             if len(outputs) <= self.max_file_size:
                 raw_notebook = outputs
                 self.walker.note_file(
@@ -1423,7 +1427,10 @@ class FileScanner:
                 # fails alone, so the binder reads the others without it. A cell
                 # declared another language is bound when it parses as Python;
                 # when it does not, it is lexical evidence only, without a gap.
-                source, unparsed, unread = _notebook_binder_source(content_text, file.cells, file.foreign)
+                analyzed: list[int] = []
+                source, unparsed, unread = _notebook_binder_source(
+                    content_text, file.cells, file.foreign, analyzed
+                )
                 file.unparsed = tuple(unread)
                 if unparsed:
                     # Report before binding the other cells: a later AST
@@ -1435,7 +1442,7 @@ class FileScanner:
                         file,
                         f"code.filesystem: {file.rel}: import-bound analysis skipped for notebook "
                         f"{cells} {numbers}, which {verb} not parse; lexical evidence retained",
-                        notebook_cells=len(unparsed) < len(file.cells),
+                        notebook_cells=bool(analyzed),
                     )
             bound = bound_source_matches(
                 self.index,
@@ -2119,8 +2126,9 @@ class FileScanner:
         A gap goes through ``_gap``, so the ci profile declares it under a
         template, example or test path, and is counted as unparsed input.
 
-        ``notebook_cells`` says only some cells of a notebook did not parse. Jupyter
-        runs each cell alone, so the binder still read every other cell and the
+        ``notebook_cells`` says other cells of the notebook parsed and hold code
+        (blank, comment-only, magic-only and foreign cells do not count). Jupyter
+        runs each cell alone, so the binder still read those cells and the
         failed ones keep their lexical evidence; tutorial notebooks hold
         placeholders (``api_key = <YOUR API KEY>``) and shell lines pasted into
         code cells on purpose. Such a notebook is one partial gap charged to the

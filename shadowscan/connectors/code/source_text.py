@@ -255,6 +255,11 @@ _IPYTHON_AUTOMAGIC = re.compile(
     r"add|sync|search|info|init)\b)[^\n]*)",
 )
 _NOT_A_LINE_BREAK = re.compile(r"[^\n]")
+# Brackets and line breaks: IPython reads an escape only at the start of a logical line.
+_LOGICAL_LINE_TOKENS = re.compile(r"[()\[\]{}\n]")
+# A line magic that times or profiles the Python statement after it, given no
+# option: only its name is masked ("0;" and blanks), so the statement is bound.
+_STATEMENT_MAGIC = re.compile(r"%[ \t]*+(?:time|timeit|prun)[ \t]++(?=[^\s-])")
 
 
 def _without_ipython_lines(text: str, cells: _CellSpans = ()) -> str:
@@ -299,14 +304,36 @@ def _without_cell_ipython_lines(cell: str) -> str:
     source = cell
     spans, _ = noncode_ranges(source, "python")
     starts = [start for start, _ in spans]
+
+    def in_code(offset: int) -> bool:
+        index = bisect_right(starts, offset) - 1
+        return index < 0 or offset >= spans[index][1]
+
     relexes = 0
     position = 0
+    # Bracket depth and backslash continuation at ``scanned``, read outside strings and comments.
+    depth, continued, scanned = 0, False, 0
     while (match := pattern.search(source, position)) is not None:
         position = match.end()
-        index = bisect_right(starts, match.start(2)) - 1
-        if index >= 0 and match.start(2) < spans[index][1]:
+        if not in_code(match.start(2)):
             continue
+        for token in _LOGICAL_LINE_TOKENS.finditer(source, scanned, match.start()):
+            at = token.start()
+            if not in_code(at):
+                continue
+            if token.group() == "\n":
+                before = at - 1 - (at > 0 and source[at - 1] == "\r")
+                continued = before >= 0 and source[before] == "\\" and in_code(before)
+            else:
+                depth = depth + 1 if token.group() in "([{" else max(depth - 1, 0)
+        scanned = match.start()
+        if depth or continued:
+            continue  # "% name" inside an expression is the modulo operator
         command = match[2]
+        if timed := _STATEMENT_MAGIC.match(command):
+            masked = "0;" + " " * (timed.end() - 2) + command[timed.end() :]
+            source = source[: match.start(2)] + masked + source[match.end(2) :]
+            continue
         masked = "0" + _NOT_A_LINE_BREAK.sub(" ", command[1:])
         source = source[: match.start(2)] + masked + source[match.end(2) :]
         if _LEXICAL_CHARACTERS.isdisjoint(command):
@@ -395,7 +422,7 @@ def foreign_cell(source: str) -> bool:
 
 
 def _notebook_binder_source(
-    text: str, cells: _CellSpans, foreign: _CellSpans = ()
+    text: str, cells: _CellSpans, foreign: _CellSpans = (), analyzed: list[int] | None = None
 ) -> tuple[str, list[int], list[tuple[int, int]]]:
     """Return a notebook's cells as the import binder reads them, which cells do not parse, and the
     spans the binder does not read.
@@ -409,6 +436,9 @@ def _notebook_binder_source(
     picks a kernel by its name, not its language label), so one that parses is
     bound like any other cell. One that does not parse is blanked without being
     reported as unparsed: lexical evidence only, not a coverage gap.
+    ``analyzed``, when given, receives the numbers of the cells declared Python
+    that parsed and hold a statement other than a constant (a masked magic line
+    is ``0``): blank, comment-only and magic-only cells are not counted.
     """
     source = _without_ipython_lines(text, cells)
     declared = set(foreign)
@@ -416,7 +446,16 @@ def _notebook_binder_source(
     unread: list[tuple[int, int]] = []
     for number, (start, end) in enumerate(cells):
         try:
-            ast.parse(source[start:end])
+            tree = ast.parse(source[start:end])
+            if (
+                analyzed is not None
+                and (start, end) not in declared
+                and any(
+                    not (isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant))
+                    for statement in tree.body
+                )
+            ):
+                analyzed.append(number)
         except (SyntaxError, ValueError):
             if (start, end) not in declared:
                 unparsed.append(number)

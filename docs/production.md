@@ -480,6 +480,17 @@ configured file/total limits within their hard ceilings when appropriate.
 The line limit is fixed, so a single oversize record requires an upstream
 export with bounded records rather than a larger file limit.
 
+`code.filesystem` reads a notebook over `max_file_size` (up to
+`max_notebook_size`) for credentials with the base64 image, audio, video and
+PDF data of its output bundles and attachments left out. Only strict base64
+under those MIME keys that decodes to such a file's signature is left out, so
+text under a binary MIME key, and anything in metadata, is still read. When the
+remaining text is over `max_file_size`, the notebook is one oversize gap of the
+coverage budget (an error under `strict_coverage`). A notebook with cells that
+do not parse, beside other Python cells that parsed and hold code, is one
+partial gap of the budget. Scans that exited 3 only for such notebooks may now
+complete; see [incomplete scans](getting-started/incomplete-scans.md).
+
 Shared HTTP JSON responses are streamed and limited to 16 MiB of decoded
 content by default. Each network attempt has a response-acquisition budget of
 twice the client timeout (60 seconds by default), covering connection, request

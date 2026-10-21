@@ -884,11 +884,14 @@ structured checks, with a warning; `.claude`, `.codex` and `.gemini` settings
 and `strict_coverage` keep such an error incomplete. A notebook larger than
 `max_file_size` because of saved outputs is analyzed by its code cells up to
 `max_notebook_size` (default 20 MiB). Its outputs are scanned for credentials
-with the base64 image, audio, video and PDF data of outputs and attachments
-emptied (`image/*` except `image/svg+xml`, `audio/*`, `video/*`,
-`application/pdf`), which is what makes such a notebook large and which the
-scanner reads nowhere else; every line keeps its number, and a file note says
-how much was left out. When the text outputs alone are over `max_file_size`
+with the base64 image, audio, video and PDF data of output bundles
+(`outputs[*].data`) and attachments emptied (`image/*` except `image/svg+xml`,
+`audio/*`, `video/*`, `application/pdf`), which is what makes such a notebook
+large and which the scanner reads nowhere else. Only a value that is strict
+base64 and decodes to the signature of such a file is emptied: text under a
+binary MIME key, and every value in cell or notebook metadata, is still read.
+Every line keeps its number, and a file note says how much was left out. A
+notebook that is not valid JSON is not rebuilt this way. When the text outputs alone are over `max_file_size`
 they are not scanned, and the notebook is one oversize gap of the coverage
 budget at a whole entry (never declared by the `ci` profile; an error under
 `strict_coverage`).
@@ -930,7 +933,11 @@ as inert expressions, as IPython rewrites them, so they do not keep the import
 binder from the notebook. So are a line magic spelled with a space before its
 name (`% pip install x`), an assigned shell escape or magic (`files = !ls`,
 which keeps its target), and the lines a backslash continues after one
-(`%pip install a \`), which become blank lines so every line keeps its number. Supported package-manager commands without `%`, such
+(`%pip install a \`), which become blank lines so every line keeps its number.
+As in IPython, an escape counts only at the start of a logical line: inside
+brackets or after a backslash, `% name` is the modulo operator. `%time`,
+`%timeit` and `%prun` without options keep the statement they run, so it is
+bound. Supported package-manager commands without `%`, such
 as `pip install openai` and `uv pip install openai`, are treated as automagic
 only when the entire input cell is a single line. Unknown command forms and
 invalid multiline cells remain unparsed coverage gaps. Command-looking text
@@ -955,7 +962,8 @@ A Python cell that still does not parse (an unfinished scratch cell) is left out
 of import binding on its own: the warning
 `import-bound analysis skipped for notebook cell N, which does not parse;
 lexical evidence retained` names it, and the other cells are bound as usual.
-While other cells parsed, the notebook is one partial gap charged to the
+While other Python cells parsed and hold code (blank, comment-only,
+magic-only and foreign cells do not count), the notebook is one partial gap charged to the
 coverage budget at a whole entry (tutorial notebooks hold placeholders such as
 `api_key = <YOUR API KEY>` on purpose); a notebook none of whose cells parse,
 and every one under `strict_coverage`, leaves coverage incomplete. A string left open in one cell no longer masks the

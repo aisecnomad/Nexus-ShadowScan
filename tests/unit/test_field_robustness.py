@@ -175,7 +175,10 @@ def _notebook(code: str, output_bytes: int, mime: str = "image/png") -> str:
                 {
                     "cell_type": "code",
                     "source": code.splitlines(keepends=True),
-                    "outputs": [{"output_type": "display_data", "data": {mime: "A" * output_bytes}}],
+                    # Base64 of a PNG: its signature, then data.
+                    "outputs": [
+                        {"output_type": "display_data", "data": {mime: "iVBORw0KGgo" + "A" * output_bytes}}
+                    ],
                 },
             ],
             "metadata": {},

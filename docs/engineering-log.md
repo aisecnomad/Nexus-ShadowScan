@@ -45,6 +45,26 @@ Counts and figures quoted in an entry are those of its date.
   literal's matches depend on its value alone, so each distinct value is
   matched once; the bound is 2,000 distinct values and 20,000 occurrences
   (about 0.2 s a file at most).
+- Review of these changes found:
+  - The output view emptied every string under a binary MIME key at any depth,
+    by the key's name: plaintext under `"image/png"` or `"application/pdf"`,
+    or in metadata, was not read, where main reported the notebook as an
+    oversize gap. Only `outputs[*].data` and `attachments.*` bundles are
+    considered now, and only strict base64 that decodes to an image, audio,
+    video or PDF signature is emptied. The strings are collected from the
+    notebook's own parse and found by their JSON encoding: no token loop, so
+    an 18.9 MB notebook takes 0.16 s and 21 MB (the token loop took 5.5 s and
+    410 MB). A notebook that is not valid JSON is not rebuilt (a stray bracket
+    raised `IndexError`, reported as reason `other`).
+  - A broken cell beside blank, comment-only, magic-only or foreign cells was
+    a budgeted partial gap ("the other cells were analyzed"). Only parsed
+    Python cells holding a statement other than a constant count.
+  - A spaced line magic was masked inside brackets: Black's
+    `'%.3f'\n    % precision` inside parentheses stopped the cell parsing.
+    As in IPython, an escape counts only at the start of a logical line
+    (bracket depth zero, no backslash continuation), for every escape form.
+  - `%time`, `%timeit` and `%prun` without options lost the statement they
+    run; only the magic's name is masked now (`0;` and blanks).
 
 ### Release readiness review (October 21)
 

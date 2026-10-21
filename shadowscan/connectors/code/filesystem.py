@@ -687,8 +687,9 @@ class FilesystemConnector(BaseConnector):
         ),
         "max_notebook_size": (
             "bytes; a Jupyter notebook up to this size is read with its code cells analyzed as source even "
-            "when saved outputs make the file larger than max_file_size (default 20 MiB); outputs of such a "
-            "notebook are not scanned for credentials"
+            "when saved outputs make the file larger than max_file_size (default 20 MiB); the outputs of "
+            "such a notebook are scanned for credentials with their base64 image, audio, video and PDF data "
+            "left out, and are a coverage gap when their text alone is over max_file_size"
         ),
         "max_ast_nodes": (
             "Python syntax-tree nodes analyzed per file for import-bound evidence (default 50000); a larger "
