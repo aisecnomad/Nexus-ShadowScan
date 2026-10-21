@@ -9,7 +9,9 @@ any record leaves this module.
 
 from __future__ import annotations
 
+import json
 import re
+import sys
 import tomllib
 from typing import Any, NamedTuple
 
@@ -181,15 +183,54 @@ def _server_table(value: Any, listed: bool) -> bool:
     )
 
 
-def _holds_server_table(node: dict[Any, Any], listed: bool) -> bool:
-    """Whether mapping ``node`` holds a server table: ``mcpServers``, ``mcp_servers`` or ``mcp.servers``."""
-    if any(key in node and _server_table(node[key], listed) for key in ("mcpServers", "mcp_servers")):
+# JSON Schema keywords. A schema that describes a configuration names its
+# fields in ``properties`` (an OpenAPI component's ``mcp_servers: {anyOf,
+# title}``); such a field holds the description of a value, not servers.
+_SCHEMA_KEYWORDS = frozenset(
+    {
+        "$ref", "$id", "$schema", "$comment", "type", "title", "description", "default", "examples",
+        "anyOf", "oneOf", "allOf", "not", "enum", "const", "items", "properties", "required",
+        "additionalProperties", "patternProperties", "nullable", "format", "deprecated", "readOnly",
+        "writeOnly", "minItems", "maxItems", "uniqueItems", "minProperties", "maxProperties",
+    }
+)  # fmt: skip
+_SCHEMA_FIELD_MAPS = ("properties", "patternProperties")
+
+
+def _schema_object(node: dict[Any, Any]) -> bool:
+    """Whether ``node`` is a JSON Schema object schema: ``type: object`` or a ``$schema``, with field maps."""
+    return (node.get("type") == "object" or "$schema" in node) and any(
+        isinstance(node.get(key), dict) for key in _SCHEMA_FIELD_MAPS
+    )
+
+
+def _field_schema(value: Any) -> bool:
+    """Whether ``value``, a field of a schema's ``properties``, is a schema: a mapping of keywords only."""
+    return isinstance(value, dict) and bool(value) and _SCHEMA_KEYWORDS.issuperset(value)
+
+
+def _holds_server_table(node: dict[Any, Any], listed: bool, *, fields: bool = False) -> bool:
+    """Whether mapping ``node`` holds a server table: ``mcpServers``, ``mcp_servers`` or ``mcp.servers``.
+
+    ``fields`` says ``node`` is the field map of an object schema
+    (``_schema_object``): there a key whose value is a schema of keywords
+    only (``_field_schema``) describes a field and holds no server. A value
+    with any other key, a server name included, is still a server table.
+    """
+    if any(
+        key in node and _server_table(node[key], listed) and not (fields and _field_schema(node[key]))
+        for key in ("mcpServers", "mcp_servers")
+    ):
         return True
     mcp = node.get("mcp")
+    if fields and _field_schema(mcp):
+        return False
     return isinstance(mcp, dict) and "servers" in mcp and _server_table(mcp["servers"], listed)
 
 
-def mcp_server_holders(document: Any, *, first: bool = False) -> tuple[list[dict[Any, Any]], bool]:
+def mcp_server_holders(
+    document: Any, *, first: bool = False, exhaustive: bool = False
+) -> tuple[list[dict[Any, Any]], bool]:
     """The mappings of a parsed document that hold an MCP server table, and whether the bounds cut the walk.
 
     The table may sit at the top level, nested within a client's section, or
@@ -199,32 +240,72 @@ def mcp_server_holders(document: Any, *, first: bool = False) -> tuple[list[dict
     levels and ``MCP_WALK_BREADTH`` entries of each, so a hostile document
     cannot make it expensive; the flag says a container it did not read in
     full holds containers, where a table may sit. ``first`` stops at the first
-    holder. A holder's own table is not searched further.
+    holder. A holder's own table is not searched further. ``exhaustive``
+    lifts both bounds, for a caller whose document is already bounded by its
+    size (``json_readings_declare_mcp``): the walk is iterative and visits
+    each container once, so its cost is linear in the document.
     """
+    depth_limit = sys.maxsize if exhaustive else MCP_WALK_DEPTH
+    breadth = sys.maxsize if exhaustive else MCP_WALK_BREADTH
     holders: list[dict[Any, Any]] = []
     truncated = False
-    stack: list[tuple[Any, int, bool]] = [(document, 0, False)]
+    # Each entry: a node, its depth, whether a list holds it, whether it is a schema's field map.
+    stack: list[tuple[Any, int, bool, bool]] = [(document, 0, False, False)]
     while stack and not (first and holders):
-        node, depth, listed = stack.pop()
+        node, depth, listed, fields = stack.pop()
         if isinstance(node, dict):
-            if _holds_server_table(node, listed):
+            if _holds_server_table(node, listed, fields=fields):
                 holders.append(node)
                 continue
             children = list(node.values())
+            field_maps = (
+                {id(node[key]) for key in _SCHEMA_FIELD_MAPS if isinstance(node.get(key), dict)}
+                if _schema_object(node)
+                else set()
+            )
         elif isinstance(node, list):
-            children, listed = node, True
+            children, listed, field_maps = node, True, set()
         else:
             continue
         # Only a container that holds something can hold a table.
-        containers = [
-            child for child in children[:MCP_WALK_BREADTH] if isinstance(child, dict | list) and child
-        ]
-        dropped = any(isinstance(child, dict | list) and child for child in children[MCP_WALK_BREADTH:])
-        if dropped or (containers and depth >= MCP_WALK_DEPTH):
+        containers = [child for child in children[:breadth] if isinstance(child, dict | list) and child]
+        dropped = any(isinstance(child, dict | list) and child for child in children[breadth:])
+        if dropped or (containers and depth >= depth_limit):
             truncated = True
-        if depth < MCP_WALK_DEPTH:
-            stack.extend((child, depth + 1, listed) for child in reversed(containers))
+        if depth < depth_limit:
+            stack.extend(
+                (child, depth + 1, listed, id(child) in field_maps) for child in reversed(containers)
+            )
     return holders, truncated
+
+
+def _first_wins(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """A JSON object in which a repeated key keeps its first value."""
+    obj: dict[str, Any] = {}
+    for key, value in pairs:
+        obj.setdefault(key, value)
+    return obj
+
+
+def json_readings_declare_mcp(text: str) -> bool | None:
+    """Whether either reading of ambiguous JSON holds an MCP server table; None when that is not known.
+
+    Parsers disagree on a repeated key: most keep its last value, some its
+    first. Both readings are parsed and walked in full (``mcp_server_holders``
+    with ``exhaustive``: every caller bounds ``text`` by its size first), so a
+    duplicate cannot hide a table from one reading that the other holds, and
+    a deep API contract is decided rather than left undecided. None when
+    either reading does not parse.
+    """
+    holds = False
+    for hook in (None, _first_wins):
+        try:
+            document = json.loads(text, object_pairs_hook=hook)
+        except (ValueError, RecursionError):
+            return None
+        holders, _ = mcp_server_holders(document, first=True, exhaustive=True)
+        holds = holds or bool(holders)
+    return holds
 
 
 def _merged_server_tables(holders: list[dict[Any, Any]], errors: list[str]) -> dict[str, Any]:

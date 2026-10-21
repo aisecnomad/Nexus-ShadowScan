@@ -479,7 +479,11 @@ applied in this order:
    a templated manifest's dependencies and a templated module's imports are
    still evidence. Only a parse failure is explained this way: a repeated
    JSON key, a redaction limit or any other gap under a template-named
-   directory is judged as anywhere else. Agent configuration there is
+   directory is judged as anywhere else. A plain JSON data file with a
+   repeated key is charged to the budget when neither reading of the key (first
+   value kept, last value kept, repeated objects merged) holds an MCP server
+   table and no structured detector reads it as agent configuration; a
+   manifest, a lockfile and agent configuration never are. Agent configuration there is
    never discounted, strict accounting keeps the gap, and a tree seeded with
    such files still exhausts the budget.
 5. **Budget.** Every other partial gap is charged to the budget; a blinding

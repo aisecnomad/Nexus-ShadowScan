@@ -8,6 +8,13 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## 0.1.3 — 2026-11-20
 
+- JSON is decided by its structure, not its bytes: a data file with a
+  repeated key (a provider catalog, an editor grammar) is one budgeted gap
+  when neither reading of the key holds an MCP server table, a JSON Schema
+  that describes an `mcp_servers` field is not a server table, and an
+  oversize JSON file of up to 8 MiB is parsed to decide whether it is
+  blinding. Manifests, lockfiles and agent configuration still fail closed.
+
 - Fewer false exit 3s from unparsed input: a Continue `uses:` block reference
   is an MCP server finding, an empty manifest or MCP configuration is a note,
   and unrendered template source (a file under a `{{cookiecutter...}}`

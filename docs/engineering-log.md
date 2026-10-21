@@ -13,6 +13,34 @@ Counts and figures quoted in an entry are those of its date.
 
 ## 0.1.3 — 2026-11-20
 
+### MCP structure in JSON: repeated keys, schemas, oversize files (October 21)
+
+- BerriAI/litellm's `provider_endpoints_support.json` lists one provider
+  twice. A JSON file the integrity checks refuse for a repeated key is now
+  parsed under both readings (first value kept, last value kept,
+  `mcp_config.json_readings_declare_mcp`). When neither holds an MCP server
+  table, a plain data file's integrity gaps are charged to the coverage
+  budget (`TreeWalker.budget_defects`) and it is not treated as MCP
+  configuration. A repeated key that hides a table from either reading still
+  fails, and so does one in a manifest or lockfile (npm keeps the last of
+  two `dependencies` keys, hiding the first from a reader that keeps it) or
+  in agent configuration. continuedev/continue's F# TextMate grammar is the
+  same case.
+- litellm's 1.86 MB `proxy/_lazy_openapi_snapshot.json` was a blinding
+  oversize gap because its bytes name `mcp_servers`: an OpenAPI schema
+  field. The server-table walk no longer takes a field of a JSON Schema
+  object's `properties` whose value holds schema keywords only for a server
+  table (a value with any other key, a server name included, still is), and
+  an oversize JSON file of up to 8 MiB whose bytes name a key is parsed to
+  decide by its structure; one that does not parse stays blinding.
+- openai/openai-agents-python's 1.15 MB
+  `tests/fixtures/released_api_contract.json` nests past the server-table
+  walk's 12 levels, so the structural check could not rule a table out.
+  `json_readings_declare_mcp` walks every level and entry of both readings
+  (`mcp_server_holders(..., exhaustive=True)`); every caller bounds the text
+  by size first and the walk visits each container once, so its cost is
+  linear (0.08 s for the contract). A table at any depth is still found.
+
 ### Unparsed-input triage and unrendered template source (October 21)
 
 - Three misjudgements made ordinary repositories exit 3. A Continue

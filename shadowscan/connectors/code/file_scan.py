@@ -51,7 +51,7 @@ from shadowscan.connectors.code.manifests import (
     manifest_comment_projection,
     parse_manifest,
 )
-from shadowscan.connectors.code.mcp_config import _parse_mcp_servers
+from shadowscan.connectors.code.mcp_config import _parse_mcp_servers, json_readings_declare_mcp
 from shadowscan.connectors.code.mcp_tools import MCPToolLimitError, mcp_tool_names
 from shadowscan.connectors.code.model_artifacts import (
     ARTIFACT_SUFFIXES,
@@ -595,8 +595,30 @@ class FileScanner:
             # Detection still runs, but without an established
             # structured context none of this file's excerpts can
             # safely be emitted.
+            if isinstance(exc, JSONIntegrityError) and self._ambiguous_data_file(rel, text):
+                self.walker.budget_defects(rel, "ambiguous JSON data neither reading makes MCP configuration")
             self._withhold_excerpts(rel, exc, "parsing")
             return None, False
+
+    def _ambiguous_data_file(self, rel: str, text: str) -> bool:
+        """Whether JSON the integrity checks refused is a data file that neither reading makes configuration.
+
+        A provider catalog or an editor grammar that repeats a key is read by
+        no client as configuration: both readings of the key (first value kept,
+        last value kept) are walked for an MCP server table
+        (``json_readings_declare_mcp``) and neither holds one. A manifest or
+        lockfile is never such a file (npm keeps a repeated ``dependencies``
+        key's last value, which hides the first from a reader that keeps it),
+        nor is agent configuration (``_agent_configuration``).
+        """
+        name = PurePosixPath(rel).name
+        return (
+            name.lower().endswith(".json")
+            and not is_manifest_name(name)
+            and name.lower() not in LOCKFILE_NAMES
+            and not self.walker._agent_configuration(rel)
+            and json_readings_declare_mcp(text) is False
+        )
 
     @staticmethod
     def _parsed_document(file: _SourceFile, suffixes: tuple[str, ...], *, strict: bool = False) -> Any:
@@ -2320,6 +2342,9 @@ def _content_declares_mcp(rel: str, text: str, document: Any) -> bool:
         declared = _document_declares_mcp(document)
         return declared if declared is not None else _names_mcp_key(rel, text)
     if not _text_may_declare_mcp(text):
+        return False
+    if rel.endswith(".json") and json_readings_declare_mcp(text) is False:
+        # JSON the integrity checks refused (a repeated key): neither reading holds a table.
         return False
     if rel.endswith(_YAML_SUFFIXES):
         declared = _yaml_declares_mcp(text)
