@@ -280,6 +280,11 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   document's end, so after 8 misses the rebuild stops: a hostile notebook
   spelling every value with escapes no writer emits (`iVBOR...`) keeps
   its oversize gap instead of buying a document-length scan per value.
+  A second review found the base64 check per line and on the first 64
+  characters only: a padded PNG header line followed by a key spelled in
+  the base64 alphabet was emptied. The value is now judged whole: its lines
+  joined, every line but the last of one width, padding only at its end,
+  and all of it decoding (`validate`) before its signature is read.
 - Cells that are not Python (14, in 10 notebooks): placeholders
   (`<YOUR API KEY>`), a pasted `export` line, typos. Jupyter runs cells one
   at a time and the binder already read the others, so such a notebook is

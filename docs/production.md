@@ -483,7 +483,8 @@ export with bounded records rather than a larger file limit.
 `code.filesystem` reads a notebook over `max_file_size` (up to
 `max_notebook_size`) for credentials with the base64 image, audio, video and
 PDF data of its output bundles and attachments left out. Only strict base64
-under those MIME keys that decodes to such a file's signature is left out, so
+under those MIME keys (lines of one width, padding only at the end, the whole
+value decoding) that decodes to such a file's signature is left out, so
 text under a binary MIME key, and anything in metadata, is still read. When the
 remaining text is over `max_file_size`, the notebook is one oversize gap of the
 coverage budget (an error under `strict_coverage`). A notebook with cells that
