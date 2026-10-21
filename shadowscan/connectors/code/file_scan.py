@@ -188,6 +188,10 @@ if TYPE_CHECKING:  # filesystem imports this module
 
 # Registered MCP tool names retained per project.
 _MAX_MCP_TOOLS = 200
+# A notebook's binary output values are read for credentials in windows this long,
+# overlapping by more than any credential's length.
+_CREDENTIAL_WINDOW = 4096
+_CREDENTIAL_OVERLAP = 256
 # Server constructions listed under metadata.mcp_server; the capability does not
 # depend on the list, so the bound is disclosed on the finding, not a coverage gap.
 _MAX_MCP_SERVER_CONSTRUCTIONS = 50
@@ -541,6 +545,13 @@ class FileScanner:
             return text, None, (), ()
         return self._notebook_source(rel, text)
 
+    def _holds_credential(self, value: str) -> bool:
+        """Whether the credential pass matches anything in ``value``, read in overlapping windows."""
+        return any(
+            self.index.match_secrets(value[max(0, start - _CREDENTIAL_OVERLAP) : start + _CREDENTIAL_WINDOW])
+            for start in range(0, len(value), _CREDENTIAL_WINDOW)
+        )
+
     def _notebook_source(
         self, rel: str, document: str
     ) -> tuple[str, str | None, _CellSpans, _CellSpans] | None:
@@ -583,6 +594,9 @@ class FileScanner:
             # notebook that did not parse whole is not rebuilt.
             outputs, removed = document, 0
             if not notebook_errors:
+                # A credential spelled in the base64 alphabet can sit in a valid image's
+                # value: a value the credential pass matches is kept and read with the text.
+                binary = [part for part in binary if not self._holds_credential(part)]
                 outputs, removed = notebook_without_binary_data(document, binary)
             if len(outputs) <= self.max_file_size:
                 raw_notebook = outputs

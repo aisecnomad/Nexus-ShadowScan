@@ -373,6 +373,15 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
     (bracket depth zero, no backslash continuation), for every escape form.
   - `%time`, `%timeit` and `%prun` without options lost the statement they
     run; only the magic's name is masked now (`0;` and blanks).
+- Review of the integration branch found that a key spelled in the base64
+  alphabet can sit in a value that is still strict base64 of an image (on
+  its own line, or after a `/`). A notebook small enough is read whole, so
+  its key is reported, but an oversize one emptied the value and completed
+  with a note, where main fails it. Each value is now read for credentials
+  in overlapping 4 KiB windows before it is emptied (0.5 s for 20 MiB of
+  image data, no matches on random data), and a value the credential pass
+  matches is kept: read with the text outputs, or, when that puts them over
+  `max_file_size`, the notebook's recorded oversize gap.
 
 ### Analysis bounds sized for real modules; redaction's own allowance (October 21)
 

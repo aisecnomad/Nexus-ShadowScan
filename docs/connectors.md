@@ -378,7 +378,9 @@ is capped at 0.6 confidence. These are static candidate classifications, not pro
 that code ran or that a deployment is autonomous.
 
 Python files or notebook cells that the scanner's interpreter cannot parse
-retain lexical observations but make semantic coverage incomplete. Unparsed
+retain lexical observations but are coverage gaps: a Python file leaves semantic
+coverage incomplete, and a notebook whose other code cells parsed is one partial
+gap charged to the coverage budget (an error under `strict_coverage`). Unparsed
 ranges cannot establish semantic agent construction or execution capabilities;
 supported neighboring source remains analyzable. Scan with a supported Python
 interpreter that understands the input syntax before accepting completeness.
