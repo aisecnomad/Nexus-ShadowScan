@@ -153,6 +153,32 @@ def test_readers_refuse_directory(tmp_path, index):
     probe = _probe(index)
 
     _assert_all_readers_refuse(probe, tmp_path, reason="offline input is not a regular file")
+    # Issue #264: both readers count a special file in the file's place alike
+    # (the whole-file reader with and without a budget, then the line reader).
+    assert probe.ctx.stats.incomplete_reasons == {"unresolved-link": 3}
+
+
+def test_readers_count_a_file_over_the_per_file_cap_as_oversize(tmp_path, index):
+    # Issue #264: a file skipped whole for its size is an oversize file in either reader.
+    source = tmp_path / "records.jsonl"
+    source.write_bytes(DATA)
+    probe = _probe(index, max_input_file_bytes=len(DATA) - 1, max_input_bytes=1024)
+
+    assert probe._read_offline_bytes(source, probe._offline_budget()) is None
+    assert _lines(probe, source) == b""
+    assert probe.ctx.stats.incomplete_reasons == {"oversize-file": 2}
+
+
+def test_line_reader_counts_a_corrupt_gzip_as_unparsed_input(tmp_path, index):
+    # Issue #264: gzip.BadGzipFile is an OSError, but a corrupt archive is
+    # content that did not parse, not a permission or credential problem.
+    source = tmp_path / "records.jsonl.gz"
+    source.write_bytes(b"not a gzip stream\n")
+    probe = _probe(index)
+
+    assert list(probe._iter_bounded_lines(source, probe._offline_budget(), compressed=True)) == []
+    assert probe.ctx.stats.warnings == ["test.reader: offline input could not be read (BadGzipFile)"]
+    assert probe.ctx.stats.incomplete_reasons == {"unparsed-input": 1}
 
 
 def test_whole_file_reader_enforces_per_file_limit(tmp_path, index):

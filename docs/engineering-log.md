@@ -11,6 +11,64 @@ for people who install and operate ShadowScan. Entries name the pull request
 they came from where one exists, and say what was deliberately not carried.
 Counts and figures quoted in an entry are those of its date.
 
+## Unreleased
+
+### Issue #264 follow-ups: endpoint forms, surrender scalars, explicit reasons (October 21)
+
+Each remaining unverified item of #264 was re-verified against `main`
+84183af5. Most were already fixed by the #280, #282, #288 and #308
+integrations, with regression tests on `main`; the rest land here.
+
+- Google Private Service Connect names were tagged in eBPF events but not in
+  network logs, and the documented regional service endpoint form was tagged
+  nowhere. The Vertex AI, Gemini, Dialogflow and Discovery Engine signatures
+  gain anchored `SERVICE-ENDPOINT.p.googleapis.com` and
+  `SERVICE.REGION.rep.googleapis.com` domain patterns, and the eBPF host
+  expression gains the regional branch with the same service and label
+  boundaries. A non-AI service's private name (`storage-prodpsc.p…`) still
+  matches nothing.
+- A scalar subclass in finding metadata (an `IntEnum`, a numpy scalar, a
+  `datetime` subclass) passed the worker's sanitize pass unchanged, and the
+  surrender path's detached copy, which shares only exact types so no
+  subclass code runs on the supervisor thread, omitted the whole finding; a
+  completed run reported it. The sanitize pass now rebuilds such a leaf as
+  its exact standard type on the worker, so what a sanitize pass leaves is
+  exactly what the detached copy shares. The copy's own invariant is
+  untouched.
+- The shared offline-input funnel (`connectors/offline.py`, which every
+  connector's offline mode reads through) and the export writer and runner
+  in `connectors/base.py` recorded their diagnostics without `reason=`, so
+  the text classifier put most of them in `other`. Each now names its
+  category at the failure branch (byte and line budgets `analysis-limit`,
+  undecodable, non-JSON or corrupt gzip input `unparsed-input`, symlinks and
+  special files `unresolved-link`, unreadable files and directories
+  `access-denied`, files skipped whole for their size `oversize-file`,
+  unsupported or abandoned inputs `unscanned-input`), `ConnectorError`
+  carries an optional `reason` its handler forwards (None keeps the text
+  classification), and a repository policy ratchet pins the count of
+  reason-less diagnostic sites (537) so it only falls as the #288 migration
+  continues connector by connector.
+- Review corrections before merge (October 22): `gzip.BadGzipFile` is an
+  `OSError`, so a corrupt `.gz` export was counted as `access-denied` (whose
+  advice is to check permissions and credentials); it is `unparsed-input`.
+  The whole-file and line readers now count the same input alike: a
+  directory, FIFO, socket or device in a file's place is `unresolved-link`
+  in both (the whole-file reader had `unscanned-input`), and a file over the
+  per-file cap is `oversize-file` in both (the line reader had
+  `analysis-limit`). `ConnectorError.reason` is also a class attribute, so a
+  plugin subclass whose `__init__` does not call the base one cannot turn
+  the skip handler's read into an `AttributeError` that escapes `run()`.
+  The entries moved from the 0.1.3 section to `## Unreleased`: `v0.1.3` was
+  tagged on `aee3c984`, which does not contain them.
+- Also from the #308 review follow-ups: a dead read in
+  `_redact_credential_calls` is removed and the migration-notes sections are
+  ordered newest first. The `token (it's` prose shape from #264 is fixed on
+  `main` insofar as the file no longer fails closed (#296); the remaining
+  rest-of-file excerpt withholding is deliberate — review showed every rule
+  that picks literals out of a completed past-bound credential call is
+  unsafe — and stays recorded on the issue, with the many-opener extension
+  budget exhaustion, as precision work needing its own design review.
+
 ## 0.1.3 — 2026-11-20
 
 ### A README that stays true on the frozen PyPI page (October 22)
