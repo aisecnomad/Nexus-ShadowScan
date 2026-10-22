@@ -765,8 +765,8 @@ for where the code, tests, docs, tooling and benchmarks live.
 
 ## Project status
 
-* **Release state.** Version `0.1.3` is an alpha pre-release planned for TestPyPI
-  and then PyPI as `NexusShadowScan` on 2026-11-20. Until it appears on
+* **Release state.** Version `0.1.3` is an alpha pre-release prepared for TestPyPI
+  and then PyPI as `NexusShadowScan`. Until it appears on
   [PyPI](https://pypi.org/project/NexusShadowScan/0.1.3/) and as the
   [GitHub release](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.3),
   the latest published release is 0.1.2 (tag `v0.1.2`); confirm publication and artifact
