@@ -223,9 +223,9 @@ for the full rules.
 In the three October 2026 ShadowBench runs below, ShadowScan had the highest
 headline score of the open-source tools tested, and in the two multi-surface runs
 it was the only tool that covered every surface. The maintainer built and scored
-all three with AI coding assistants (Claude, Codex, Grok, Antigravity and others);
-read the caveats under the charts before comparing tools. Each report link opens a
-fixed commit of
+all three with AI coding assistants (Claude, Codex, Grok, Google Antigravity, and
+others); read the caveats under the charts before comparing tools. Each report link
+opens a fixed commit of
 [Nexus ShadowBench](https://github.com/aisecnomad/Nexus-ShadowBench), where the
 benchmarks moved without being rerun or regraded.
 
@@ -254,23 +254,23 @@ How to read these numbers:
   measured field accuracy or production precision; the same holds for the
   evaluation corpus, and any corpus used to tune detection is in-sample. The
   maintainer built every corpus, label, scorer, and tool adapter with AI coding
-  assistants (Claude, Codex, Grok, Antigravity and others); no label is independent
-  human ground truth.
+  assistants (Claude, Codex, Grok, Google Antigravity, and others); no label is
+  independent human ground truth.
 * The head-to-head was pre-registered, with ShadowScan's results committed before
   any other tool ran. The cases run was re-scored after the run with its results
   in view.
-* The discovery result is in-sample: the 0.972 F1 was measured after additional
-  tuning on that corpus. An earlier archived run recorded
+* The discovery result is in-sample: the 0.972 F1 was measured after tuning on
+  that corpus. An earlier archived run recorded
   [0.909](https://github.com/aisecnomad/Nexus-ShadowBench/blob/1ce0eee376585f85fbd0fec98235d556310e6277/benchmarks/shadow-ai-discovery/results/2026-10-08/REPORT.md)
   against a different expected-fact universe (835 facts against 839), and labels
   and adapters also changed between the runs, so the two are not a controlled
   before-and-after comparison.
 * Estate recall mostly measures coverage: test independently against the in-scope
   columns in each report, not solely against these headline numbers. On those
-  columns, ShadowScan does not lead in every surface: in the cases run,
-  AI-Infra-Guard's in-scope entity F1 (0.90, on the network surface only) is higher
-  than ShadowScan's (0.82, on all nine). Several tools ran below full capability
-  (offline, without the LLM classifiers, databases or live-network layers some of
+  columns, ShadowScan does not lead everywhere: in the cases run, AI-Infra-Guard's
+  in-scope entity F1 (0.90, on the network surface only) is higher than
+  ShadowScan's (0.82, on all nine). Several tools ran below full capability
+  (offline, without the LLM classifiers, databases, or live-network layers some of
   them support), and these archived scores do not establish an independent product
   ranking.
 * ShadowScan still has gaps. It found 70% of AI developer home directories in the
@@ -311,9 +311,10 @@ documentation of the commit you installed.
   identity there before installing it. Publication does not establish independent
   review or deployment acceptance.
 * **Single maintainer, AI-assisted development.** Apart from Dependabot updates and
-  README edits carried from two pull requests opened by another GitHub account
-  ([#229](https://github.com/aisecnomad/Nexus-ShadowScan/pull/229) and
-  [#275](https://github.com/aisecnomad/Nexus-ShadowScan/pull/275), credited as
+  README edits carried from three pull requests opened by another GitHub account
+  ([#229](https://github.com/aisecnomad/Nexus-ShadowScan/pull/229),
+  [#275](https://github.com/aisecnomad/Nexus-ShadowScan/pull/275) and
+  [#313](https://github.com/aisecnomad/Nexus-ShadowScan/pull/313), credited as
   co-author), every commit up to this revision was written by a single maintainer
   or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot,
   Google Antigravity, Perplexity, Meta AI, etc.). The logs under
