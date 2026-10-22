@@ -8,7 +8,7 @@ records each in detail, and the
 [deployment and migration guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md)
 has the full upgrade steps.
 
-## 0.1.3 — 2026-11-20
+## 0.1.3 — 2026-10-22
 
 The first release since the repository was renamed to
 `aisecnomad/Nexus-ShadowScan`, and the first built as a source distribution
@@ -144,7 +144,7 @@ and the
   `scheduled` tag. Risk levels of affected low-code findings move; rebaseline.
 - Keyed incremental cache entries are authenticated with an HMAC and miss once
   after upgrading; unkeyed caches are unchanged.
-- The incremental cache entry format moves to 5, so every entry, keyed or
+- The incremental cache entry format moves to 6, so every entry, keyed or
   unkeyed, misses once after upgrading and the first incremental scan
   analyses every repository root again. Entries are keyed on the scan-wide
   `max_coverage_gap` as well, so a scan under another budget also misses

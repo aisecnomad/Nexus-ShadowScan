@@ -171,7 +171,7 @@ integrations, with regression tests on `main`; the rest land here.
   unsafe — and stays recorded on the issue, with the many-opener extension
   budget exhaustion, as precision work needing its own design review.
 
-## 0.1.3 — 2026-11-20
+## 0.1.3 — 2026-10-22
 
 ### A README that stays true on the frozen PyPI page (October 22)
 
@@ -245,8 +245,8 @@ it.
     SECURITY.md), and the safety section what is never executed and what
     leaves the machine. 0.1.3 is an alpha release, not a pre-release: pip
     installs it by default.
-  - The authorship sentence names the two README pull requests (#229, #275)
-    carried from another account with co-author credit.
+  - The authorship sentence names the README pull requests carried from
+    another account with co-author credit: #229 and #275, and #313 after #314.
 - The package summary drops the repeated name, keeps every surface word, adds
   the README tagline's "evidence" qualifier, and is 127 characters. The keywords
   (also in CITATION.cff) drop generic terms and the `langchain` detection

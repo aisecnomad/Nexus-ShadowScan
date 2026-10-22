@@ -164,7 +164,7 @@ the number of servers it counts, and like the other governance factors it is
 excluded from `danger_score`; under `risk_basis: danger` it weighs 0 and, like
 any zero-weight governance factor, is omitted from `risk.factors`. When an approved registry fails to load, the factor is
 not applied and the scan is incomplete.
-`options.risk_weights` overrides weights; see the README's risk policy. Its
+`options.risk_weights` overrides weights; see [risk policies](../api/risk.md#risk-policies). Its
 keys are checked, so a typo cannot silently change nothing: unknown groups,
 `kinds`, `governance` and `autonomy` keys are rejected (`autonomy` keys are `L0`
 to `L5`), `capabilities` keys must be one of
