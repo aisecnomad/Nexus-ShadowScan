@@ -318,6 +318,31 @@ Attestations keep the name they were signed under. Verify files released
 before a rename with the old `--repo` value, as the install instructions do
 for 0.1.2.
 
+PyPI shows a **Change of provenance** warning on a release whose
+attestations name a different repository or workflow file from the
+previous attested release, when that release was uploaded less than 14 days
+earlier. As checked on October 22, 2026, PyPI's
+[comparison](https://github.com/pypi/warehouse/blob/4969cf8c4598fb3a5503e1ae88b90db5541240a6/warehouse/attestations/models.py)
+matches the publisher's repository name, not the numeric repository ID, and
+its [window](https://github.com/pypi/warehouse/blob/4969cf8c4598fb3a5503e1ae88b90db5541240a6/warehouse/packaging/models.py)
+is measured back from that release's own upload, so it never expires.
+Release 0.1.3 was uploaded 13 days and 20 hours after 0.1.2 and carries the
+warning, with the former repository listed as removed and the new one as
+added. Both signing certificates name the same Source Repository Identifier
+(`1174915264`), which links the two names.
+
+The warning cannot be cleared on that release: attestations cannot be
+replaced, a file name cannot be uploaded twice, PyPI offers maintainers no
+way to dismiss it, and yanking the earlier release does not change the
+comparison. Do not delete the earlier release to clear it. The next release
+from the same `release.yml` and environment is compared with the first
+release under the new name and carries no warning, and the project page then
+shows that release. For a later rename, either upload the first release under
+the new name at least 14 days after the last one, or name the rename in its
+release notes, where PyPI's
+[guidance](https://github.com/pypi/warehouse/blob/4969cf8c4598fb3a5503e1ae88b90db5541240a6/docs/user/using-pypi/package-security/provenance.md#change-of-provenance)
+asks users to confirm the change.
+
 ## When something goes wrong
 
 - **A gate fails.** Fix the cause and dispatch again. Check the tag's target
