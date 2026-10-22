@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import multiprocessing
 import os
@@ -226,8 +227,28 @@ def _wait_exited(pid, limit):
 
 
 def _kill_leftover(pid):
+    # The worker can exit, and be reaped, between the check and the kill.
     if not _exited(pid):
-        os.kill(pid, signal.SIGKILL)
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+
+
+def test_kill_leftover_tolerates_a_worker_reaped_after_the_check(monkeypatch) -> None:
+    """Cleanup must not fail a test because the worker exited on its own just in time.
+
+    The liveness probe succeeds, the /proc read fails (the entry is gone), and the
+    kill then finds no such process: CI saw exactly this as ProcessLookupError.
+    """
+    signals: list[int] = []
+
+    def kill(pid: int, sig: int) -> None:
+        signals.append(sig)
+        if sig == signal.SIGKILL:
+            raise ProcessLookupError(pid)
+
+    monkeypatch.setattr(os, "kill", kill)
+    _kill_leftover(2**22 + 12345)  # no /proc entry for this pid
+    assert signals == [0, signal.SIGKILL]
 
 
 def test_spawned_plugin_result_and_export_without_parent_import(installed_probe, tmp_path):

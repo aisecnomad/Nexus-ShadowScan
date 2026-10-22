@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import subprocess
@@ -263,6 +264,27 @@ def _alive(pid: int) -> bool:
     return state not in {"Z", "X"}
 
 
+def _kill_group_leftover(pid: int) -> None:
+    # The group can exit, and be reaped, between the check and the kill.
+    if _alive(pid):
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(pid, signal.SIGKILL)
+
+
+def test_kill_group_leftover_tolerates_a_group_reaped_after_the_check(monkeypatch) -> None:
+    """The liveness probe succeeds and the group is gone by the time it is killed."""
+    monkeypatch.setattr(os, "kill", lambda pid, sig: None)
+    killed: list[int] = []
+
+    def killpg(pgid: int, sig: int) -> None:
+        killed.append(pgid)
+        raise ProcessLookupError(pgid)
+
+    monkeypatch.setattr(os, "killpg", killpg)
+    _kill_group_leftover(2**22 + 12345)  # no /proc entry, so _alive answers True
+    assert killed == [2**22 + 12345]
+
+
 def _eventually(predicate, seconds=15.0) -> bool:
     end = time.monotonic() + seconds
     while time.monotonic() < end:
@@ -365,8 +387,7 @@ time.sleep(60)  # the stand-in for a scan that is still busy when the deadline p
         assert _eventually(lambda: not _alive(clone_pid), 5), "git outlived the scanner"
         assert not checkout.exists()
     finally:
-        if _alive(clone_pid):
-            os.killpg(clone_pid, signal.SIGKILL)
+        _kill_group_leftover(clone_pid)
 
 
 def test_exit_guard_armed_when_abandoned_workers_exist(monkeypatch):
