@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import os
 import signal
@@ -453,6 +454,27 @@ def _process_running(pid: int) -> bool:
     return state not in {"Z", "X"}
 
 
+def _kill_group_leftover(pid: int) -> None:
+    # The group can exit, and be reaped, between the check and the kill.
+    if _process_running(pid):
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(pid, signal.SIGKILL)
+
+
+def test_kill_group_leftover_tolerates_a_group_reaped_after_the_check(monkeypatch) -> None:
+    """The liveness probe succeeds and the group is gone by the time it is killed."""
+    monkeypatch.setattr(os, "kill", lambda pid, sig: None)
+    killed: list[int] = []
+
+    def killpg(pgid: int, sig: int) -> None:
+        killed.append(pgid)
+        raise ProcessLookupError(pgid)
+
+    monkeypatch.setattr(os, "killpg", killpg)
+    _kill_group_leftover(2**22 + 12345)  # no /proc entry, so _process_running answers True
+    assert killed == [2**22 + 12345]
+
+
 def _wait_for(predicate, seconds=15.0) -> bool:
     end = time.monotonic() + seconds
     while time.monotonic() < end:
@@ -560,8 +582,7 @@ def test_sigterm_stops_the_clone_and_deletes_its_checkout(tmp_path, mode):
         if child.poll() is None:
             child.kill()
             child.communicate(timeout=5)
-        if _process_running(clone_pid):
-            os.killpg(clone_pid, signal.SIGKILL)
+        _kill_group_leftover(clone_pid)
 
 
 @pytest.mark.skipif(os.name != "posix", reason="process-group assertion uses POSIX signals")
@@ -581,8 +602,7 @@ def test_sigint_stops_the_clone_then_interrupts_as_before(tmp_path, mode):
         if child.poll() is None:
             child.kill()
             child.communicate(timeout=5)
-        if _process_running(clone_pid):
-            os.killpg(clone_pid, signal.SIGKILL)
+        _kill_group_leftover(clone_pid)
 
 
 @pytest.mark.skipif(os.name != "posix", reason="process-group assertion uses POSIX signals")
@@ -678,8 +698,8 @@ cli.main(['code', '.'])
         if child.poll() is None:
             child.kill()
             child.communicate(timeout=5)
-        if clone_pid and _process_running(clone_pid):
-            os.killpg(clone_pid, signal.SIGKILL)
+        if clone_pid:
+            _kill_group_leftover(clone_pid)
 
 
 def test_github_token_without_credential_name_permissions_gets_four_identical_warnings(index):
