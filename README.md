@@ -16,15 +16,7 @@
 It inspects nine surfaces: code repositories, identity providers, LLM gateway logs,
 low-code platforms, SaaS apps, cloud accounts, endpoints (developer workstations and
 host/runtime inventories), network logs, and running processes. Scans fail closed.
-Errors, timeouts and unbounded gaps mark a scan incomplete (exit 3) instead of
-producing a smaller report that looks clean; bounded gaps are charged to a coverage
-budget and reported.
-
-> **Alpha software from a single maintainer, built with AI coding assistants.**
-> A finding marked `shadow: true` had no single explicit, unambiguous match in the
-> inventory or trusted registries you supplied; that is a lead to investigate, not
-> proof of unauthorized use. The benchmarks below were built and scored by the
-> maintainer with AI coding assistants and are not an independent evaluation.
+Errors, timeouts, and unbounded gaps mark a scan incomplete (exit 3).
 
 ## Install
 
@@ -41,8 +33,8 @@ macOS for development use. Windows is not supported: only `shadowscan --help` an
 refuses to run.
 
 On PyPI, this page describes the release it was uploaded with. On GitHub's `main`
-branch it describes the current source, which can be ahead of the latest PyPI
-release in commands, options and supported Python versions. `shadowscan --version`
+branch, it describes the current source, which can be ahead of the latest PyPI
+release in commands, options, and supported Python versions. `shadowscan --version`
 and `shadowscan <command> --help` show what you installed.
 
 The distribution is `NexusShadowScan`; the command and Python package are
@@ -167,19 +159,19 @@ Collection and analysis fail closed:
   not it changes the exit code. The first 50 are listed under
   `stats[].coverage.details`; `details_truncated` counts the rest.
 - `shadowscan code --profile ci` (opt-in) records some gaps under test, fixture,
-  documentation, example and generated paths as declared omissions instead.
+  documentation, example, and generated paths as declared omissions instead.
 - Only the opt-in LLM triage is advisory: its failures are warnings, and it never
   changes scores.
 
 See [architecture](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/architecture.md)
-for the pipeline, the package layout and the connector contract.
+for the pipeline, the package layout, and the connector contract.
 
 ## Key capabilities
 
 | Capability | Details |
 |---|---|
 | **38 connectors** across 9 surfaces | Code, Identity, Gateway, Low-code, SaaS, Cloud, Endpoint, Network, Runtime |
-| **233 signatures / 1133 signals** | One signature per product or pattern (orchestrators, protocols, coding agents, platforms, model providers, AI SaaS apps, permission policies), each recognized by signals such as a package name, hostname, OAuth scope or file path |
+| **233 signatures / 1133 signals** | One signature per product or pattern (orchestrators, protocols, coding agents, platforms, model providers, AI SaaS apps, permission policies), each recognized by signals such as a package name, hostname, OAuth scope, or file path |
 | **Live and offline modes** | 28 of the 38 connectors collect from a live API or the local host; the other 10 read only exports another tool produced (manifest dumps, gateway and network logs, OTel traces, endpoint and generic SaaS exports). All but the three code connectors can replay a saved export |
 | **8 output formats** | `table` · `json` · `sarif` · `csv` · `markdown` · `html` · `cyclonedx` · `ocsf` |
 | **Risk scoring** | Additive, explainable 0-100 score with per-factor breakdown |
@@ -196,11 +188,11 @@ for the pipeline, the package layout and the connector contract.
 * Known credential formats, sensitive configuration fields, and credential-bearing URLs are **redacted** before findings or sanitized record exports are persisted. Redaction cannot identify every arbitrary secret; reports still contain security-sensitive inventory data, so treat them as confidential.
 * Secret stores (AWS Secrets Manager and Systems Manager Parameter Store, Google Secret Manager, OCI Vault) are read for **names and metadata only**. By default the Azure collector also reads App Service application settings: that call returns plaintext values and needs `Microsoft.Web/sites/config/list/action`, a Contributor-class permission that Reader lacks; the values are checked for credentials and redacted before persistence. Set `include_app_settings: false` to skip the call and the permission.
 * JWTs are never persisted; findings reference a truncated hash.
-* Scanned repositories, exports and logs are parsed as data. ShadowScan never launches a discovered MCP server, runs a package manager to read a lockfile, or executes or unpickles a model file it finds.
+* Scanned repositories, exports, and logs are parsed as data. ShadowScan never launches a discovered MCP server, runs a package manager to read a lockfile, or executes or unpickles a model file it finds.
 * Built-in collectors inspect provider resources using read operations. Scope the audit identity to the documented read permissions. A third-party plugin runs only when allowlisted by exact name, with the scanner's privileges and no sandbox; review it separately.
 * ShadowScan sends no telemetry. A scan connects only to the sources and credential endpoints its configuration names and, if you enable the opt-in LLM triage, to the model endpoint you choose, which receives redacted finding summaries (the redaction limits above apply). `shadowscan jwt --jwks-url` fetches the key set you name, and `shadowscan mcp-registry snapshot` reads the official MCP Registry unless `--url` names another.
 
-See [SECURITY.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md) and [docs/production.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md) for deployment behavior, migration and limits.
+See [SECURITY.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md) and [docs/production.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md) for deployment behavior, migration, and limits.
 
 ## Commands and exit codes
 
@@ -241,8 +233,9 @@ for the full rules.
 In the three October 2026 ShadowBench runs below, ShadowScan had the highest
 headline score of the open-source tools tested, and in the two multi-surface runs
 it was the only tool that covered every surface. The maintainer built and scored
-all three with AI coding assistants; read the caveats under the charts before
-comparing tools. Each report link opens a fixed commit of
+all three with AI coding assistants (Claude, Codex, Grok, Antigravity and others);
+read the caveats under the charts before comparing tools. Each report link opens a
+fixed commit of
 [Nexus ShadowBench](https://github.com/aisecnomad/Nexus-ShadowBench), where the
 benchmarks moved without being rerun or regraded.
 
@@ -270,29 +263,30 @@ How to read these numbers:
 * They are evidence about the listed inputs, **not** independent review and **not**
   measured field accuracy or production precision; the same holds for the
   evaluation corpus, and any corpus used to tune detection is in-sample. The
-  maintainer built every corpus, label, scorer and tool adapter with AI coding
-  assistants; no label is independent human ground truth.
+  maintainer built every corpus, label, scorer, and tool adapter with AI coding
+  assistants (Claude, Codex, Grok, Antigravity and others); no label is independent
+  human ground truth.
 * The head-to-head was pre-registered, with ShadowScan's results committed before
   any other tool ran. The cases run was re-scored after the run with its results
   in view.
-* The discovery result is in-sample: the 0.972 F1 was measured after tuning on
-  that corpus. An earlier archived run recorded
+* The discovery result is in-sample: the 0.972 F1 was measured after additional
+  tuning on that corpus. An earlier archived run recorded
   [0.909](https://github.com/aisecnomad/Nexus-ShadowBench/blob/1ce0eee376585f85fbd0fec98235d556310e6277/benchmarks/shadow-ai-discovery/results/2026-10-08/REPORT.md)
   against a different expected-fact universe (835 facts against 839), and labels
   and adapters also changed between the runs, so the two are not a controlled
   before-and-after comparison.
-* Estate recall mostly measures coverage: compare tools on the in-scope columns in
-  each report, not on these headline numbers. On those columns ShadowScan does not
-  lead everywhere: in the cases run, AI-Infra-Guard's in-scope entity F1 (0.90, on
-  the network surface only) is higher than ShadowScan's (0.82, on all nine).
-  Several tools ran below full capability, and these archived scores do not
-  establish a product ranking.
+* Estate recall mostly measures coverage: test independently against the in-scope
+  columns in each report, not solely against these headline numbers. On those
+  columns, ShadowScan does not lead in every surface: in the cases run,
+  AI-Infra-Guard's in-scope entity F1 (0.90, on the network surface only) is higher
+  than ShadowScan's (0.82, on all nine). Several tools ran below full capability
+  (offline, without the LLM classifiers, databases or live-network layers some of
+  them support), and these archived scores do not establish an independent product
+  ranking.
 * ShadowScan still has gaps. It found 70% of AI developer home directories in the
   head-to-head, its specificity on decoys in the cases run was 63%, and it marked
   27 of its 326 scans in the cases run and 43 of 87 in the discovery run
-  incomplete.
-* Not every ShadowBench run favors it: in three
-  [real-world repository runs](https://github.com/aisecnomad/Nexus-ShadowBench/blob/1ce0eee376585f85fbd0fec98235d556310e6277/benchmarks/README.md)
+  incomplete. In three [real-world repository runs](https://github.com/aisecnomad/Nexus-ShadowBench/blob/1ce0eee376585f85fbd0fec98235d556310e6277/benchmarks/README.md)
   from 2026-10-08 (34, 41 and 326 public repositories), other tools scored higher,
   partly because those runs count ShadowScan's incomplete scans as misses.
 
@@ -360,11 +354,11 @@ In a checkout, a plain `shadowscan code .` exits 3 by design: three files hold
 more synthetic credentials than a scan reports per file, and an ordinary clone
 leaves the optional `benchmark-suite` submodule uninitialized. `make self-scan`
 runs `examples/shadowscan.self-scan.yaml`, which excludes those paths and the
-fixture, archive and built-site directories, each with a documented reason, and
+fixture, archive, and built-site directories, each with a documented reason, and
 completes with exit 0.
 
 Use synthetic, minimal examples in public reports. Scan results can contain
-credentials, personal data, and sensitive inventory even after redaction.
+credentials, personal data, and sensitive information even after redaction.
 
 ## License
 
