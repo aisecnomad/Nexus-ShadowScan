@@ -79,7 +79,14 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
 1. **Prepare the candidate.** Set the same version in `pyproject.toml`,
    `shadowscan/__init__.py` and `CITATION.cff` (CI checks that they match).
    Date the release headings in `CHANGELOG.md`, `docs/engineering-log.md` and
-   `RELEASE_NOTES.md` and remove "unreleased" from them. Merge through the normal review process.
+   `RELEASE_NOTES.md` and remove "unreleased" from them. `README.md` is the
+   PyPI project description, frozen with every upload (the TestPyPI rehearsal
+   included), so it must already read correctly for the published release: no
+   planned date, no earlier release named as the latest, no wording that calls
+   the candidate unpublished, and its images pinned to a commit on `main` whose
+   `docs/assets` files are byte-identical to the candidate's
+   (`test_readme_images_are_pinned_to_one_commit_holding_the_current_assets`
+   checks this in a full clone). Merge through the normal review process.
 2. **Review and accept the exact commit**, as the
    [release process](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/GOVERNANCE.md#release-process)
    requires. A green CI run is not that review.
@@ -252,10 +259,12 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
    describes the candidate as prepared, not published. In one reviewed change
    on `main`, update every place that names the published release, with the
    day the tag and the upload happened:
-   - `README.md` and `docs/reference/product-guide.md`: the **Release state**
-     bullet (published version, tag, PyPI and GitHub release links), the
-     "PyPI requirements" note under **Install** (the Python range of the
-     published wheel) and the link to the published alpha's documentation.
+   - `docs/reference/product-guide.md`: the **Release state** bullet
+     (published version, tag, PyPI and GitHub release links), the "PyPI
+     requirements" note under **Install** (the Python range of the published
+     wheel) and the link to the published alpha's documentation. `README.md`
+     names no release and needs no change here: it shipped as the frozen
+     description (step 1), and an edit after the upload never reaches PyPI.
    - `docs/getting-started/install.md`: the published version, its Python
      range and the attestation `--repo` note.
    - `docs/connectors.md`: the release-status refresh date and the

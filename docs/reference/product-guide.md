@@ -120,7 +120,7 @@ for the pipeline, the package layout and the connector contract.
 |---|---|
 | **38 connectors** across 9 surfaces | Code, Identity, Gateway, Low-code, SaaS, Cloud, Endpoint, Network, Runtime |
 | **233 signatures / 1133 signals** | Orchestrators, protocols, coding agents, platforms, model providers, AI SaaS apps, permission policies |
-| **Live and offline modes** | 28 of the 38 connectors collect from a live API with credentials; all 38 replay offline JSON/CSV/log exports. The other 10 are replay-only by nature (Kubernetes/OpenShift manifest dumps, gateway and network logs, OTel traces, endpoint inventories, generic SaaS exports) — they read an export something else produced |
+| **Live and offline modes** | 28 of the 38 connectors collect from a live API or the local host. 35 replay JSON, YAML, CSV or log exports; the three code connectors read a checkout or a directory of clones instead. The other 10 are replay-only by design: Kubernetes and OpenShift manifest dumps, gateway logs and OTel traces, network logs, host, local-model, model-artifact and eBPF endpoint exports, and generic SaaS exports |
 | **8 output formats** | `table` · `json` · `sarif` · `csv` · `markdown` · `html` · `cyclonedx` · `ocsf` |
 | **Risk scoring** | Additive, explainable 0-100 score with per-factor breakdown |
 | **Autonomy classification** | L0 (Chatbot) through L5 (Fully Autonomous) interval |
@@ -179,11 +179,10 @@ shadowscan jwt --file tokens.txt --jwks-url https://login.example.com/.well-know
 `agent-card.yaml`, `examples/` and the sample exports under `tests/fixtures/`
 come from a repository checkout; the wheel does not ship them. Scanning the
 ShadowScan checkout itself with `shadowscan code .` reports an incomplete scan
-(exit 3): a few redaction test files are built to exceed the sanitizer's own
-safety limits, and a finding the sanitizer cannot bound is withheld rather than
-published unredacted — that is unbounded, so no budget applies to it. Its handful
-of unreadable entries, by contrast, stay within the coverage budget. In a
-checkout, `make self-scan` runs `examples/shadowscan.self-scan.yaml`, which
+(exit 3) by design: three files (the engineering log and two credential test
+suites) hold more synthetic credentials than a scan reports per file, and an
+ordinary clone leaves the optional `benchmark-suite` submodule uninitialized.
+In a checkout, `make self-scan` runs `examples/shadowscan.self-scan.yaml`, which
 excludes those paths, each with a documented reason, and completes with exit 0;
 `shadowscan code tests/fixtures/sample_repo --inventory agent-card.yaml`
 scans the bundled sample repository in seconds.

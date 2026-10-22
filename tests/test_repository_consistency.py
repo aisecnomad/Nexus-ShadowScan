@@ -385,15 +385,61 @@ def test_absolute_repository_links_resolve_in_this_checkout(markdown: Path) -> N
     assert not problems, f"{_relative(markdown)}:\n  " + "\n  ".join(problems)
 
 
+_HTML_LINK_ATTRIBUTE = re.compile(r"""\b(?:src|href)\s*=\s*["']([^"']+)["']""")
+# README images load from one full commit SHA, so the description frozen on a release's PyPI page
+# keeps showing the diagrams and charts its text describes after `main` regenerates or moves them.
+_PINNED_ASSET = re.compile(
+    r"^https://raw\.githubusercontent\.com/aisecnomad/Nexus-ShadowScan/([0-9a-f]{40})/(docs/assets/[^/?#]+)$"
+)
+
+
+def _html_link_targets(text: str) -> Iterator[tuple[int, str]]:
+    for number, line in _prose_lines(text):
+        for match in _HTML_LINK_ATTRIBUTE.finditer(_INLINE_CODE.sub("", line)):
+            yield number, match.group(1)
+
+
 def test_readme_links_work_on_the_package_index() -> None:
     """README.md is the PyPI project description, where a relative link resolves against pypi.org."""
+    text = _read(ROOT / "README.md")
     relative = [
         f"line {number}: {target}"
-        for number, target in _link_targets(_read(ROOT / "README.md"))
+        for number, target in [*_link_targets(text), *_html_link_targets(text)]
         if not _is_external(target) and not target.startswith("#")
     ]
     assert not relative, "link the repository URL instead:\n  " + "\n  ".join(relative)
     assert _pyproject()["project"]["readme"] == "README.md"
+
+
+def test_readme_images_are_pinned_to_one_commit_holding_the_current_assets() -> None:
+    """Every README image of this repository loads from one full SHA, never from a moving branch.
+
+    Where the pinned commit is in the local history (a full clone, not CI's depth-1 checkout),
+    each pinned file must also be byte-identical to the working tree, so regenerating an asset
+    fails here until the README is re-pinned to a commit on `main` that holds it.
+    """
+    images = [
+        target
+        for _, target in _html_link_targets(_read(ROOT / "README.md"))
+        if "raw.githubusercontent.com/aisecnomad/" in target
+    ]
+    assert images, "the README should show the banner, the architecture diagram and the charts"
+    pins = [_PINNED_ASSET.match(target) for target in images]
+    assert all(pins), "pin README images to a 40-character commit SHA: " + repr(
+        [target for target, pin in zip(images, pins, strict=True) if not pin]
+    )
+    assert len({pin.group(1) for pin in pins if pin}) == 1, "pin every README image to the same commit"
+    for pin in filter(None, pins):
+        assert (ROOT / pin.group(2)).is_file(), f"{pin.group(2)} is not in the repository"
+        pinned = subprocess.run(
+            ["git", "-C", str(ROOT), "cat-file", "blob", f"{pin.group(1)}:{pin.group(2)}"],
+            capture_output=True,
+            check=False,
+        )
+        if pinned.returncode == 0:
+            assert pinned.stdout == (ROOT / pin.group(2)).read_bytes(), (
+                f"{pin.group(2)} changed after {pin.group(1)[:12]}; re-pin the README images"
+            )
 
 
 # Root documents the site includes as snippets (CHANGELOG.md, RELEASE_NOTES.md, SECURITY.md,
@@ -677,7 +723,6 @@ _DATED_INTERPRETER_SPANS = {
         "docs/reference/product-guide.md",
         "3.11–3.13",
     ): "the published PyPI 0.1.2 release, moved with its versioned install instructions",
-    ("README.md", "3.11–3.13"): "the published PyPI 0.1.2 release, whose metadata excludes Python 3.14",
     ("docs/getting-started/install.md", "3.11–3.13"): "the published PyPI 0.1.2 release, not current source",
 }
 # The lock headers state the interpreters each lock is validated on; docs/production.md asks for
@@ -2125,9 +2170,10 @@ _DEMO_SURFACES = re.compile(r"\b(cloud|code|endpoint|gateway|identity|lowcode|ne
 _DEMO_ROW = re.compile(r"^ ([A-Z]+) +(\d+)  (\S+) +(\S+) +(\S+) +(.+?)\s*$", re.MULTILINE)
 
 
-def test_readme_demo_output_matches_the_offline_demo(index) -> None:
-    """The README's abridged example is the current result of the bundled offline demo."""
-    readme = _read(ROOT / "docs/reference/product-guide.md")
+@pytest.mark.parametrize("document", ["README.md", "docs/reference/product-guide.md"])
+def test_readme_demo_output_matches_the_offline_demo(index, document: str) -> None:
+    """Each abridged copy of the demo output is the current result of the bundled offline demo."""
+    readme = _read(ROOT / document)
     start = readme.index(_DEMO_COMMAND)
     block = readme[start : readme.index("```", start)]
     max_rows = int(block[len(_DEMO_COMMAND) :].split(None, 1)[0])
