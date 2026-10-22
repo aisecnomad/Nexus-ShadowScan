@@ -288,3 +288,38 @@ def test_a_scalar_subclass_keeps_the_value_a_report_shows() -> None:
     assert [type(cleaned[key]) for key in ("count", "ratio", "missing", "precise")] == [int, float, str, str]
     # An exact datetime is left as it is, not rebuilt on every pass.
     assert redaction._plain(exact) is exact
+
+
+def test_a_scalar_subclass_cannot_pass_as_exact_through_its_metaclass() -> None:
+    # Issue #264 review: exact scalar types are matched by identity, as the surrender
+    # copy matches them, so a metaclass that hashes and compares equal to datetime cannot
+    # keep a subclass, and its own __str__, out of the rebuild and the text redaction.
+    import datetime
+
+    secret = "sk-proj-" + "Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z" * 2
+
+    class Imitating(type):
+        def __eq__(cls, other: object) -> bool:
+            return other is datetime.datetime or type.__eq__(cls, other)
+
+        def __hash__(cls) -> int:
+            return hash(datetime.datetime)
+
+    class Stamp(datetime.datetime, metaclass=Imitating):
+        def __str__(self) -> str:
+            return f"Authorization: Bearer {secret}"
+
+    cleaned = sanitize({"at": Stamp(2026, 1, 1)})
+    assert type(cleaned["at"]) is str
+    assert secret not in json.dumps(cleaned, default=str)
+
+
+def test_a_scalar_subclass_whose_str_raises_is_named_by_its_type() -> None:
+    import decimal
+
+    class Broken(decimal.Decimal):
+        def __str__(self) -> str:
+            raise RuntimeError("no text")
+
+    cleaned = sanitize({"amount": Broken("1.5")})
+    assert cleaned["amount"] == f"<{Broken.__qualname__}>"

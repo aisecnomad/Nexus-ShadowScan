@@ -858,6 +858,15 @@ class BaseConnector(ABC):
     def _load_offline_file(self, source: Path, budget: OfflineInputBudget) -> Iterator[dict[str, Any]]:
         return _offline.load_offline_file(self, source, budget)
 
+    def _record_export_diagnostic(self, message: str) -> None:
+        """Record an export parse diagnostic under the category the shared loader gives it.
+
+        For a connector that parses an export itself: a captured provider error is
+        ``upstream-error``, an uncollected next page ``unscanned-input``, a limit
+        ``analysis-limit`` and any other rejection ``unparsed-input``.
+        """
+        self.ctx.error(f"{self.name}: {message}", reason=_offline.parse_diagnostic_reason(message))
+
     @classmethod
     def _bounded_diagnostics(cls, report: Callable[[str], None]) -> Callable[[str], None]:
         return _offline.bounded_diagnostics(report, cls._MAX_INVALID_LINE_ERRORS)

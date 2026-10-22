@@ -249,7 +249,7 @@ its oversize, undecodable, link, non-regular, Git LFS pointer, parser and
 analysis-limit gaps and for its credential limit (`more than 5 credentials
 matched` is `analysis-limit`), `endpoint.ebpf` for records it could not
 read (`unparsed-input`) or cut at its list limit (`analysis-limit`), and the
-offline-input funnel every connector's offline mode reads through (see
+shared offline readers and export loader most connectors' offline modes use (see
 [production](production.md#migration-notes-and-change-history)); one
 recorded without a reason is classified from its text, the connectors' own
 message vocabulary, with the path the diagnostic names left out where the
@@ -258,8 +258,8 @@ called `src/http_client.py` or a directory called `deadline` does not choose
 the category. Each gap in `stats[].coverage.details` keeps the `reason` it was
 recorded with, and when the coverage budget leaves the scan incomplete each
 partial gap is counted under it. The categories are `oversize-file` (a file
-over `max_file_size` or `max_notebook_size`, or an offline input over
-`max_input_file_bytes`), `unresolved-link` (a symbolic
+over `max_file_size` or `max_notebook_size`, or an offline input skipped whole
+for `max_input_file_bytes`), `unresolved-link` (a symbolic
 link, gitlink or submodule not followed), `unparsed-input` (content that did
 not parse or could not be decoded, or an input defect, including a structured
 document whose excerpts were withheld because it did not parse; a manifest,

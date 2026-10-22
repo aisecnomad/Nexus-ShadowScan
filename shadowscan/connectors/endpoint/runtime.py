@@ -100,9 +100,11 @@ _TOOL_REF = re.compile(r"\b(?:use|call|invoke)\s+the\s+[`\"']?([A-Za-z][\w.-]{0,
 # Connect name, global or behind a location (``aiplatform-prodpsc.p.googleapis.com``,
 # ``us-central1-aiplatform-restricted.p.googleapis.com``), and its documented regional
 # service endpoint (``aiplatform.us-central1.rep.googleapis.com``, #264). A Private
-# Service Connect name may lead only with a location (a region, ``us``, ``eu`` or
-# ``global``), so ``not-aiplatform-x`` names no service. The location, service and
-# endpoint together must fit one DNS label; a cloud-owned address alone is no proof.
+# Service Connect name may lead only with a location-shaped label (hyphen-joined words
+# ending in a digit, as regions are, or ``us``, ``eu`` or ``global``), so
+# ``not-aiplatform-x`` names no service; the shape is checked rather than a region list,
+# so new regions are recognized. The location, service and endpoint together must fit
+# one DNS label; a cloud-owned address alone is no proof.
 # Other googleapis.com hosts (fonts, storage,
 # www, ...) are not AI services, and Google front-end addresses carry many of them,
 # so a flow's destination names must not match them. A Google host is matched from

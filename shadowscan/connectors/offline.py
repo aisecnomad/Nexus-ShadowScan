@@ -193,29 +193,35 @@ def os_error_reason(exc: OSError, path: Path) -> str:
     or anywhere under ``O_NOFOLLOW_ANY``) or, on Linux, ``ENOTDIR`` at a linked
     directory: a link not followed (``unresolved-link``). A permission error is
     ``access-denied``; anything else, such as a file removed after the walk
-    listed it, is ``unscanned-input``. Links are looked for without following
-    any, and only to choose the category.
+    listed it, is ``unscanned-input``. Links are looked for only to choose the
+    category, root first (``path_has_link``).
     """
     if exc.errno in {errno.EACCES, errno.EPERM}:
         return "access-denied"
-    if exc.errno == errno.ELOOP:
+    if exc.errno == errno.ELOOP or (exc.errno == errno.ENOTDIR and path_has_link(path)):
         return "unresolved-link"
-    if exc.errno == errno.ENOTDIR:
-        target = path.expanduser().absolute()
-        try:
-            linked = any(part.is_symlink() for part in (target, *target.parents))
-        except OSError:
-            linked = False
-        if linked:
-            return "unresolved-link"
     return "unscanned-input"
+
+
+def path_has_link(path: Path) -> bool:
+    """Whether a component of ``path`` is a symbolic link, examined root first.
+
+    Each component is examined without following it, and the first link found
+    ends the search before anything beneath it is resolved; a component that
+    cannot be examined ends it too, as no link found.
+    """
+    target = path.expanduser().absolute()
+    try:
+        return any(part.is_symlink() for part in (*reversed(target.parents), target))
+    except OSError:
+        return False
 
 
 def _root_mode(conn: BaseConnector, root: Path) -> int | None:
     """The input root's mode, or None once the reason it cannot be read is recorded."""
     message = f"{conn.name}: offline input is missing, inaccessible, or a symlink"
     try:
-        if any(part.is_symlink() for part in (root, *root.parents)):
+        if any(part.is_symlink() for part in (*reversed(root.parents), root)):
             raise ValueError("symlink input is not allowed")
         return root.stat().st_mode
     except ValueError:
@@ -245,8 +251,9 @@ def offline_files(conn: BaseConnector, path: str, suffixes: AbstractSet[str] | N
     unsupported: list[str] = []
     unsupported_count = 0
 
-    def failed(_: OSError) -> None:
-        ctx.error(f"{name}: offline directory could not be read", reason="access-denied")
+    def failed(exc: OSError) -> None:
+        where = Path(exc.filename) if isinstance(exc.filename, str) else root
+        ctx.error(f"{name}: offline directory could not be read", reason=os_error_reason(exc, where))
 
     for directory, dirs, files in os.walk(root, followlinks=False, onerror=failed):
         count += 1 + len(dirs) + len(files)
@@ -265,8 +272,8 @@ def offline_files(conn: BaseConnector, path: str, suffixes: AbstractSet[str] | N
             item = base / entry
             try:
                 mode = item.lstat().st_mode
-            except OSError:
-                failed(OSError())
+            except OSError as exc:
+                failed(exc)
                 continue
             if not stat.S_ISREG(mode):
                 ctx.warn(
@@ -343,10 +350,10 @@ def read_offline_bytes(
                 conn._MAX_OFFLINE_TOTAL_BYTES - used,
             )
 
-            def oversized() -> None:
+            def oversized(size: int) -> None:
                 # A file over the per-file cap is an oversize file; one the spent
                 # aggregate budget turns away is a limit the scan hit.
-                file_limited = conn.max_input_file_bytes <= remaining
+                file_limited = size > min(conn.max_input_file_bytes, conn._MAX_OFFLINE_FILE_BYTES)
                 reason = "oversize-file" if file_limited else "analysis-limit"
                 if budget is None:
                     raise _ByteLimitError(reason)
@@ -356,7 +363,7 @@ def read_offline_bytes(
                 )
 
             if before.st_size > limit:
-                oversized()
+                oversized(before.st_size)
                 return None
             raw = stream.read(limit + 1)
             modified = changed(before, stream.fileno())
@@ -365,7 +372,7 @@ def read_offline_bytes(
         else:
             budget.consume(len(raw))
         if len(raw) > limit:
-            oversized()
+            oversized(len(raw))
             return None
         if modified:
             raise ValueError("offline input changed while being read")
@@ -482,6 +489,7 @@ def iter_bounded_lines(
 
 # -------------------------------------------------------------------- parsing
 YAML_SAFETY_LIMIT = "YAML safety limit exceeded"
+FURTHER_DIAGNOSTICS_NOT_LISTED = "further invalid records in this export are not listed individually"
 _NO_RECORDS_BEFORE = "no records were read before"
 PROVIDER_ERROR_RESPONSE = "provider error response in"
 UNCOLLECTED_NEXT_PAGE = "offline export contains an uncollected next page"
@@ -527,9 +535,7 @@ def load_offline_file(
 ) -> Iterator[dict[str, Any]]:
     """Parse one export by its suffix: JSONL, CSV, YAML, or JSON with a JSONL fallback."""
     suffix = source.suffix.lower()
-    report = conn._bounded_diagnostics(
-        lambda message: conn.ctx.error(f"{conn.name}: {message}", reason=parse_diagnostic_reason(message))
-    )
+    report = _categorized_report(conn)
 
     if suffix in {".jsonl", ".ndjson"}:
         saw_record = False
@@ -581,6 +587,28 @@ def load_offline_file(
         yield from conn._unwrap(data, report)
 
 
+def _categorized_report(conn: BaseConnector) -> Report:
+    """The parsers' bounded reporter, each diagnostic under its own category.
+
+    The summary that replaces the diagnostics past the limit is counted under
+    the category of the one that reached it, not as an input defect whatever
+    it stands for.
+    """
+    reached: list[str] = []
+
+    def record(message: str) -> None:
+        source = reached[0] if message == FURTHER_DIAGNOSTICS_NOT_LISTED and reached else message
+        conn.ctx.error(f"{conn.name}: {message}", reason=parse_diagnostic_reason(source))
+
+    bounded = conn._bounded_diagnostics(record)
+
+    def report(message: str) -> None:
+        reached[:] = [message]
+        bounded(message)
+
+    return report
+
+
 def bounded_diagnostics(report: Report, limit: int) -> Report:
     """Bound diagnostics per export while continuing to inspect later records."""
     errors = 0
@@ -591,7 +619,7 @@ def bounded_diagnostics(report: Report, limit: int) -> Report:
         if errors <= limit:
             report(message)
         elif errors == limit + 1:
-            report("further invalid records in this export are not listed individually")
+            report(FURTHER_DIAGNOSTICS_NOT_LISTED)
 
     return limited
 

@@ -1353,3 +1353,35 @@ def test_private_service_connect_and_regional_endpoints_are_ai_hosts(run_connect
         # A Private Service Connect name may lead with its location (#264 review).
         ("192.168.5.32", "provider.google-vertex-ai"),
     }
+
+
+@pytest.mark.parametrize(
+    ("host", "signature"),
+    [
+        ("us-central1-aiplatform-restricted.p.googleapis.com", "provider.google-vertex-ai"),
+        ("us-central1-generativelanguage-psc1.p.googleapis.com", "provider.google-gemini"),
+        ("global-generativelanguage-psc1.p.googleapis.com", "provider.google-gemini"),
+        ("northamerica-northeast1-dialogflow-x.p.googleapis.com", "cloud.gcp-vertex-agent-engine"),
+        ("us-discoveryengine-genai1.p.googleapis.com", "cloud.gcp-vertex-agent-engine"),
+        ("eu-discoveryengine-genai1.p.googleapis.com", "cloud.gcp-vertex-agent-engine"),
+        ("generativelanguage-psc1.p.googleapis.com", "provider.google-gemini"),
+        ("dialogflow-x.p.googleapis.com", "cloud.gcp-vertex-agent-engine"),
+    ],
+)
+def test_location_led_private_service_connect_names_match_their_signature(index, host, signature):
+    # Issue #264 review: each of the four Private Service Connect domain signals accepts a
+    # location-shaped prefix, wherever signature hosts are matched.
+    assert [match.signature.id for match in index.match_domain(host)] == [signature]
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "my-proxy-generativelanguage-x.p.googleapis.com",
+        "not-dialogflow-x.p.googleapis.com",
+        "us-central1-storage-x.p.googleapis.com",
+        "asia-discoveryengine-x.p.googleapis.com",
+    ],
+)
+def test_private_service_connect_signals_reject_other_prefixes_and_services(index, host):
+    assert index.match_domain(host) == []

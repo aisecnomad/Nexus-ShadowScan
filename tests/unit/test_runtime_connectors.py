@@ -152,6 +152,31 @@ def test_mcp_benign_documentation_url_is_not_tool_poisoning() -> None:
     assert not [item for item in by_name["control"].evidence if item.signal.startswith("instruction:")]
 
 
+def test_mcp_description_naming_a_location_led_google_ai_endpoint_is_tool_poisoning() -> None:
+    # Issue #264 review: the eBPF host rule also serves the MCP tool-description check, so a
+    # description that routes calls to a Google AI Private Service Connect name led by a
+    # location is tagged like any other model provider host; another service's is not.
+    records = [
+        {
+            "server": "relay",
+            "auth": "oauth",
+            "tools": [
+                {
+                    "name": "relay",
+                    "description": "Model endpoint: us-central1-aiplatform-restricted.p.googleapis.com",
+                },
+                {
+                    "name": "store",
+                    "description": "Bucket endpoint: us-central1-storage-restricted.p.googleapis.com",
+                },
+            ],
+        }
+    ]
+    by_name = {f.metadata["tool"]: f for f in MCPInventoryConnector(ConnectorContext()).analyze(records)}
+    assert "tool-poisoning" in by_name["relay"].tags
+    assert "tool-poisoning" not in by_name["store"].tags
+
+
 def test_mcp_description_review_fixture_keeps_audit_controls_out_of_the_base_tag() -> None:
     findings, ctx = _run_offline(MCPInventoryConnector, {}, FIXTURES / "mcp" / "description_review.json")
     assert not ctx.stats.incomplete
@@ -2817,6 +2842,13 @@ def test_ebpf_google_ai_private_service_connect_destination(service):
     assert connector.ctx.stats.warnings == []
 
 
+def test_ebpf_location_led_name_of_a_full_label_is_an_ai_destination():
+    connector = _ebpf_connector()
+    endpoint = "northamerica-northeast1-aiplatform-" + "x" * 28 + ".p.googleapis.com"  # a 63-character label
+    [finding] = connector.analyze([{"process_name": "python", "destination": endpoint, "port": 443}])
+    assert "llm-egress" in finding.tags
+
+
 @pytest.mark.parametrize("location", ["us-central1", "northamerica-northeast1", "us", "eu", "global"])
 @pytest.mark.parametrize("service", sorted(GCP_AI_SERVICES))
 def test_ebpf_google_ai_private_service_connect_name_behind_a_location(service, location):
@@ -2842,6 +2874,8 @@ def test_ebpf_google_ai_private_service_connect_name_behind_a_location(service, 
         "us-central1-storage-restricted.p.googleapis.com",
         "my-proxy-aiplatform-x.p.googleapis.com",
         "us-central1-" + "a" * 50 + "-aiplatform-x.p.googleapis.com",
+        # A location-led name must still fit one DNS label: this label is 64 characters.
+        "northamerica-northeast1-aiplatform-" + "x" * 29 + ".p.googleapis.com",
     ],
 )
 def test_ebpf_private_service_connect_keeps_service_and_label_boundaries(endpoint):

@@ -7,6 +7,7 @@ limits, and read a normal file identically.
 
 from __future__ import annotations
 
+import errno
 import gc
 import os
 import stat
@@ -449,3 +450,101 @@ def test_a_missing_input_root_is_not_reported_as_a_link(tmp_path, index):
     probe = _probe(index)
     assert list(probe._offline_files(str(link))) == []
     assert probe.ctx.stats.incomplete_reasons == {"unresolved-link": 1}
+
+
+@pytest.mark.parametrize(
+    ("number", "expected"),
+    [
+        (errno.EACCES, "access-denied"),
+        (errno.EPERM, "access-denied"),
+        (errno.ELOOP, "unresolved-link"),
+        (errno.ENOENT, "unscanned-input"),
+        (errno.EIO, "unscanned-input"),
+        (errno.ENOTDIR, "unscanned-input"),
+    ],
+)
+def test_os_error_reason_maps_errno_to_a_category(tmp_path, number, expected):
+    from shadowscan.connectors.offline import os_error_reason
+
+    assert os_error_reason(OSError(number, "x"), tmp_path / "plain" / "f.json") == expected
+
+
+def test_os_error_reason_finds_a_linked_directory_root_first(tmp_path, monkeypatch):
+    # ENOTDIR at a linked directory is a link not followed; the search runs root first, so
+    # nothing beneath the link is resolved (an lstat through it could fail and hide it).
+    from shadowscan.connectors.offline import os_error_reason
+
+    real = tmp_path / "real"
+    real.mkdir()
+    linked = tmp_path / "linked"
+    linked.symlink_to(real, target_is_directory=True)
+    target = linked / "f.json"
+    examined: list[Path] = []
+    original = Path.is_symlink
+
+    def is_symlink(self: Path) -> bool:
+        examined.append(self)
+        if self == target:
+            raise PermissionError(errno.EACCES, "beneath the link")
+        return original(self)
+
+    monkeypatch.setattr(Path, "is_symlink", is_symlink)
+    assert os_error_reason(OSError(errno.ENOTDIR, "x"), target) == "unresolved-link"
+    assert target not in examined
+
+
+def test_a_file_over_the_per_file_cap_is_oversize_even_when_the_budget_is_short(tmp_path, index):
+    # The file's own size against the per-file cap chooses the category, not which limit
+    # is smaller, so the whole-file and line readers agree however much budget is left.
+    small = tmp_path / "small.jsonl"
+    large = tmp_path / "large.jsonl"
+    small.write_bytes(DATA)
+    large.write_bytes(DATA * 4)
+    cap = len(DATA) * 2
+    probe = _probe(index, max_input_file_bytes=cap, max_input_bytes=len(DATA) + cap - 1)
+    budget = probe._offline_budget()
+    assert probe._read_offline_bytes(small, budget) == DATA
+    assert probe._read_offline_bytes(large, budget) is None
+    assert probe.ctx.stats.warnings == [
+        "test.reader: max_input_file_bytes reached; oversized offline input was skipped"
+    ]
+    assert probe.ctx.stats.incomplete_reasons == {"oversize-file": 1}
+
+
+def test_the_summary_of_unlisted_diagnostics_keeps_their_category(tmp_path, index):
+    # Past the per-export diagnostic limit one summary line stands for the rest; it is
+    # counted under the category of the diagnostic that reached the limit.
+    source = tmp_path / "pages.jsonl"
+    source.write_text('{"error": {"code": 503}}\n' * (BaseConnector._MAX_INVALID_LINE_ERRORS + 5))
+    probe = _probe(index)
+
+    _loaded(probe, source)
+
+    assert (
+        probe.ctx.stats.errors[-1]
+        == "test.reader: further invalid records in this export are not listed individually"
+    )
+    assert probe.ctx.stats.incomplete_reasons == {
+        "upstream-error": BaseConnector._MAX_INVALID_LINE_ERRORS + 1
+    }
+
+
+def test_a_file_that_vanishes_during_the_walk_is_unscanned_not_denied(tmp_path, index, monkeypatch):
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    (exports / "kept.jsonl").write_bytes(DATA)
+    gone = exports / "gone.jsonl"
+    gone.write_bytes(DATA)
+    original = Path.lstat
+
+    def lstat(self: Path, *args, **kwargs):
+        if self == gone:
+            raise FileNotFoundError(errno.ENOENT, "removed", str(self))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    probe = _probe(index)
+
+    assert [path.name for path in probe._offline_files(str(exports))] == ["kept.jsonl"]
+    assert probe.ctx.stats.errors == ["test.reader: offline directory could not be read"]
+    assert probe.ctx.stats.incomplete_reasons == {"unscanned-input": 1}

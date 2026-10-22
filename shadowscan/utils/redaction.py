@@ -140,8 +140,10 @@ _PLAIN_TYPES = (str, Mapping, list, tuple, *_SCALARS)
 # path's detached copy shares without running subclass code (#264): a subclass of one
 # (an IntEnum, a numpy scalar, a datetime subclass) is rebuilt as its standard type.
 # ``datetime`` is a ``date`` to isinstance, so it is listed too, or every exact
-# datetime would be rebuilt on every pass.
-_SCALAR_TYPES = frozenset((*_SCALARS, datetime.datetime))
+# datetime would be rebuilt on every pass. They are matched by identity, as
+# ``models._DETACHED_LEAF_TYPES`` is: a set of types tests membership with the
+# metaclass's ``__hash__`` and ``__eq__``, which a subclass's own metaclass can imitate.
+_SCALAR_TYPE_IDS = frozenset(id(kind) for kind in (*_SCALARS, datetime.datetime))
 
 
 class _Copy(dict[str, Any]):
@@ -230,7 +232,7 @@ def _plain(item: Any) -> Any:
     reads like any other text.
     """
     if item is None or isinstance(item, _PLAIN_TYPES):
-        if isinstance(item, _SCALARS) and type(item) not in _SCALAR_TYPES:
+        if isinstance(item, _SCALARS) and id(type(item)) not in _SCALAR_TYPE_IDS:
             return _exact_scalar(item)
         return item
     if isinstance(item, (bytes, bytearray, memoryview)):
