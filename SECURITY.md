@@ -596,7 +596,7 @@ coverage, even when a response includes an empty collection field.
   credential, but the list or mapping under a plural `secrets` or `tokens`
   key keeps its values unless each one has a recognized shape or a sensitive
   name of its own: `secrets: [prod-db-password]` lists the names a secret
-  store holds, which the Secrets Manager, Key Vault, Secret Manager and OCI
+  store holds, which the AWS Secrets Manager, Google Secret Manager and OCI
   Vault collectors read and report as inventory, and `tokens: 12` is a count.
   A raw credential placed under one of those keys without a recognized shape
   therefore remains (the structural pass still removes it wherever a
@@ -636,8 +636,8 @@ and [connector permissions](https://github.com/aisecnomad/Nexus-ShadowScan/blob/
 
 ## Supported versions
 
-The latest published release is `0.1.2`; `0.1.3` is planned for TestPyPI and
-then PyPI on 2026-11-20. Both are alpha versions. Fixes land on `main`; there is no
+The latest published release is `0.1.2`; `0.1.3` is prepared for TestPyPI and
+then PyPI. Both are alpha versions. Fixes land on `main`; there is no
 released-version backport commitment. Report the installed release version
 and artifact identity, or the full commit SHA for a source installation.
 Publication does not establish production acceptance for your environment.

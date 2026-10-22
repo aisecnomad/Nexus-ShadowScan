@@ -17,6 +17,12 @@ explain operator migrations. Earlier per-change entries are preserved in the
   their diagnostics under explicit incomplete reasons, with a ratchet so
   reason-less diagnostics only ever decrease.
 
+- The README, which is the PyPI description, reads correctly on the frozen
+  release page: it names no planned date or latest version, states the Python
+  and platform requirements, loads its images from a pinned commit, and opens
+  with install, a first scan and the offline demo's output. Several claims were
+  corrected, and the package summary, keywords and classifiers were tightened.
+
 - A blocked container scan names each blocking vulnerability (package, installed and
   fixed version) as a check annotation, so the pull request page shows why without the job log.
 
