@@ -543,6 +543,22 @@ class _Stamp(datetime.datetime):
     pass
 
 
+class _Overriding(int):
+    def __int__(self) -> int:
+        return 999
+
+
+class _NotATime(datetime.datetime):
+    """A stand-in for pandas NaT: a datetime subclass whose fields build no datetime."""
+
+    @property
+    def year(self) -> float:  # type: ignore[override]
+        return float("nan")
+
+    def __str__(self) -> str:
+        return "NaT"
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
@@ -553,8 +569,10 @@ class _Stamp(datetime.datetime):
             _Stamp(2026, 10, 20, 12, 30, tzinfo=datetime.UTC),
             datetime.datetime(2026, 10, 20, 12, 30, tzinfo=datetime.UTC),
         ),
+        (_Overriding(5), 5),
+        (_NotATime(2026, 1, 1), "NaT"),
     ],
-    ids=["int-enum", "int-subclass", "float-subclass", "datetime-subclass"],
+    ids=["int-enum", "int-subclass", "float-subclass", "datetime-subclass", "int-override", "not-a-time"],
 )
 def test_surrender_keeps_a_scalar_subclass_as_its_standard_type(value, expected):
     # Issue #264: a scalar subclass (an IntEnum, a numpy scalar, a datetime subclass)

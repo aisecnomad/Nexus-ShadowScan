@@ -1354,8 +1354,8 @@ requires a literal home anchor or store-specific layout; see the
 [endpoint guide](connectors/endpoint.md). `endpoint.ebpf` reads native
 Tetragon, Falco, Tracee and Hubble event shapes as well as flat records;
 native sensor hostnames are not destinations, wrapped Hubble enrichment is
-retained, and observed Google AI Private Service Connect names are recognized
-(see [eBPF event formats](connectors/endpoint.md#ebpf-event-formats)); a
+retained, and observed Google AI Private Service Connect names and regional
+service endpoints are recognized (see [eBPF event formats](connectors/endpoint.md#ebpf-event-formats)); a
 record matching none of them is reported, not silently dropped, and marks the
 scan incomplete, as does an event with a field of the wrong type or a list
 past 100 entries. They do not perform local host

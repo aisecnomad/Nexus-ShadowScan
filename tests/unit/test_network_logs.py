@@ -1342,10 +1342,46 @@ def test_private_service_connect_and_regional_endpoints_are_ai_hosts(run_connect
         '2025-09-29T09:00:01Z,192.168.5.30,generativelanguage.us-central1.rep.googleapis.com,"10.10.0.6"\n'
         '2025-09-29T09:00:02Z,192.168.5.31,storage-prodpsc.p.googleapis.com,"10.10.0.7"\n'
         '2025-09-29T09:00:03Z,192.168.5.31,not-aiplatform-prodpsc.p.googleapis.com,"10.10.0.8"\n'
+        '2025-09-29T09:00:04Z,192.168.5.32,us-central1-aiplatform-restricted.p.googleapis.com,"10.10.0.9"\n'
+        '2025-09-29T09:00:05Z,192.168.5.31,us-central1-storage-restricted.p.googleapis.com,"10.10.0.10"\n'
     )
     found, stats = scan(run_connector, log)
     assert not stats.errors and not stats.incomplete
     assert set(found) == {
         ("192.168.5.30", "provider.google-vertex-ai"),
         ("192.168.5.30", "provider.google-gemini"),
+        # A Private Service Connect name may lead with its location (#264 review).
+        ("192.168.5.32", "provider.google-vertex-ai"),
     }
+
+
+@pytest.mark.parametrize(
+    ("host", "signature"),
+    [
+        ("us-central1-aiplatform-restricted.p.googleapis.com", "provider.google-vertex-ai"),
+        ("us-central1-generativelanguage-psc1.p.googleapis.com", "provider.google-gemini"),
+        ("global-generativelanguage-psc1.p.googleapis.com", "provider.google-gemini"),
+        ("northamerica-northeast1-dialogflow-x.p.googleapis.com", "cloud.gcp-vertex-agent-engine"),
+        ("us-discoveryengine-genai1.p.googleapis.com", "cloud.gcp-vertex-agent-engine"),
+        ("eu-discoveryengine-genai1.p.googleapis.com", "cloud.gcp-vertex-agent-engine"),
+        ("generativelanguage-psc1.p.googleapis.com", "provider.google-gemini"),
+        ("dialogflow-x.p.googleapis.com", "cloud.gcp-vertex-agent-engine"),
+    ],
+)
+def test_location_led_private_service_connect_names_match_their_signature(index, host, signature):
+    # Issue #264 review: each of the four Private Service Connect domain signals accepts a
+    # location-shaped prefix, wherever signature hosts are matched.
+    assert [match.signature.id for match in index.match_domain(host)] == [signature]
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "my-proxy-generativelanguage-x.p.googleapis.com",
+        "not-dialogflow-x.p.googleapis.com",
+        "us-central1-storage-x.p.googleapis.com",
+        "asia-discoveryengine-x.p.googleapis.com",
+    ],
+)
+def test_private_service_connect_signals_reject_other_prefixes_and_services(index, host):
+    assert index.match_domain(host) == []

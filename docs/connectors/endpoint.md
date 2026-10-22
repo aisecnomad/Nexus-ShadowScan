@@ -248,8 +248,14 @@ every Google API the bundled signatures name: `aiplatform`,
 with regional prefixes (`us-central1-aiplatform`, `eu-documentai`) and as the
 mutual-TLS endpoints Google client libraries use with a client certificate
 (`aiplatform.mtls.googleapis.com`), plus the service-specific Private Service
-Connect form (`aiplatform-prodpsc.p.googleapis.com`). The known service and
-endpoint name must together fit a DNS label. This matches an observed service
+Connect form, global or led by a location (`aiplatform-prodpsc.p.googleapis.com`,
+`us-central1-aiplatform-restricted.p.googleapis.com`), and the regional service
+endpoint (`aiplatform.us.rep.googleapis.com`). The location, known service and
+endpoint name must together fit a DNS label. A Private Service Connect name may
+lead only with a location-shaped label: hyphen-joined words ending in a digit,
+as Google regions are (`us-central1`), or `us`, `eu` or `global`. The rule
+checks the shape, not a list of regions, so a new region is recognized without
+a release. This matches an observed service
 name; it does not establish private routing or infer an AI service from a
 shared address. See Google's [endpoint DNS format](https://docs.cloud.google.com/vpc/docs/configure-private-service-connect-apis#use_an_endpoint).
 Other `googleapis.com` names, such as

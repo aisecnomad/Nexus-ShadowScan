@@ -139,7 +139,11 @@ _PLAIN_TYPES = (str, Mapping, list, tuple, *_SCALARS)
 # The exact scalar types a sanitize pass leaves, which are also what the surrender
 # path's detached copy shares without running subclass code (#264): a subclass of one
 # (an IntEnum, a numpy scalar, a datetime subclass) is rebuilt as its standard type.
-_SCALAR_TYPES = frozenset(_SCALARS)
+# ``datetime`` is a ``date`` to isinstance, so it is listed too, or every exact
+# datetime would be rebuilt on every pass. They are matched by identity, as
+# ``models._DETACHED_LEAF_TYPES`` is: a set of types tests membership with the
+# metaclass's ``__hash__`` and ``__eq__``, which a subclass's own metaclass can imitate.
+_SCALAR_TYPE_IDS = frozenset(id(kind) for kind in (*_SCALARS, datetime.datetime))
 
 
 class _Copy(dict[str, Any]):
@@ -228,7 +232,7 @@ def _plain(item: Any) -> Any:
     reads like any other text.
     """
     if item is None or isinstance(item, _PLAIN_TYPES):
-        if isinstance(item, _SCALARS) and type(item) not in _SCALAR_TYPES:
+        if isinstance(item, _SCALARS) and id(type(item)) not in _SCALAR_TYPE_IDS:
             return _exact_scalar(item)
         return item
     if isinstance(item, (bytes, bytearray, memoryview)):
@@ -249,13 +253,32 @@ def _exact_scalar(item: Any) -> Any:
     The supervisor's detached copy shares a leaf only at its exact type, so no
     subclass code runs on its thread; rebuilding here, on the worker, keeps the
     finding where the old copy omitted it at surrender (#264). ``bool`` cannot
-    be subclassed, and the rebuilt ``datetime`` and ``time`` keep their
-    ``tzinfo`` and ``fold`` as an exact instance does.
+    be subclassed. An ``int`` or ``float`` is read through the base type's own
+    slot, which returns the stored value a report shows and runs no override of
+    ``__int__`` or ``__float__``. Any other subclass is rebuilt from its fields
+    and kept only when it reads as the original does: one whose fields do not
+    build its base (pandas ``NaT``) or that carries more than its base keeps (a
+    nanosecond pandas ``Timestamp``) becomes its text, which is what a report
+    showed through ``default=str``. The rebuilt ``datetime`` and ``time`` keep
+    their ``tzinfo`` and ``fold`` as an exact instance does.
     """
     if isinstance(item, int):
-        return int(item)
+        return int.__int__(item)
     if isinstance(item, float):
-        return float(item)
+        return float.__float__(item)
+    try:
+        text = str(item)
+    except Exception:  # noqa: BLE001 - a subclass's own __str__ may raise anything
+        return f"<{type(item).__qualname__}>"
+    try:
+        rebuilt = _rebuilt_scalar(item)
+    except Exception:  # noqa: BLE001 - a subclass's fields may not build its base type
+        return text
+    return rebuilt if str(rebuilt) == text else text
+
+
+def _rebuilt_scalar(item: Any) -> Any:
+    """``item``, a date, time, timedelta, Decimal or UUID subclass, rebuilt from its fields."""
     if isinstance(item, datetime.datetime):
         return datetime.datetime(
             item.year, item.month, item.day, item.hour, item.minute, item.second,
