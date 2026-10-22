@@ -34,7 +34,7 @@ host/runtime inventories), network logs, and running processes.
 
 This guide describes the current source branch, including changes not yet
 published on PyPI. For the published alpha, see the
-[0.1.2 documentation](https://github.com/aisecnomad/Nexus-ShadowScan/blob/v0.1.2/README.md).
+[0.1.3 documentation](https://github.com/aisecnomad/Nexus-ShadowScan/blob/v0.1.3/README.md).
 Newer commands require a
 [reviewed source installation](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/getting-started/install.md#from-a-reviewed-revision-hash-locked).
 
@@ -141,8 +141,8 @@ pip install "NexusShadowScan[cloud]"         # adds AWS, GCP, Azure, and OCI SDK
 shadowscan --help
 ```
 
-> **PyPI 0.1.2 requirements:** Python 3.11–3.13. Current source supports
-> Python 3.11, 3.12, 3.13 or 3.14; Python 3.14 support is not in that release.
+> **PyPI 0.1.3 requirements:** Python 3.11, 3.12, 3.13 or 3.14 (on 3.12, use
+> 3.12.4 or later), the same interpreters as current source.
 >
 > The distribution is `NexusShadowScan`; the unrelated `shadowscan` package on
 > PyPI is not this project. Releases are uploaded through PyPI trusted publishing
@@ -764,13 +764,13 @@ for where the code, tests, docs, tooling and benchmarks live.
 
 ## Project status
 
-* **Release state.** Version `0.1.3` is an alpha pre-release prepared for TestPyPI
-  and then PyPI as `NexusShadowScan`. Until it appears on
-  [PyPI](https://pypi.org/project/NexusShadowScan/0.1.3/) and as the
-  [GitHub release](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.3),
-  the latest published release is 0.1.2 (tag `v0.1.2`); confirm publication and artifact
-  identity there before installing 0.1.3. The package classifier is `Development Status :: 3 - Alpha`.
-  Commits on `main` after a release tag are unreleased. Publication does not
+* **Release state.** Version `0.1.3` is published to PyPI as `NexusShadowScan`
+  and tagged `v0.1.3`, as an alpha release (the GitHub release is marked as a
+  pre-release; pip installs it by default). Confirm the artifact identity
+  on [PyPI](https://pypi.org/project/NexusShadowScan/0.1.3/) and the
+  [GitHub release](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.3)
+  before installing it. The package classifier is `Development Status :: 3 - Alpha`.
+  Commits on `main` after the tag are unreleased. Publication does not
   establish independent review or deployment acceptance.
 * **Single maintainer, AI-assisted development.** Apart from Dependabot updates, every commit was written
   by a single maintainer or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot, Google Antigravity, Perplexity, Meta AI, etc.). The logs under

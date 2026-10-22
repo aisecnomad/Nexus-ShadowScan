@@ -223,7 +223,7 @@ filesystem or network activity.
 
 ## Validation maturity and evidence status
 
-The unreleased attribution corrections resolve a bounded subset of Python
+The 0.1.3 attribution corrections resolve a bounded subset of Python
 re-exports. See the [code](connectors/code.md) guide and the
 [migration notes](production-migrations.md#unreleased-attribution-migration). Regression
 coverage for these cases does not change the field-evaluation or live-acceptance
@@ -236,7 +236,7 @@ do not raise a connector's live-acceptance or field-evaluation status.
 
 Connector availability is not production acceptance. This summary describes
 published evidence, not private tenant work or guarantees for a deployment.
-The release status was refreshed on 2026-10-09 against the published 0.1.2
+The release status was refreshed on 2026-10-22 against the published 0.1.3
 release; the field and tenant evidence remains subject to the limits below.
 Unreleased changes require a new final-revision review and acceptance evidence.
 
@@ -246,6 +246,7 @@ Unreleased changes require a new final-revision review and acceptance evidence.
 | `cloud.aws`, `saas.slack` | Offline replay, stubbed API/SDK tests, and a read-only canary runner for exact tenant scopes. | Canary-capable; no live tenant acceptance is recorded. |
 | Other built-in connectors | Per-connector unit, fixture, and mocked-provider coverage at varying depth; no connector-specific live acceptance receipts are published. | Regression-tested; live acceptance is unestablished. |
 | Cross-connector field accuracy | No fresh, independently sampled and human-double-labeled representative holdout is published. The bundled AI-labeled corpus does not satisfy this requirement. | Not field-evaluated. |
+| Published 0.1.3 | [Release, wheel and sdist evidence](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.3), plus an [approval of the release source tree by a co-author of that change](https://github.com/aisecnomad/Nexus-ShadowScan/pull/314#pullrequestreview-5613175518), which is not an independent approval under [GOVERNANCE.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/GOVERNANCE.md#release-process). | Published alpha; no independent human review of this release is recorded. This does not approve a later candidate or establish field accuracy. |
 | Published 0.1.2 | [Release and wheel evidence](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.2), plus a [non-author approval on the release source tree](https://github.com/aisecnomad/Nexus-ShadowScan/pull/160#pullrequestreview-5459628229). | Published alpha; this does not approve a later candidate or establish field accuracy. |
 
 Use these labels literally:

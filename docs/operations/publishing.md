@@ -273,8 +273,9 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
    - `docs/getting-started/install.md`: the published version, its Python
      range and the attestation `--repo` note.
    - `docs/connectors.md`: the release-status refresh date and the
-     "Published" row of the evidence table (release page and the non-author
-     approval of the release source tree).
+     "Published" row of the evidence table (release page and the approval of
+     the release source tree, named as independent only when its reviewer
+     is not an author or co-author of that change; see GOVERNANCE.md).
    - `docs/operations/openssf-best-practices.md`: the `version_tags` row and
      the `release_notes` evidence; `docs/operations/reviewer-packet.md`: the
      version string that must not be read as published.

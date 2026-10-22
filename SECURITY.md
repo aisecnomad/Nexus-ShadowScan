@@ -636,8 +636,8 @@ and [connector permissions](https://github.com/aisecnomad/Nexus-ShadowScan/blob/
 
 ## Supported versions
 
-The latest published release is `0.1.2`; `0.1.3` is prepared for TestPyPI and
-then PyPI. Both are alpha versions. Fixes land on `main`; there is no
+Version `0.1.3` is the latest published release, an alpha version. Fixes land
+on `main`; there is no
 released-version backport commitment. Report the installed release version
 and artifact identity, or the full commit SHA for a source installation.
 Publication does not establish production acceptance for your environment.

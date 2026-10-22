@@ -779,11 +779,6 @@ _CI_WORDS = re.compile(r"\b(?:CI|jobs?|runners?|matrix|workflows?|legs?|tests?|t
 # Spans that record an earlier interpreter set on purpose, and why.
 _DATED_INTERPRETER_SPANS = {
     ("docs/assurance-results.md", "3.11/3.12"): "the CI matrix when that dated result was recorded",
-    (
-        "docs/reference/product-guide.md",
-        "3.11–3.13",
-    ): "the published PyPI 0.1.2 release, moved with its versioned install instructions",
-    ("docs/getting-started/install.md", "3.11–3.13"): "the published PyPI 0.1.2 release, not current source",
 }
 # The lock headers state the interpreters each lock is validated on; docs/production.md asks for
 # that comment to be kept when a lock is regenerated.

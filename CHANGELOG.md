@@ -31,7 +31,7 @@ explain operator migrations. Earlier per-change entries are preserved in the
   their diagnostics under explicit incomplete reasons, with a ratchet so
   reason-less diagnostics only ever decrease.
 
-## 0.1.3 — 2026-11-20
+## 0.1.3 — 2026-10-22
 
 - The README, which is the PyPI description, reads correctly on the frozen
   release page: it names no planned date or latest version, states the Python

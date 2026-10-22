@@ -108,9 +108,9 @@ signature loading and source analysis, so its time is not a scan result.
 ## Install the pre-commit hook
 
 The source repository ships the `shadowscan-staged` hook in
-`.pre-commit-hooks.yaml`. Quick mode and this hook are unreleased; the published
-PyPI 0.1.2 package does not provide them. Select a reviewed full 40-character
-commit SHA containing the hook, then add this to the consumer repository's
+`.pre-commit-hooks.yaml`. Quick mode and this hook ship in 0.1.3 (tag `v0.1.3`,
+commit `aee3c9842aa2c45fe851d206485a82616d9909ce`). Pin a reviewed full
+40-character commit SHA containing the hook, then add this to the consumer repository's
 `.pre-commit-config.yaml`, replacing the placeholder:
 
 ```yaml
