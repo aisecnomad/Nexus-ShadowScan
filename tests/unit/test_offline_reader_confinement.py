@@ -80,6 +80,8 @@ def test_readers_refuse_symlinked_file(tmp_path, index):
     _assert_all_readers_refuse(probe, link, reason="could not be securely read")
 
     assert all("could not be read" in warning for warning in probe.ctx.stats.warnings)
+    # A link the confined open refuses (ELOOP) is a link not followed, in both readers.
+    assert probe.ctx.stats.incomplete_reasons == {"unresolved-link": 3}
     with pytest.raises(OSError):
         read_policy_text(link)
 
@@ -95,6 +97,7 @@ def test_readers_refuse_symlinked_directory_component(tmp_path, index):
     probe = _probe(index)
 
     _assert_all_readers_refuse(probe, through_link, reason="could not be securely read")
+    assert probe.ctx.stats.incomplete_reasons == {"unresolved-link": 3}
 
     with pytest.raises(OSError):
         read_policy_text(through_link)
@@ -154,8 +157,9 @@ def test_readers_refuse_directory(tmp_path, index):
 
     _assert_all_readers_refuse(probe, tmp_path, reason="offline input is not a regular file")
     # Issue #264: both readers count a special file in the file's place alike
-    # (the whole-file reader with and without a budget, then the line reader).
-    assert probe.ctx.stats.incomplete_reasons == {"unresolved-link": 3}
+    # (the whole-file reader with and without a budget, then the line reader), as
+    # unscanned input, the way code.filesystem counts a non-regular entry: it is no link.
+    assert probe.ctx.stats.incomplete_reasons == {"unscanned-input": 3}
 
 
 def test_readers_count_a_file_over_the_per_file_cap_as_oversize(tmp_path, index):
@@ -325,3 +329,123 @@ def test_open_confined_file_releases_descriptors_on_every_path(tmp_path, index):
     gc.collect()
 
     assert set(os.listdir("/proc/self/fd")) == before
+
+
+def test_readers_count_a_file_removed_after_the_walk_as_unscanned(tmp_path, index):
+    # A file that vanished between the walk and the open is neither a link nor a
+    # permission problem.
+    probe = _probe(index)
+    gone = tmp_path / "gone.jsonl"
+
+    assert probe._read_offline_bytes(gone, probe._offline_budget()) is None
+    assert _lines(probe, gone) == b""
+    assert probe.ctx.stats.incomplete_reasons == {"unscanned-input": 2}
+
+
+def test_readers_count_the_spent_aggregate_budget_as_an_analysis_limit(tmp_path, index):
+    # Only a file over the per-file cap is an oversize file; a small file the spent
+    # aggregate budget turns away is a limit the scan hit, in both readers and
+    # with or without a budget.
+    first = tmp_path / "first.jsonl"
+    second = tmp_path / "second.jsonl"
+    first.write_bytes(DATA)
+    second.write_bytes(DATA)
+    probe = _probe(index, max_input_bytes=len(DATA) + 1, max_input_file_bytes=1024)
+    budget = probe._offline_budget()
+    assert probe._read_offline_bytes(first, budget) == DATA
+    assert probe._read_offline_bytes(second, budget) is None
+    assert probe.ctx.stats.incomplete_reasons == {"analysis-limit": 1}
+
+    probe = _probe(index, max_input_bytes=len(DATA) + 1, max_input_file_bytes=1024)
+    assert probe._read_offline_bytes(first) == DATA
+    assert probe._read_offline_bytes(second) is None
+    assert probe.ctx.stats.errors == ["test.reader: offline input exceeds the byte limit"]
+    assert probe.ctx.stats.incomplete_reasons == {"analysis-limit": 1}
+
+    probe = _probe(index, max_input_file_bytes=len(DATA) - 1, max_input_bytes=1024)
+    assert probe._read_offline_bytes(first) is None
+    assert probe.ctx.stats.incomplete_reasons == {"oversize-file": 1}
+
+
+def _loaded(probe: _Probe, source: Path) -> list[dict]:
+    return list(probe._load_offline_file(source, probe._offline_budget()))
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "expected"),
+    [
+        ("invalid.json", "{not json", {"unparsed-input": 1}),
+        ("error.json", '{"error": {"code": 403, "status": "PERMISSION_DENIED"}}', {"upstream-error": 1}),
+        ("error.csv", "ok,error\nfalse,missing_scope\n", {"upstream-error": 1}),
+        ("paged.json", '{"items": [{"id": "a"}], "next_page": "abc"}', {"unscanned-input": 1}),
+        ("paged.jsonl", '{"items": [{"id": "a"}], "nextPageToken": "abc"}\n', {"unscanned-input": 1}),
+    ],
+    ids=["invalid-json", "provider-error-envelope", "provider-error-csv-row", "next-page", "next-page-jsonl"],
+)
+def test_parse_stage_diagnostics_name_their_own_category(tmp_path, index, name, text, expected):
+    # Issue #264 review: one reason for the whole parse reporter filed provider errors and
+    # uncollected pages as syntax errors. A provider error captured in an export is
+    # upstream-error, as cloud.gcp counts the same envelope live; a next page the export
+    # never collected is unscanned input; content that does not parse stays unparsed-input.
+    source = tmp_path / name
+    source.write_text(text)
+    probe = _probe(index)
+
+    _loaded(probe, source)
+
+    assert probe.ctx.stats.incomplete_reasons == expected
+
+
+def test_limits_that_end_an_export_are_not_counted_as_syntax_errors(tmp_path, index, monkeypatch):
+    # Issue #264 review: "no records were read before <limit>" blames the limit, not the
+    # data, and the YAML parser's resource limits are limits too; both were analysis-limit
+    # before the parse reporter was given one reason, and are again.
+    source = tmp_path / "records.jsonl"
+    source.write_bytes(DATA)
+    probe = _probe(index, max_input_file_bytes=len(DATA) - 1, max_input_bytes=1024)
+    assert _loaded(probe, source) == []
+    assert probe.ctx.stats.incomplete_reasons == {"oversize-file": 1, "analysis-limit": 1}
+
+    from shadowscan.connectors import offline
+    from shadowscan.utils.safe_yaml import YAMLResourceLimitError
+
+    def bomb(text: str) -> None:
+        raise YAMLResourceLimitError("alias limit")
+
+    monkeypatch.setattr(offline, "strict_bounded_safe_load", bomb)
+    export = tmp_path / "records.yaml"
+    export.write_text("records: []\n")
+    probe = _probe(index)
+    assert _loaded(probe, export) == []
+    assert probe.ctx.stats.errors == ["test.reader: YAML safety limit exceeded"]
+    assert probe.ctx.stats.incomplete_reasons == {"analysis-limit": 1}
+
+
+def test_the_walk_counts_a_symlink_as_a_link_and_a_fifo_as_unscanned(tmp_path, index):
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    (exports / "records.jsonl").write_bytes(DATA)
+    (exports / "linked.jsonl").symlink_to(exports / "records.jsonl")
+    if hasattr(os, "mkfifo"):
+        os.mkfifo(exports / "pipe.jsonl")
+    probe = _probe(index)
+
+    assert [path.name for path in probe._offline_files(str(exports))] == ["records.jsonl"]
+    expected = {"unresolved-link": 1}
+    if hasattr(os, "mkfifo"):
+        expected["unscanned-input"] = 1
+    assert probe.ctx.stats.incomplete_reasons == expected
+
+
+def test_a_missing_input_root_is_not_reported_as_a_link(tmp_path, index):
+    probe = _probe(index)
+
+    assert list(probe._offline_files(str(tmp_path / "exprots" / "slack.json"))) == []
+    assert probe.ctx.stats.errors == ["test.reader: offline input is missing, inaccessible, or a symlink"]
+    assert probe.ctx.stats.incomplete_reasons == {"unscanned-input": 1}
+
+    link = tmp_path / "linked"
+    link.symlink_to(tmp_path, target_is_directory=True)
+    probe = _probe(index)
+    assert list(probe._offline_files(str(link))) == []
+    assert probe.ctx.stats.incomplete_reasons == {"unresolved-link": 1}

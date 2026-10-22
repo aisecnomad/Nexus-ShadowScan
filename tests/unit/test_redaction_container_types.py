@@ -237,3 +237,54 @@ def test_a_scalar_subclass_is_rebuilt_as_its_standard_type() -> None:
     assert cleaned == {"flag": 3, "at": datetime.datetime(2026, 10, 20, tzinfo=datetime.UTC)}
     assert type(cleaned["flag"]) is int
     assert type(cleaned["at"]) is datetime.datetime
+
+
+def test_a_scalar_subclass_keeps_the_value_a_report_shows() -> None:
+    # Issue #264 review: the rebuild reads int and float through the base slot, so an
+    # overridden __int__/__float__ neither changes the value nor raises; a subclass whose
+    # fields do not build its base (pandas NaT) or that carries more than its base keeps
+    # (a nanosecond pandas Timestamp) becomes the text a report showed, not an error.
+    import datetime
+
+    class Count(int):
+        def __int__(self) -> int:
+            raise RuntimeError("override must not run")
+
+    class Ratio(float):
+        def __float__(self) -> float:
+            return -1.0
+
+    class NotATime(datetime.datetime):
+        """A stand-in for pandas NaT: a datetime subclass with no real fields."""
+
+        @property
+        def year(self) -> float:  # type: ignore[override]
+            return float("nan")
+
+        def __str__(self) -> str:
+            return "NaT"
+
+    class Precise(datetime.datetime):
+        def __str__(self) -> str:
+            return super().__str__() + "001"
+
+    exact = datetime.datetime(2026, 10, 20, 12, 30, tzinfo=datetime.UTC)
+    cleaned = sanitize(
+        {
+            "count": Count(5),
+            "ratio": Ratio(2.5),
+            "missing": NotATime(2026, 1, 1),
+            "precise": Precise(2026, 1, 1, 0, 0, 0, 1),
+            "exact": exact,
+        }
+    )
+    assert cleaned == {
+        "count": 5,
+        "ratio": 2.5,
+        "missing": "NaT",
+        "precise": "2026-01-01 00:00:00.000001001",
+        "exact": exact,
+    }
+    assert [type(cleaned[key]) for key in ("count", "ratio", "missing", "precise")] == [int, float, str, str]
+    # An exact datetime is left as it is, not rebuilt on every pass.
+    assert redaction._plain(exact) is exact

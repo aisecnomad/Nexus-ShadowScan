@@ -1342,10 +1342,14 @@ def test_private_service_connect_and_regional_endpoints_are_ai_hosts(run_connect
         '2025-09-29T09:00:01Z,192.168.5.30,generativelanguage.us-central1.rep.googleapis.com,"10.10.0.6"\n'
         '2025-09-29T09:00:02Z,192.168.5.31,storage-prodpsc.p.googleapis.com,"10.10.0.7"\n'
         '2025-09-29T09:00:03Z,192.168.5.31,not-aiplatform-prodpsc.p.googleapis.com,"10.10.0.8"\n'
+        '2025-09-29T09:00:04Z,192.168.5.32,us-central1-aiplatform-restricted.p.googleapis.com,"10.10.0.9"\n'
+        '2025-09-29T09:00:05Z,192.168.5.31,us-central1-storage-restricted.p.googleapis.com,"10.10.0.10"\n'
     )
     found, stats = scan(run_connector, log)
     assert not stats.errors and not stats.incomplete
     assert set(found) == {
         ("192.168.5.30", "provider.google-vertex-ai"),
         ("192.168.5.30", "provider.google-gemini"),
+        # A Private Service Connect name may lead with its location (#264 review).
+        ("192.168.5.32", "provider.google-vertex-ai"),
     }

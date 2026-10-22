@@ -73,7 +73,7 @@
     "shadowscan/connectors/network/logs.py::NetworkLogConnector._finding": 18,
     "shadowscan/connectors/network/logs.py::NetworkLogConnector._text_lines": 17,
     "shadowscan/connectors/network/logs.py::NetworkLogConnector.analyze": 43,
-    "shadowscan/connectors/offline.py::offline_files": 18,
+    "shadowscan/connectors/offline.py::offline_files": 17,
     "shadowscan/connectors/runtime/processes.py::RuntimeProcessConnector.analyze": 16,
     "shadowscan/connectors/runtime/processes.py::RuntimeProcessConnector.collect": 23,
     "shadowscan/connectors/runtime/processes.py::_classify": 20,

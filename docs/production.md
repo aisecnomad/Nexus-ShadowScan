@@ -49,6 +49,27 @@ Existing reports retain their recorded categories; rescan to obtain corrected
 reason counts. These corrections do not change whether the scan is incomplete
 or which finding evidence it retains.
 
+Unreleased: the shared offline-input funnel that every connector's offline mode
+reads through, and the export writer, now name explicit incomplete categories
+instead of leaving them to the text classifier, which counted most of them as
+`other`. A gate or dashboard that matches `summary.incomplete_reasons` sees, for
+the same offline inputs: a corrupt or undecodable export as `unparsed-input`; a
+provider error envelope captured in an export as `upstream-error`, as live
+`cloud.gcp` counts it; an export with an uncollected next page, a missing input,
+or a FIFO, socket, device or directory in a file's place as `unscanned-input`; a
+refused symbolic link as `unresolved-link`; an unreadable input as
+`access-denied`; a file over `max_input_file_bytes` as `oversize-file`; and the
+spent `max_input_bytes` budget, line limits and the YAML parser's resource limits
+as `analysis-limit`. Existing reports retain their recorded categories; rescan to
+obtain corrected reason counts. Whether the scan is incomplete, and its exit
+code, do not change. The Google AI domain signals now also name Private Service
+Connect names (`aiplatform-ENDPOINT.p.googleapis.com`, optionally led by a
+location) and regional service endpoints (`aiplatform.REGION.rep.googleapis.com`)
+wherever signature hosts are matched: network and gateway logs, code and
+low-code scans as well as eBPF events. A repository whose source names such an
+endpoint can gain a Vertex AI, Gemini API or Agent Engine finding; re-baseline
+drift comparisons after upgrading.
+
 Per-change migration and behavior notes for the changes between 0.1.2 and
 0.1.3 live in the [migration notes](production-migrations.md), and the dated log of
 every candidate change lives in the

@@ -13,6 +13,78 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Review follow-ups to the #264 changes (October 22)
+
+A multi-agent adversarial review of #310 after it merged found the following;
+each item was reproduced and confirmed by at least two of three independent
+verifiers, and each fix has a regression test that fails on `387862c`.
+
+- `_exact_scalar` read an `int` or `float` subclass through `int()` and
+  `float()`, which run an overridden `__int__` or `__float__`, and rebuilt
+  other subclasses from fields with no fallback. pandas `NaT` (a `datetime`
+  subclass whose `year` is NaN) made `Finding()` raise, which failed the whole
+  connector job where `aee3c98` reported the finding as `NaT`; a nanosecond
+  `Timestamp` lost precision. An `int` or `float` is now read through the base
+  slot (`int.__int__`, `float.__float__`), which returns the stored value and
+  runs no override. Other subclasses are rebuilt and kept only when the
+  rebuilt value reads as the original; otherwise they become that text, which
+  is what a report showed through `default=str`. `_SCALAR_TYPES` now lists
+  `datetime`, which `isinstance` files under `date`, so an exact datetime is
+  no longer rebuilt on every pass.
+- `load_offline_file` gave its whole parse reporter `reason="unparsed-input"`,
+  so the YAML parser's resource limits and "no records were read before
+  <limit>" moved from `analysis-limit` to `unparsed-input`, and a provider
+  error envelope or CSV error row and an uncollected next page were counted as
+  syntax errors. `parse_diagnostic_reason` now names each: limits
+  `analysis-limit`; provider errors `upstream-error`, as `cloud.gcp` counts the
+  same envelope live; uncollected pages `unscanned-input`; everything else
+  `unparsed-input`. The reporter keeps its `Callable[[str], None]` signature,
+  so connectors that pass their own callback to `_unwrap` are unaffected.
+- The readers counted every `OSError` as `access-denied` and a special file in
+  a file's place as `unresolved-link`, so a refused symbolic link (`ELOOP`, or
+  `ENOTDIR` at a linked directory) was a permission problem and a FIFO was a
+  link. `os_error_reason` now files a refused link as `unresolved-link`, a
+  permission error as `access-denied` and anything else, such as a file
+  removed after the walk, as `unscanned-input`. A non-regular file is
+  `unscanned-input` in both readers and in the directory walk, as
+  `code.filesystem` and the documented category definitions have it; this
+  reverses the review fix in `856c17a`, which aligned the readers on the wrong
+  category. A missing input root is `unscanned-input`, not `unresolved-link`.
+  A small file the spent `max_input_bytes` budget turns away is
+  `analysis-limit` in the whole-file reader too; only a file over the per-file
+  cap is `oversize-file`. The budget-less path names its limit through a typed
+  error instead of a substring test.
+- Google's Vertex AI multicloud guide reaches the API through
+  `REGION-aiplatform-restricted.p.googleapis.com`. The eBPF host expression and
+  the four Private Service Connect domain signals now accept a location-shaped
+  prefix (a region, `us`, `eu` or `global`); `not-aiplatform-…` and
+  `us-central1-storage-…` still match nothing, and the expression stays linear
+  (about 7 ms on 12 KB of adversarial input).
+- The reason-less ratchet counted `reason=None` as explicit; it no longer
+  does. The bound stays 537. It counts direct `ctx.error`, `ctx.warn` and
+  `ctx.coverage_gap` calls only: diagnostics recorded through a callback
+  (`warn(...)` in `gateway.otel`, `self.warn` helpers) and `ConnectorError`
+  raise sites, none of which name a reason yet, are outside it.
+- Documentation: the eBPF guide and connector summary name the regional
+  service endpoint and location-led Private Service Connect forms;
+  `docs/production.md` gives operators the category changes and the
+  re-baseline note; `docs/scanning.md` lists the offline funnel among the
+  connectors that name their reasons. The #310 CHANGELOG line scoped the new
+  domain signals to network logs and eBPF; they apply wherever signature hosts
+  are matched, so a code scan of source that names such an endpoint can gain a
+  Vertex AI, Gemini API or Agent Engine finding.
+
+Not carried, recorded for their own review: the detached copy at surrender
+still omits a finding whose `int` or `float` leaf a connector replaced in
+place with an equal subclass value after `sanitize()` (the verified-clean
+digest does not see the type change); a `str` subclass under a sensitive key
+or in `env` passes `_redact_value` unchanged; the copy shares a custom
+`tzinfo` with the worker; a `ConnectorError` raised from a connector's
+`__init__` drops its `reason`; and `run()`'s catch-all error is classified
+with the connector name in it, so a `network.logs` crash counts as
+`upstream-error`. Each predates #310 or is latent (no raise site passes a
+reason yet).
+
 ### Issue #264 follow-ups: endpoint forms, surrender scalars, explicit reasons (October 21)
 
 Each remaining unverified item of #264 was re-verified against `main`

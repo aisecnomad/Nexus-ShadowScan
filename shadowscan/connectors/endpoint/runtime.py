@@ -97,9 +97,12 @@ _TOOL_REF = re.compile(r"\b(?:use|call|invoke)\s+the\s+[`\"']?([A-Za-z][\w.-]{0,
 # its regional prefix (``us-central1-aiplatform``, ``eu-documentai``) and as the
 # mutual-TLS endpoint Google client libraries use with a client certificate
 # (``aiplatform.mtls.googleapis.com``), plus a known service's Private Service
-# Connect name (``aiplatform-prodpsc.p.googleapis.com``) and its documented regional
-# service endpoint (``aiplatform.us-central1.rep.googleapis.com``, #264). The service
-# and endpoint together must fit one DNS label; a cloud-owned address alone is no proof.
+# Connect name, global or behind a location (``aiplatform-prodpsc.p.googleapis.com``,
+# ``us-central1-aiplatform-restricted.p.googleapis.com``), and its documented regional
+# service endpoint (``aiplatform.us-central1.rep.googleapis.com``, #264). A Private
+# Service Connect name may lead only with a location (a region, ``us``, ``eu`` or
+# ``global``), so ``not-aiplatform-x`` names no service. The location, service and
+# endpoint together must fit one DNS label; a cloud-owned address alone is no proof.
 # Other googleapis.com hosts (fonts, storage,
 # www, ...) are not AI services, and Google front-end addresses carry many of them,
 # so a flow's destination names must not match them. A Google host is matched from
@@ -108,11 +111,14 @@ _TOOL_REF = re.compile(r"\b(?:use|call|invoke)\s+the\s+[`\"']?([A-Za-z][\w.-]{0,
 _GOOGLE_AI_SERVICES = "|".join(
     sorted(re.escape(host.removesuffix(".googleapis.com")) for host in GCP_AI_SERVICES)
 )
+# A Google Cloud location as a Private Service Connect name leads with it: a region
+# (``us-central1``, ``northamerica-northeast1``) or a multi-region.
+_GOOGLE_LOCATION = r"(?:[a-z]+(?:-[a-z]+)+[0-9]+|us|eu|global)"
 _HOST = re.compile(
     r"(?:https?://)?(?:[a-z0-9-]{1,63}\.(?:openai\.com|anthropic\.com)"
     rf"|(?<![\w-])(?:[a-z0-9-]{{1,63}}-)?(?:{_GOOGLE_AI_SERVICES})(?:\.mtls)?\.googleapis\.com"
     rf"|(?<![\w.-])(?=[a-z0-9-]{{1,63}}\.p\.googleapis\.com\b)"
-    rf"(?:{_GOOGLE_AI_SERVICES})-[a-z0-9](?:[a-z0-9-]{{0,61}}[a-z0-9])?\.p\.googleapis\.com"
+    rf"(?:{_GOOGLE_LOCATION}-)?(?:{_GOOGLE_AI_SERVICES})-[a-z0-9](?:[a-z0-9-]{{0,61}}[a-z0-9])?\.p\.googleapis\.com"
     r"(?!\.[a-z0-9-])"
     rf"|(?<![\w.-])(?:{_GOOGLE_AI_SERVICES})\.[a-z0-9](?:[a-z0-9-]{{0,61}}[a-z0-9])?\.rep\.googleapis\.com"
     r"(?!\.[a-z0-9-]))\b",

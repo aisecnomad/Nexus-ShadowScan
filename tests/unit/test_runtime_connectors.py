@@ -2817,6 +2817,19 @@ def test_ebpf_google_ai_private_service_connect_destination(service):
     assert connector.ctx.stats.warnings == []
 
 
+@pytest.mark.parametrize("location", ["us-central1", "northamerica-northeast1", "us", "eu", "global"])
+@pytest.mark.parametrize("service", sorted(GCP_AI_SERVICES))
+def test_ebpf_google_ai_private_service_connect_name_behind_a_location(service, location):
+    # Issue #264 review: Google's Vertex AI multicloud guide reaches Gemini through
+    # REGION-aiplatform-restricted.p.googleapis.com; a Private Service Connect name
+    # may lead with its location.
+    connector = _ebpf_connector()
+    endpoint = f"{location}-{service.removesuffix('.googleapis.com')}-restricted.p.googleapis.com"
+    [finding] = connector.analyze([{"process_name": "python", "destination": endpoint, "port": 443}])
+    assert "llm-egress" in finding.tags
+    assert connector.ctx.stats.warnings == []
+
+
 @pytest.mark.parametrize(
     "endpoint",
     [
@@ -2826,6 +2839,9 @@ def test_ebpf_google_ai_private_service_connect_destination(service):
         "aiplatform-prodpsc.p.googleapis.com.example.com",
         "fake.aiplatform-prodpsc.p.googleapis.com",
         "aiplatform-" + "x" * 64 + ".p.googleapis.com",
+        "us-central1-storage-restricted.p.googleapis.com",
+        "my-proxy-aiplatform-x.p.googleapis.com",
+        "us-central1-" + "a" * 50 + "-aiplatform-x.p.googleapis.com",
     ],
 )
 def test_ebpf_private_service_connect_keeps_service_and_label_boundaries(endpoint):

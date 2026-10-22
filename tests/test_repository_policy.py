@@ -3395,7 +3395,9 @@ def test_diagnostics_without_an_explicit_reason_only_ever_decrease() -> None:
             if name != "ctx":
                 continue
             keywords = {keyword.arg: keyword.value for keyword in node.keywords}
-            if "reason" in keywords:
+            reason = keywords.get("reason")
+            # reason=None names no category: the text classifier still picks one.
+            if reason is not None and not (isinstance(reason, _ast.Constant) and reason.value is None):
                 continue
             if method == "warn":
                 incomplete = keywords.get("incomplete")
