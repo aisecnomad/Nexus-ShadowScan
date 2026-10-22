@@ -219,3 +219,21 @@ def test_agent_card_with_colliding_keys_is_reported(tmp_path, run_connector) -> 
     assert [finding.title for finding in findings if finding.kind == Kind.AGENT] == [
         "A2A agent card: Card Agent"
     ]
+
+
+def test_a_scalar_subclass_is_rebuilt_as_its_standard_type() -> None:
+    # Issue #264: the sanitize pass must leave only the exact scalar types the
+    # surrender path's detached copy shares, so a subclass is rebuilt by value.
+    import datetime
+    import enum
+
+    class Flag(enum.IntEnum):
+        ON = 3
+
+    class Stamp(datetime.datetime):
+        pass
+
+    cleaned = sanitize({"flag": Flag.ON, "at": Stamp(2026, 10, 20, tzinfo=datetime.UTC)})
+    assert cleaned == {"flag": 3, "at": datetime.datetime(2026, 10, 20, tzinfo=datetime.UTC)}
+    assert type(cleaned["flag"]) is int
+    assert type(cleaned["at"]) is datetime.datetime

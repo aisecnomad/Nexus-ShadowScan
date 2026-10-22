@@ -60,7 +60,20 @@ from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitiz
 
 
 class ConnectorError(RuntimeError):
-    """Raised when a connector cannot run at all (bad config, missing creds)."""
+    """Raised when a connector cannot run at all (bad config, missing creds).
+
+    ``reason`` is the incomplete-reason category the skip is counted under
+    (#264); None keeps the diagnostic-text classification for raise sites
+    that have not yet named one explicitly. The class attribute keeps the
+    handler's read safe for a plugin subclass whose ``__init__`` does not
+    call this one.
+    """
+
+    reason: str | None = None
+
+    def __init__(self, *args: object, reason: str | None = None) -> None:
+        super().__init__(*args)
+        self.reason = reason
 
 
 # A live connector's record of what it collected (ConnectorContext.scope_record),
@@ -933,7 +946,8 @@ class BaseConnector(ABC):
                     except SanitizationLimitError:
                         rejected = True
                         self.ctx.error(
-                            f"{self.name}: export record rejected: sanitization safety limit exceeded"
+                            f"{self.name}: export record rejected: sanitization safety limit exceeded",
+                            reason="sanitization-limit",
                         )
                         continue
                     try:
@@ -960,14 +974,19 @@ class BaseConnector(ABC):
                         fh.seek(offset)
                         fh.truncate()
                         rejected = True
-                        self.ctx.error(f"{self.name}: export record omitted: {exc}")
+                        # An export-writer limit, not an oversize input: the record was
+                        # analyzed and only its replay line or file budget was exceeded.
+                        self.ctx.error(f"{self.name}: export record omitted: {exc}", reason="analysis-limit")
                     except (TypeError, ValueError):
                         # JSON encoding exceptions can echo data (for example
                         # an unsupported mapping key). Keep only a fixed reason.
                         fh.seek(offset)
                         fh.truncate()
                         rejected = True
-                        self.ctx.error(f"{self.name}: export record omitted: record is not strict JSON")
+                        self.ctx.error(
+                            f"{self.name}: export record omitted: record is not strict JSON",
+                            reason="unparsed-input",
+                        )
                     else:
                         written += 1
                     yield rec
@@ -976,7 +995,10 @@ class BaseConnector(ABC):
                     empty = b'{"records": []}\n'
                     if len(empty) > max_file_bytes:
                         rejected = True
-                        self.ctx.error(f"{self.name}: empty export exceeds the replay file byte limit")
+                        self.ctx.error(
+                            f"{self.name}: empty export exceeds the replay file byte limit",
+                            reason="analysis-limit",
+                        )
                     else:
                         fh.write(empty)
             if not rejected:
@@ -1020,14 +1042,17 @@ class BaseConnector(ABC):
                     # One oversized finding must not discard the others (for
                     # example a credential finding emitted after an aggregate
                     # that exceeds the sanitizer's output budget).
-                    self.ctx.error(f"{self.name}: finding omitted: sanitization safety limit exceeded")
+                    self.ctx.error(
+                        f"{self.name}: finding omitted: sanitization safety limit exceeded",
+                        reason="sanitization-limit",
+                    )
                     continue
                 findings.append(f)
             self.ctx.check_deadline()
         except ConnectorError as exc:
             stats.skipped = True
             stats.skip_reason = self.ctx.sanitize_message(str(exc))
-            self.ctx.error(str(exc))
+            self.ctx.error(str(exc), reason=exc.reason)
         except Exception as exc:  # noqa: BLE001 - connectors must never abort the whole scan
             self.ctx.error(f"{self.name}: {failure_summary(exc)}")
             self.log.debug("connector failure (%s)", type(exc).__name__)

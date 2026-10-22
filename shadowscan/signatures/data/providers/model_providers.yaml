@@ -308,7 +308,7 @@ signatures:
         names: [GEMINI_API_KEY, GOOGLE_API_KEY, GOOGLE_GENAI_API_KEY, GOOGLE_GEMINI_API_KEY]
         weight: 0.6
       - type: domain
-        values: [generativelanguage.googleapis.com, aistudio.google.com]
+        values: [generativelanguage.googleapis.com, aistudio.google.com, "re:^generativelanguage-[a-z0-9-]+\\.p\\.googleapis\\.com$", "re:^generativelanguage\\.[a-z0-9-]+\\.rep\\.googleapis\\.com$"]
         weight: 0.9
       - type: user_agent
         patterns: ['(?i)google-genai-sdk', '(?i)genai-(?:js|python|go)', '(?i)google-generativeai']
@@ -425,7 +425,7 @@ signatures:
         weight: 0.5
         description: Claude Code routed through Vertex AI
       - type: domain
-        values: [aiplatform.googleapis.com, "re:^[a-z0-9-]+-aiplatform\\.googleapis\\.com$"]
+        values: [aiplatform.googleapis.com, "re:^[a-z0-9-]+-aiplatform\\.googleapis\\.com$", "re:^aiplatform-[a-z0-9-]+\\.p\\.googleapis\\.com$", "re:^aiplatform\\.[a-z0-9-]+\\.rep\\.googleapis\\.com$"]
         weight: 0.9
       - type: iac
         values: [google_vertex_ai_endpoint, google_vertex_ai_index, google_vertex_ai_index_endpoint, google_vertex_ai_deployment_resource_pool, google_vertex_ai_feature_online_store, google_vertex_ai_tensorboard, google_vertex_ai_metadata_store]

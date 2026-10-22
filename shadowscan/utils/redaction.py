@@ -136,6 +136,10 @@ _AUTH_VALUE_KEYS = frozenset({"value", "key", "credential"})
 # turned into text first (see ``_plain``).
 _SCALARS = (bool, int, float, datetime.date, datetime.time, datetime.timedelta, decimal.Decimal, uuid.UUID)
 _PLAIN_TYPES = (str, Mapping, list, tuple, *_SCALARS)
+# The exact scalar types a sanitize pass leaves, which are also what the surrender
+# path's detached copy shares without running subclass code (#264): a subclass of one
+# (an IntEnum, a numpy scalar, a datetime subclass) is rebuilt as its standard type.
+_SCALAR_TYPES = frozenset(_SCALARS)
 
 
 class _Copy(dict[str, Any]):
@@ -216,12 +220,16 @@ def _member_order(member: Any) -> tuple[str, str]:
 def _plain(item: Any) -> Any:
     """``item`` as a value ``sanitize`` can read and copy.
 
-    Text, mappings, lists, tuples and the scalars above are returned as they are. Bytes
+    Text, mappings, lists, tuples and the scalars above are returned as they are; a
+    scalar's subclass is rebuilt as the exact standard type (``_exact_scalar``), so an
+    overrun scan's surrender keeps the finding a completed run reports (#264). Bytes
     become text (undecodable bytes are replaced), a set a list in a stable order, and
     any other object, an exception included, its ``str`` -- which ``sanitize`` then
     reads like any other text.
     """
     if item is None or isinstance(item, _PLAIN_TYPES):
+        if isinstance(item, _SCALARS) and type(item) not in _SCALAR_TYPES:
+            return _exact_scalar(item)
         return item
     if isinstance(item, (bytes, bytearray, memoryview)):
         if len(item) > _MAX_SANITIZATION_CHARS:
@@ -233,6 +241,37 @@ def _plain(item: Any) -> Any:
         return str(item)
     except Exception:  # noqa: BLE001 - an arbitrary object's own __str__ may raise anything
         return f"<{type(item).__qualname__}>"
+
+
+def _exact_scalar(item: Any) -> Any:
+    """A standard scalar's subclass as the exact parent type, with the value a report shows.
+
+    The supervisor's detached copy shares a leaf only at its exact type, so no
+    subclass code runs on its thread; rebuilding here, on the worker, keeps the
+    finding where the old copy omitted it at surrender (#264). ``bool`` cannot
+    be subclassed, and the rebuilt ``datetime`` and ``time`` keep their
+    ``tzinfo`` and ``fold`` as an exact instance does.
+    """
+    if isinstance(item, int):
+        return int(item)
+    if isinstance(item, float):
+        return float(item)
+    if isinstance(item, datetime.datetime):
+        return datetime.datetime(
+            item.year, item.month, item.day, item.hour, item.minute, item.second,
+            item.microsecond, item.tzinfo, fold=item.fold,
+        )  # fmt: skip
+    if isinstance(item, datetime.date):
+        return datetime.date(item.year, item.month, item.day)
+    if isinstance(item, datetime.time):
+        return datetime.time(
+            item.hour, item.minute, item.second, item.microsecond, item.tzinfo, fold=item.fold
+        )
+    if isinstance(item, datetime.timedelta):
+        return datetime.timedelta(item.days, item.seconds, item.microseconds)
+    if isinstance(item, decimal.Decimal):
+        return decimal.Decimal(item)
+    return uuid.UUID(int=item.int)
 
 
 def credential_id(value: Any) -> str:

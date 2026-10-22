@@ -187,13 +187,13 @@ def offline_files(conn: BaseConnector, path: str, suffixes: AbstractSet[str] | N
             raise ValueError("symlink input is not allowed")
         mode = root.stat().st_mode
     except (OSError, ValueError):
-        ctx.error(f"{name}: offline input is missing, inaccessible, or a symlink")
+        ctx.error(f"{name}: offline input is missing, inaccessible, or a symlink", reason="unresolved-link")
         return
     if stat.S_ISREG(mode):
         yield root
         return
     if not stat.S_ISDIR(mode):
-        ctx.error(f"{name}: offline input must be a regular file or directory")
+        ctx.error(f"{name}: offline input must be a regular file or directory", reason="unscanned-input")
         return
     count = 0
     files_seen = 0
@@ -202,18 +202,18 @@ def offline_files(conn: BaseConnector, path: str, suffixes: AbstractSet[str] | N
     unsupported_count = 0
 
     def failed(_: OSError) -> None:
-        ctx.error(f"{name}: offline directory could not be read")
+        ctx.error(f"{name}: offline directory could not be read", reason="access-denied")
 
     for directory, dirs, files in os.walk(root, followlinks=False, onerror=failed):
         count += 1 + len(dirs) + len(files)
         if count > conn._MAX_OFFLINE_ENTRIES:
-            ctx.error(f"{name}: offline directory entry limit exceeded")
+            ctx.error(f"{name}: offline directory entry limit exceeded", reason="analysis-limit")
             return
         base = Path(directory)
         kept = []
         for entry in sorted(dirs):
             if (base / entry).is_symlink():
-                ctx.warn(f"{name}: offline input symlinks are skipped")
+                ctx.warn(f"{name}: offline input symlinks are skipped", reason="unresolved-link")
             else:
                 kept.append(entry)
         dirs[:] = kept
@@ -225,12 +225,16 @@ def offline_files(conn: BaseConnector, path: str, suffixes: AbstractSet[str] | N
                 failed(OSError())
                 continue
             if not stat.S_ISREG(mode):
-                ctx.warn(f"{name}: offline input symlinks or special files are skipped")
+                ctx.warn(
+                    f"{name}: offline input symlinks or special files are skipped", reason="unresolved-link"
+                )
                 continue
             if item.suffix.lower() in suffixes:
                 found = True
                 if files_seen >= conn.max_input_files:
-                    ctx.warn(f"{name}: max_input_files ({conn.max_input_files}) reached")
+                    ctx.warn(
+                        f"{name}: max_input_files ({conn.max_input_files}) reached", reason="analysis-limit"
+                    )
                     return
                 files_seen += 1
                 yield item
@@ -245,10 +249,11 @@ def offline_files(conn: BaseConnector, path: str, suffixes: AbstractSet[str] | N
         listed = ", ".join(unsupported) + (f", and {more} more" if more else "")
         ctx.warn(
             f"{name}: {unsupported_count} unsupported file(s) in the offline directory were not "
-            f"read ({listed}); convert or rename them to a supported format"
+            f"read ({listed}); convert or rename them to a supported format",
+            reason="unscanned-input",
         )
     if not found:
-        ctx.error(f"{name}: offline directory contains no supported export files")
+        ctx.error(f"{name}: offline directory contains no supported export files", reason="unscanned-input")
 
 
 def iter_offline_files(
@@ -258,7 +263,9 @@ def iter_offline_files(
     for source in conn._offline_files(path, suffixes):
         if budget.files_seen >= budget.max_files:
             if not budget.file_limit_warning_sent:
-                conn.ctx.warn(f"{conn.name}: max_input_files ({budget.max_files}) reached")
+                conn.ctx.warn(
+                    f"{conn.name}: max_input_files ({budget.max_files}) reached", reason="analysis-limit"
+                )
                 budget.file_limit_warning_sent = True
             return
         budget.files_seen += 1
@@ -296,7 +303,10 @@ def read_offline_bytes(
                     raise ValueError("offline input exceeds the byte limit")
                 file_limited = conn.max_input_file_bytes <= remaining
                 exceeded = "max_input_file_bytes" if file_limited else "max_input_bytes"
-                conn.ctx.warn(f"{conn.name}: {exceeded} reached; oversized offline input was skipped")
+                conn.ctx.warn(
+                    f"{conn.name}: {exceeded} reached; oversized offline input was skipped",
+                    reason="oversize-file",
+                )
 
             if before.st_size > limit:
                 oversized()
@@ -313,10 +323,18 @@ def read_offline_bytes(
         if modified:
             raise ValueError("offline input changed while being read")
         return raw
-    except (OSError, ValueError) as exc:
-        # Parser and OS exception strings may contain raw data or secret paths.
-        reason = str(exc) if isinstance(exc, ValueError) else "offline input could not be securely read"
-        conn.ctx.error(f"{conn.name}: {reason}")
+    except NotRegularFileError as exc:
+        # A directory, FIFO, socket or device in the file's place, as iter_bounded_lines counts it.
+        conn.ctx.error(f"{conn.name}: {exc}", reason="unresolved-link")
+        return None
+    except ValueError as exc:
+        # The two raises above are fixed literals; anything else is an unread input.
+        category = "oversize-file" if "byte limit" in str(exc) else "unscanned-input"
+        conn.ctx.error(f"{conn.name}: {exc}", reason=category)
+        return None
+    except OSError:
+        # OS exception strings may contain secret paths.
+        conn.ctx.error(f"{conn.name}: offline input could not be securely read", reason="access-denied")
         return None
 
 
@@ -330,7 +348,7 @@ def read_offline_text(
     try:
         return raw.decode("utf-8-sig")
     except UnicodeDecodeError:
-        conn.ctx.error(f"{conn.name}: offline input is not valid UTF-8")
+        conn.ctx.error(f"{conn.name}: offline input is not valid UTF-8", reason="unparsed-input")
         return None
 
 
@@ -356,7 +374,8 @@ def iter_bounded_lines(
         with open_confined_file(path.expanduser().absolute(), label="offline input") as (raw, before):
             if before.st_size > min(conn.max_input_file_bytes, conn._MAX_OFFLINE_FILE_BYTES):
                 budget.limit_hit = f"max_input_file_bytes ({conn.max_input_file_bytes})"
-                ctx.warn(f"{name}: {budget.limit_hit} reached")
+                # The whole file is skipped for its size, as read_offline_bytes counts it.
+                ctx.warn(f"{name}: {budget.limit_hit} reached", reason="oversize-file")
                 return
             stream = gzip.GzipFile(fileobj=raw, mode="rb") if compressed else raw
             file_bytes = 0
@@ -373,35 +392,43 @@ def iter_bounded_lines(
                         break
                     if len(line) > MAX_OFFLINE_LINE_BYTES:
                         budget.limit_hit = f"max_input_line_bytes ({MAX_OFFLINE_LINE_BYTES})"
-                        ctx.warn(f"{name}: {budget.limit_hit} reached")
+                        ctx.warn(f"{name}: {budget.limit_hit} reached", reason="analysis-limit")
                         return
                     if len(line) > remaining:
                         file_limited = conn.max_input_file_bytes - file_bytes <= budget.remaining_bytes
                         exceeded = "max_input_file_bytes" if file_limited else "max_input_bytes"
                         limit_value = conn.max_input_file_bytes if file_limited else budget.max_bytes
                         budget.limit_hit = f"{exceeded} ({limit_value})"
-                        ctx.warn(f"{name}: {exceeded} reached; remaining offline input was skipped")
+                        ctx.warn(
+                            f"{name}: {exceeded} reached; remaining offline input was skipped",
+                            reason="analysis-limit",
+                        )
                         return
                     if not budget.consume(len(line)):
                         budget.limit_hit = f"max_input_bytes ({budget.max_bytes})"
-                        ctx.warn(f"{name}: {budget.limit_hit} reached")
+                        ctx.warn(f"{name}: {budget.limit_hit} reached", reason="analysis-limit")
                         return
                     file_bytes += len(line)
                     try:
                         yield line.decode("utf-8-sig")
                     except UnicodeDecodeError:
-                        ctx.error(f"{name}: offline input is not valid UTF-8")
+                        ctx.error(f"{name}: offline input is not valid UTF-8", reason="unparsed-input")
                         return
             finally:
                 if compressed:
                     stream.close()
             if changed(before, raw.fileno()):
-                ctx.error(f"{name}: offline input changed while being read")
+                ctx.error(f"{name}: offline input changed while being read", reason="unscanned-input")
     except NotRegularFileError as exc:
-        ctx.warn(f"{name}: {exc}")
+        ctx.warn(f"{name}: {exc}", reason="unresolved-link")
     except (OSError, EOFError, gzip.BadGzipFile, ValueError, zlib.error) as exc:
         detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
-        ctx.warn(f"{name}: offline input could not be read ({detail})")
+        # BadGzipFile is an OSError, but a corrupt archive is content that did not parse.
+        unreadable = isinstance(exc, OSError) and not isinstance(exc, gzip.BadGzipFile)
+        ctx.warn(
+            f"{name}: offline input could not be read ({detail})",
+            reason="access-denied" if unreadable else "unparsed-input",
+        )
 
 
 # -------------------------------------------------------------------- parsing
@@ -426,7 +453,9 @@ def load_offline_file(
 ) -> Iterator[dict[str, Any]]:
     """Parse one export by its suffix: JSONL, CSV, YAML, or JSON with a JSONL fallback."""
     suffix = source.suffix.lower()
-    report = conn._bounded_diagnostics(lambda message: conn.ctx.error(f"{conn.name}: {message}"))
+    report = conn._bounded_diagnostics(
+        lambda message: conn.ctx.error(f"{conn.name}: {message}", reason="unparsed-input")
+    )
 
     if suffix in {".jsonl", ".ndjson"}:
         saw_record = False

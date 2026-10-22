@@ -6,7 +6,13 @@ import json
 
 import pytest
 
-from shadowscan.connectors.base import INCOMPLETE_REASONS, BaseConnector, ConnectorContext, incomplete_reason
+from shadowscan.connectors.base import (
+    INCOMPLETE_REASONS,
+    BaseConnector,
+    ConnectorContext,
+    ConnectorError,
+    incomplete_reason,
+)
 from shadowscan.models import Finding, Kind, ScanStats, Surface
 
 KEY = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN"
@@ -182,3 +188,74 @@ def test_context_diagnostic_limits_preserve_failure_status(monkeypatch, index, c
     assert "diagnostic limit" in ctx.stats.errors[-1]
     # The reasons count every incomplete diagnostic, past the message limit too.
     assert ctx.stats.incomplete_reasons == {"other": 1, "unparsed-input": 10}
+
+
+def test_omitted_findings_count_under_the_sanitization_limit_reason(index):
+    # Issue #264: infrastructure diagnostics carry explicit reasons instead of
+    # being classified from their text.
+    ctx = ConnectorContext(config={}, index=index)
+    _Oversized(ctx).run()
+    assert ctx.stats is not None
+    assert ctx.stats.incomplete_reasons == {"sanitization-limit": 1}
+
+
+def test_a_connector_error_reason_counts_the_skip(index):
+    class _Denied(_Oversized):
+        name = "test.denied"
+
+        def collect(self):
+            raise ConnectorError("test.denied: token lacks the read scope", reason="access-denied")
+            yield  # pragma: no cover
+
+        def analyze(self, records):
+            list(records)
+            return []
+
+    ctx = ConnectorContext(config={}, index=index)
+    stats_findings = _Denied(ctx).run()
+    assert stats_findings == []
+    assert ctx.stats is not None and ctx.stats.skipped
+    assert ctx.stats.incomplete_reasons == {"access-denied": 1}
+
+    # A raise site that names no reason keeps the diagnostic-text classification.
+    class _Odd(_Oversized):
+        name = "test.odd"
+
+        def collect(self):
+            raise ConnectorError("test.odd: deadline exceeded while listing")
+            yield  # pragma: no cover
+
+        def analyze(self, records):
+            list(records)
+            return []
+
+    other = ConnectorContext(config={}, index=index)
+    _Odd(other).run()
+    assert other.stats is not None and other.stats.incomplete_reasons == {"timeout": 1}
+
+
+def test_a_connector_error_subclass_that_skips_the_base_init_is_still_handled(index):
+    # A plugin's ConnectorError subclass need not call ConnectorError.__init__;
+    # the handler must still record the skip instead of raising AttributeError.
+    class _PluginError(ConnectorError):
+        def __init__(self, detail: str) -> None:
+            self.detail = detail
+
+        def __str__(self) -> str:
+            return self.detail
+
+    class _Plugin(_Oversized):
+        name = "test.plugin"
+
+        def collect(self):
+            raise _PluginError("test.plugin: deadline exceeded while listing")
+            yield  # pragma: no cover
+
+        def analyze(self, records):
+            list(records)
+            return []
+
+    ctx = ConnectorContext(config={}, index=index)
+    assert _Plugin(ctx).run() == []
+    assert ctx.stats is not None and ctx.stats.skipped
+    assert ctx.stats.incomplete_reasons == {"timeout": 1}
