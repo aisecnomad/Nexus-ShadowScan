@@ -15,8 +15,7 @@
 
 It inspects nine surfaces: code repositories, identity providers, LLM gateway logs,
 low-code platforms, SaaS apps, cloud accounts, endpoints (developer workstations and
-host/runtime inventories), network logs, and running processes. Scans fail closed.
-Errors, timeouts, and unbounded gaps mark a scan incomplete (exit 3).
+host/runtime inventories), network logs, and running processes.
 
 ## Install
 
@@ -151,15 +150,6 @@ Collection and analysis fail closed:
 - An API error, a timeout, a refused page, an unparseable manifest or a malformed
   export marks the scan incomplete (exit 3) rather than producing a smaller report
   that looks clean.
-- A gap the scanner can bound, such as a few unreadable entries in a large tree,
-  is charged to a 2% coverage budget instead (at most 100 weighted entries per scan
-  root; vendored and test paths count a quarter). `--max-coverage-gap` sets the
-  budget and `strict_coverage` turns it off.
-- Every bounded gap is counted in the JSON report's `stats[].coverage`, whether or
-  not it changes the exit code. The first 50 are listed under
-  `stats[].coverage.details`; `details_truncated` counts the rest.
-- `shadowscan code --profile ci` (opt-in) records some gaps under test, fixture,
-  documentation, example, and generated paths as declared omissions instead.
 - Only the opt-in LLM triage is advisory: its failures are warnings, and it never
   changes scores.
 
@@ -349,13 +339,6 @@ documentation of the commit you installed.
 | Understand decisions, review and release requirements | [Governance](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/GOVERNANCE.md), [Maintainers](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/MAINTAINERS.md), [Roadmap](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/ROADMAP.md) |
 | Understand participation standards | [Code of conduct](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CODE_OF_CONDUCT.md) |
 | See what changed or cite the project | [Release notes](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/RELEASE_NOTES.md), [Changelog](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md), [Engineering log](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/engineering-log.md), [CITATION.cff](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CITATION.cff) |
-
-In a checkout, a plain `shadowscan code .` exits 3 by design: three files hold
-more synthetic credentials than a scan reports per file, and an ordinary clone
-leaves the optional `benchmark-suite` submodule uninitialized. `make self-scan`
-runs `examples/shadowscan.self-scan.yaml`, which excludes those paths and the
-fixture, archive, and built-site directories, each with a documented reason, and
-completes with exit 0.
 
 Use synthetic, minimal examples in public reports. Scan results can contain
 credentials, personal data, and sensitive information even after redaction.
