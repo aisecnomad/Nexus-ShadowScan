@@ -25,6 +25,7 @@ its class, wherever a subclass may change the behaviour.
 from __future__ import annotations
 
 import csv
+import errno
 import gzip
 import io
 import json
@@ -177,17 +178,66 @@ def _prefixed(report: Report, prefix: str) -> Report:
 
 
 # ------------------------------------------------------------------ discovery
+class _ByteLimitError(ValueError):
+    """The whole-file reader's byte limit without a budget, with the category of the limit that bound."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__("offline input exceeds the byte limit")
+        self.reason = reason
+
+
+def os_error_reason(exc: OSError, path: Path) -> str:
+    """The incomplete-reason category of an ``OSError`` from a confined open or read of ``path``.
+
+    The confined opener refuses a link in the path with ``ELOOP`` (at the file,
+    or anywhere under ``O_NOFOLLOW_ANY``) or, on Linux, ``ENOTDIR`` at a linked
+    directory: a link not followed (``unresolved-link``). A permission error is
+    ``access-denied``; anything else, such as a file removed after the walk
+    listed it, is ``unscanned-input``. Links are looked for only to choose the
+    category, root first (``path_has_link``).
+    """
+    if exc.errno in {errno.EACCES, errno.EPERM}:
+        return "access-denied"
+    if exc.errno == errno.ELOOP or (exc.errno == errno.ENOTDIR and path_has_link(path)):
+        return "unresolved-link"
+    return "unscanned-input"
+
+
+def path_has_link(path: Path) -> bool:
+    """Whether a component of ``path`` is a symbolic link, examined root first.
+
+    Each component is examined without following it, and the first link found
+    ends the search before anything beneath it is resolved; a component that
+    cannot be examined ends it too, as no link found.
+    """
+    target = path.expanduser().absolute()
+    try:
+        return any(part.is_symlink() for part in (*reversed(target.parents), target))
+    except OSError:
+        return False
+
+
+def _root_mode(conn: BaseConnector, root: Path) -> int | None:
+    """The input root's mode, or None once the reason it cannot be read is recorded."""
+    message = f"{conn.name}: offline input is missing, inaccessible, or a symlink"
+    try:
+        if any(part.is_symlink() for part in (*reversed(root.parents), root)):
+            raise ValueError("symlink input is not allowed")
+        return root.stat().st_mode
+    except ValueError:
+        conn.ctx.error(message, reason="unresolved-link")
+    except OSError as exc:
+        conn.ctx.error(message, reason=os_error_reason(exc, root))
+    return None
+
+
 def offline_files(conn: BaseConnector, path: str, suffixes: AbstractSet[str] | None = None) -> Iterator[Path]:
     """Find exports without traversing links; rejected inputs affect completeness."""
     ctx, name = conn.ctx, conn.name
     root = Path(path).expanduser().absolute()
     suffixes = conn._OFFLINE_SUFFIXES if suffixes is None else suffixes
-    try:
-        if any(part.is_symlink() for part in (root, *root.parents)):
-            raise ValueError("symlink input is not allowed")
-        mode = root.stat().st_mode
-    except (OSError, ValueError):
-        ctx.error(f"{name}: offline input is missing, inaccessible, or a symlink", reason="unresolved-link")
+    mode = _root_mode(conn, root)
+    if mode is None:
         return
     if stat.S_ISREG(mode):
         yield root
@@ -201,8 +251,9 @@ def offline_files(conn: BaseConnector, path: str, suffixes: AbstractSet[str] | N
     unsupported: list[str] = []
     unsupported_count = 0
 
-    def failed(_: OSError) -> None:
-        ctx.error(f"{name}: offline directory could not be read", reason="access-denied")
+    def failed(exc: OSError) -> None:
+        where = Path(exc.filename) if isinstance(exc.filename, str) else root
+        ctx.error(f"{name}: offline directory could not be read", reason=os_error_reason(exc, where))
 
     for directory, dirs, files in os.walk(root, followlinks=False, onerror=failed):
         count += 1 + len(dirs) + len(files)
@@ -221,12 +272,13 @@ def offline_files(conn: BaseConnector, path: str, suffixes: AbstractSet[str] | N
             item = base / entry
             try:
                 mode = item.lstat().st_mode
-            except OSError:
-                failed(OSError())
+            except OSError as exc:
+                failed(exc)
                 continue
             if not stat.S_ISREG(mode):
                 ctx.warn(
-                    f"{name}: offline input symlinks or special files are skipped", reason="unresolved-link"
+                    f"{name}: offline input symlinks or special files are skipped",
+                    reason="unresolved-link" if stat.S_ISLNK(mode) else "unscanned-input",
                 )
                 continue
             if item.suffix.lower() in suffixes:
@@ -298,18 +350,20 @@ def read_offline_bytes(
                 conn._MAX_OFFLINE_TOTAL_BYTES - used,
             )
 
-            def oversized() -> None:
+            def oversized(size: int) -> None:
+                # A file over the per-file cap is an oversize file; one the spent
+                # aggregate budget turns away is a limit the scan hit.
+                file_limited = size > min(conn.max_input_file_bytes, conn._MAX_OFFLINE_FILE_BYTES)
+                reason = "oversize-file" if file_limited else "analysis-limit"
                 if budget is None:
-                    raise ValueError("offline input exceeds the byte limit")
-                file_limited = conn.max_input_file_bytes <= remaining
+                    raise _ByteLimitError(reason)
                 exceeded = "max_input_file_bytes" if file_limited else "max_input_bytes"
                 conn.ctx.warn(
-                    f"{conn.name}: {exceeded} reached; oversized offline input was skipped",
-                    reason="oversize-file",
+                    f"{conn.name}: {exceeded} reached; oversized offline input was skipped", reason=reason
                 )
 
             if before.st_size > limit:
-                oversized()
+                oversized(before.st_size)
                 return None
             raw = stream.read(limit + 1)
             modified = changed(before, stream.fileno())
@@ -318,23 +372,25 @@ def read_offline_bytes(
         else:
             budget.consume(len(raw))
         if len(raw) > limit:
-            oversized()
+            oversized(len(raw))
             return None
         if modified:
             raise ValueError("offline input changed while being read")
         return raw
-    except NotRegularFileError as exc:
-        # A directory, FIFO, socket or device in the file's place, as iter_bounded_lines counts it.
-        conn.ctx.error(f"{conn.name}: {exc}", reason="unresolved-link")
+    except _ByteLimitError as exc:
+        conn.ctx.error(f"{conn.name}: {exc}", reason=exc.reason)
         return None
     except ValueError as exc:
-        # The two raises above are fixed literals; anything else is an unread input.
-        category = "oversize-file" if "byte limit" in str(exc) else "unscanned-input"
-        conn.ctx.error(f"{conn.name}: {exc}", reason=category)
+        # Fixed literals only: a directory, FIFO, socket or device in the file's place
+        # (NotRegularFileError, as code.filesystem counts it), a file changed during
+        # the read, or a platform without confined opens.
+        conn.ctx.error(f"{conn.name}: {exc}", reason="unscanned-input")
         return None
-    except OSError:
+    except OSError as exc:
         # OS exception strings may contain secret paths.
-        conn.ctx.error(f"{conn.name}: offline input could not be securely read", reason="access-denied")
+        conn.ctx.error(
+            f"{conn.name}: offline input could not be securely read", reason=os_error_reason(exc, path)
+        )
         return None
 
 
@@ -420,24 +476,50 @@ def iter_bounded_lines(
             if changed(before, raw.fileno()):
                 ctx.error(f"{name}: offline input changed while being read", reason="unscanned-input")
     except NotRegularFileError as exc:
-        ctx.warn(f"{name}: {exc}", reason="unresolved-link")
+        ctx.warn(f"{name}: {exc}", reason="unscanned-input")
     except (OSError, EOFError, gzip.BadGzipFile, ValueError, zlib.error) as exc:
         detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
         # BadGzipFile is an OSError, but a corrupt archive is content that did not parse.
-        unreadable = isinstance(exc, OSError) and not isinstance(exc, gzip.BadGzipFile)
-        ctx.warn(
-            f"{name}: offline input could not be read ({detail})",
-            reason="access-denied" if unreadable else "unparsed-input",
-        )
+        if isinstance(exc, OSError) and not isinstance(exc, gzip.BadGzipFile):
+            reason = os_error_reason(exc, path)
+        else:
+            reason = "unparsed-input"
+        ctx.warn(f"{name}: offline input could not be read ({detail})", reason=reason)
 
 
 # -------------------------------------------------------------------- parsing
+YAML_SAFETY_LIMIT = "YAML safety limit exceeded"
+FURTHER_DIAGNOSTICS_NOT_LISTED = "further invalid records in this export are not listed individually"
+_NO_RECORDS_BEFORE = "no records were read before"
+PROVIDER_ERROR_RESPONSE = "provider error response in"
+UNCOLLECTED_NEXT_PAGE = "offline export contains an uncollected next page"
+
+
+def parse_diagnostic_reason(message: str) -> str:
+    """The incomplete-reason category of a diagnostic the export parsers report.
+
+    Most are input defects: content that did not parse, or a shape the export
+    must not have (``unparsed-input``). A size limit that ended the file before
+    any record and the YAML parser's resource limits are limits the scan hit
+    (``analysis-limit``); a provider error captured in the export is the
+    provider's failure (``upstream-error``, as ``cloud.gcp`` counts the same
+    envelope live); an uncollected next page is input the export never held
+    (``unscanned-input``). Messages are this module's fixed text, and
+    ``_prefixed`` may have put a ``line N:`` location in front of them.
+    """
+    if _NO_RECORDS_BEFORE in message or YAML_SAFETY_LIMIT in message:
+        return "analysis-limit"
+    if PROVIDER_ERROR_RESPONSE in message:
+        return "upstream-error"
+    if UNCOLLECTED_NEXT_PAGE in message:
+        return "unscanned-input"
+    return "unparsed-input"
+
+
 def empty_export_message(budget: OfflineInputBudget) -> str:
     """Blame the size limit, not the data, when a limit ended the file before any record."""
     if budget.limit_hit:
-        return (
-            f"no records were read before {budget.limit_hit} was reached; raise the limit or split the export"
-        )
+        return f"{_NO_RECORDS_BEFORE} {budget.limit_hit} was reached; raise the limit or split the export"
     return "empty offline export; use [] for an empty inventory"
 
 
@@ -453,9 +535,7 @@ def load_offline_file(
 ) -> Iterator[dict[str, Any]]:
     """Parse one export by its suffix: JSONL, CSV, YAML, or JSON with a JSONL fallback."""
     suffix = source.suffix.lower()
-    report = conn._bounded_diagnostics(
-        lambda message: conn.ctx.error(f"{conn.name}: {message}", reason="unparsed-input")
-    )
+    report = _categorized_report(conn)
 
     if suffix in {".jsonl", ".ndjson"}:
         saw_record = False
@@ -490,7 +570,7 @@ def load_offline_file(
         try:
             data = strict_bounded_safe_load(text)
         except YAMLResourceLimitError:
-            report("YAML safety limit exceeded")
+            report(YAML_SAFETY_LIMIT)
             return
         except (yaml.YAMLError, RecursionError, ValueError):
             report("invalid YAML export")
@@ -507,6 +587,28 @@ def load_offline_file(
         yield from conn._unwrap(data, report)
 
 
+def _categorized_report(conn: BaseConnector) -> Report:
+    """The parsers' bounded reporter, each diagnostic under its own category.
+
+    The summary that replaces the diagnostics past the limit is counted under
+    the category of the one that reached it, not as an input defect whatever
+    it stands for.
+    """
+    reached: list[str] = []
+
+    def record(message: str) -> None:
+        source = reached[0] if message == FURTHER_DIAGNOSTICS_NOT_LISTED and reached else message
+        conn.ctx.error(f"{conn.name}: {message}", reason=parse_diagnostic_reason(source))
+
+    bounded = conn._bounded_diagnostics(record)
+
+    def report(message: str) -> None:
+        reached[:] = [message]
+        bounded(message)
+
+    return report
+
+
 def bounded_diagnostics(report: Report, limit: int) -> Report:
     """Bound diagnostics per export while continuing to inspect later records."""
     errors = 0
@@ -517,7 +619,7 @@ def bounded_diagnostics(report: Report, limit: int) -> Report:
         if errors <= limit:
             report(message)
         elif errors == limit + 1:
-            report("further invalid records in this export are not listed individually")
+            report(FURTHER_DIAGNOSTICS_NOT_LISTED)
 
     return limited
 
@@ -574,7 +676,7 @@ def _csv_rows(
                 report(f"CSV row at line {reader.line_num} has the wrong number of columns")
                 continue
             if is_provider_error(rec):
-                report(f"provider error response in CSV row at line {reader.line_num}; coverage incomplete")
+                report(f"{PROVIDER_ERROR_RESPONSE} CSV row at line {reader.line_num}; coverage incomplete")
                 continue
             yield rec
     except csv.Error:
@@ -747,7 +849,7 @@ def offline_pagination_issue(data: dict[str, Any]) -> str | None:
             return "offline export has invalid pagination metadata"
     keys = ("has_more", "IsTruncated", "next_page", "nextPage", *_STRING_CURSORS)
     if any(data.get(key) for key in keys) or metadata.get("next_cursor"):
-        return "offline export contains an uncollected next page"
+        return UNCOLLECTED_NEXT_PAGE
     return None
 
 
@@ -765,7 +867,7 @@ def unwrap(cls: type[BaseConnector], data: Any, failed: Report) -> Iterator[dict
         # single-record exports require the same protection from field collisions.
         native = cls._is_native_offline_record(data)
         if not native and cls._is_error_record(data):
-            failed("provider error response in offline export; coverage is incomplete")
+            failed(f"{PROVIDER_ERROR_RESPONSE} offline export; coverage is incomplete")
             if not wrappers.intersection(data):
                 return
         keys = wrappers.intersection(data) if not native else set()
@@ -798,6 +900,6 @@ def unwrap(cls: type[BaseConnector], data: Any, failed: Report) -> Iterator[dict
                 # observed records.  Keep them, but never mark it complete.
                 yield from cls._unwrap(item, failed)
             else:
-                failed("provider error response in offline export; coverage is incomplete")
+                failed(f"{PROVIDER_ERROR_RESPONSE} offline export; coverage is incomplete")
             continue
         yield {**item, "_kind": record_kind} if record_kind else item

@@ -1417,10 +1417,10 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 return
             pagination_issue = self._offline_pagination_issue(data)
             if pagination_issue:
-                self.ctx.error(f"gateway.logs: {pagination_issue}")
+                self._record_export_diagnostic(pagination_issue)
             yield data
         else:
-            yield from self._unwrap(data, lambda message: self.ctx.error(f"gateway.logs: {message}"))
+            yield from self._unwrap(data, self._record_export_diagnostic)
 
     def _json_gateway_lines(self, lines: Iterable[str]) -> Iterator[dict[str, Any]]:
         invalid = 0

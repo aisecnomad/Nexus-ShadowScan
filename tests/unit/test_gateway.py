@@ -879,3 +879,23 @@ def test_declared_internal_model_host_matches_a_logged_port(tmp_path, run_connec
         "gateway.logs", input=str(source), internal_model_hosts=["tgi.internal.example"]
     )
     assert len(findings) == 1 and _route_warnings(ctx) == []
+
+
+@pytest.mark.parametrize(
+    ("document", "expected"),
+    [
+        ({"error": {"code": 503, "message": "unavailable"}}, {"upstream-error": 1}),
+        ({"data": [{"service": "svc", "model": "gpt-4o"}], "has_more": True}, {"unscanned-input": 1}),
+        ({"logEvents": [], "nextToken": "abc"}, {"unscanned-input": 1}),
+    ],
+    ids=["provider-error-envelope", "next-page", "logevents-next-token"],
+)
+def test_json_export_diagnostics_use_the_shared_loader_categories(
+    tmp_path, run_connector, document, expected
+):
+    # Issue #264 review: gateway.logs parses .json exports itself; a captured provider error
+    # and an uncollected page are counted as the shared offline loader counts them.
+    export = tmp_path / "gateway.json"
+    export.write_text(json.dumps(document))
+    _, ctx = run_connector("gateway.logs", input=str(export))
+    assert ctx.stats.incomplete_reasons == expected

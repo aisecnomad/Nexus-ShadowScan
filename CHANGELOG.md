@@ -8,6 +8,20 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## Unreleased
 
+- Review follow-ups to #310: a scalar subclass whose fields cannot build its
+  standard type (pandas `NaT`) no longer fails the connector, and an `int` or
+  `float` subclass keeps its stored value, and a scalar subclass cannot pass as
+  exact through its metaclass; the shared offline readers, walk and export
+  loader, and `gateway.logs`' JSON exports, name each diagnostic's own category
+  (limits `analysis-limit`, captured provider errors `upstream-error`,
+  uncollected pages, vanished and special files `unscanned-input`, refused
+  links `unresolved-link`) instead of one for every message; Google AI
+  Private Service Connect names led by a location
+  (`us-central1-aiplatform-restricted.p.googleapis.com`) are AI destinations;
+  and the new Google domain signals apply wherever signature hosts are matched,
+  including code, gateway and low-code scans, and an MCP tool description that
+  names such a host is tagged `tool-poisoning`.
+
 - Issue #264 follow-ups: Google AI services reached over Private Service
   Connect (`aiplatform-ENDPOINT.p.googleapis.com`) or a regional service
   endpoint (`aiplatform.REGION.rep.googleapis.com`) are AI destinations in

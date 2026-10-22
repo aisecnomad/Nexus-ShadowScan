@@ -3368,6 +3368,53 @@ def test_openssf_page_statements_about_the_cryptography_match_the_code() -> None
     assert not native, native
 
 
+def _reasonless_diagnostic_lines(source: str) -> list[int]:
+    """Lines of ``ctx.error``/``ctx.warn``/``ctx.coverage_gap`` calls in ``source`` that name no category.
+
+    ``reason=None`` names none either: the text classifier still picks one. A
+    ``warn`` with a literal ``incomplete=False`` (keyword or positional) leaves
+    the scan complete, so it needs no category.
+    """
+    import ast as _ast
+
+    lines: list[int] = []
+    for node in _ast.walk(_ast.parse(source)):
+        if not isinstance(node, _ast.Call) or not isinstance(node.func, _ast.Attribute):
+            continue
+        method = node.func.attr
+        if method not in {"error", "warn", "coverage_gap"}:
+            continue
+        receiver = node.func.value
+        name = receiver.attr if isinstance(receiver, _ast.Attribute) else getattr(receiver, "id", "")
+        if name != "ctx":
+            continue
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+        reason = keywords.get("reason")
+        if reason is not None and not (isinstance(reason, _ast.Constant) and reason.value is None):
+            continue
+        if method == "warn":
+            incomplete = keywords.get("incomplete")
+            if incomplete is None and len(node.args) > 1:
+                incomplete = node.args[1]
+            if isinstance(incomplete, _ast.Constant) and incomplete.value is False:
+                continue
+        lines.append(node.lineno)
+    return lines
+
+
+def test_reasonless_diagnostic_count_treats_reason_none_as_reasonless() -> None:
+    source = (
+        'ctx.error("a")\n'
+        'ctx.error("b", reason=None)\n'
+        'self.ctx.warn("c", reason="analysis-limit")\n'
+        'conn.ctx.warn("d", incomplete=False)\n'
+        'ctx.warn("e", False)\n'
+        'ctx.warn("f", reason=category)\n'
+        'log.error("g")\n'
+    )
+    assert _reasonless_diagnostic_lines(source) == [1, 2]
+
+
 def test_diagnostics_without_an_explicit_reason_only_ever_decrease() -> None:
     """Issue #264: migrate diagnostics from text classification to explicit reason= categories.
 
@@ -3378,34 +3425,16 @@ def test_diagnostics_without_an_explicit_reason_only_ever_decrease() -> None:
     ``connectors/offline.py`` funnels); this count may only fall. When you add
     a ``reason=`` to existing sites, lower the bound to the new count; never
     raise it for new reason-less diagnostics -- name the category at the call.
+    Only direct ``ctx`` calls are counted: diagnostics recorded through a
+    callback and ``ConnectorError`` raise sites are outside it.
     """
-    import ast as _ast
+    sites = [
+        f"{path.relative_to(ROOT)}:{line}"
+        for path in sorted((ROOT / "shadowscan").rglob("*.py"))
+        for line in _reasonless_diagnostic_lines(path.read_text(encoding="utf-8"))
+    ]
 
-    sites: list[str] = []
-    for path in sorted((ROOT / "shadowscan").rglob("*.py")):
-        tree = _ast.parse(path.read_text(encoding="utf-8"))
-        for node in _ast.walk(tree):
-            if not isinstance(node, _ast.Call) or not isinstance(node.func, _ast.Attribute):
-                continue
-            method = node.func.attr
-            if method not in {"error", "warn", "coverage_gap"}:
-                continue
-            receiver = node.func.value
-            name = receiver.attr if isinstance(receiver, _ast.Attribute) else getattr(receiver, "id", "")
-            if name != "ctx":
-                continue
-            keywords = {keyword.arg: keyword.value for keyword in node.keywords}
-            if "reason" in keywords:
-                continue
-            if method == "warn":
-                incomplete = keywords.get("incomplete")
-                if incomplete is None and len(node.args) > 1:
-                    incomplete = node.args[1]
-                if isinstance(incomplete, _ast.Constant) and incomplete.value is False:
-                    continue
-            sites.append(f"{path.relative_to(ROOT)}:{node.lineno}")
-
-    bound = 537
+    bound = 535
     assert len(sites) <= bound, (
         f"{len(sites)} diagnostics lack an explicit reason= (bound {bound}); new diagnostics "
         f"must name their incomplete-reason category. Newest sites:\n" + "\n".join(sites[-10:])

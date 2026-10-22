@@ -108,7 +108,7 @@ signatures:
         names: [google-cloud-discoveryengine, google-cloud-dialogflow-cx, google-cloud-dialogflow, agent-starter-pack]
         weight: 0.85
       - type: domain
-        values: [discoveryengine.googleapis.com, dialogflow.googleapis.com, "re:^[a-z0-9-]+-dialogflow\\.googleapis\\.com$", "re:^[a-z0-9-]+-discoveryengine\\.googleapis\\.com$", "re:^dialogflow-[a-z0-9-]+\\.p\\.googleapis\\.com$", "re:^discoveryengine-[a-z0-9-]+\\.p\\.googleapis\\.com$", "re:^dialogflow\\.[a-z0-9-]+\\.rep\\.googleapis\\.com$", "re:^discoveryengine\\.[a-z0-9-]+\\.rep\\.googleapis\\.com$", agentspace.google.com]
+        values: [discoveryengine.googleapis.com, dialogflow.googleapis.com, "re:^[a-z0-9-]+-dialogflow\\.googleapis\\.com$", "re:^[a-z0-9-]+-discoveryengine\\.googleapis\\.com$", "re:^(?:[a-z]+(?:-[a-z]+)+[0-9]+-|us-|eu-|global-)?dialogflow-[a-z0-9-]+\\.p\\.googleapis\\.com$", "re:^(?:[a-z]+(?:-[a-z]+)+[0-9]+-|us-|eu-|global-)?discoveryengine-[a-z0-9-]+\\.p\\.googleapis\\.com$", "re:^dialogflow\\.[a-z0-9-]+\\.rep\\.googleapis\\.com$", "re:^discoveryengine\\.[a-z0-9-]+\\.rep\\.googleapis\\.com$", agentspace.google.com]
         weight: 0.9
       - type: iac
         values: [google_dialogflow_cx_agent, google_dialogflow_cx_flow, google_dialogflow_cx_intent, google_dialogflow_cx_webhook, google_dialogflow_cx_page, google_dialogflow_cx_generative_settings, google_dialogflow_cx_tool, google_dialogflow_cx_playbook, google_dialogflow_agent, google_dialogflow_intent, google_discovery_engine_data_store, google_discovery_engine_chat_engine, google_discovery_engine_search_engine, google_discovery_engine_target_site, google_vertex_ai_reasoning_engine, google_vertex_ai_rag_engine_config]
