@@ -64,8 +64,12 @@ class ConnectorError(RuntimeError):
 
     ``reason`` is the incomplete-reason category the skip is counted under
     (#264); None keeps the diagnostic-text classification for raise sites
-    that have not yet named one explicitly.
+    that have not yet named one explicitly. The class attribute keeps the
+    handler's read safe for a plugin subclass whose ``__init__`` does not
+    call this one.
     """
+
+    reason: str | None = None
 
     def __init__(self, *args: object, reason: str | None = None) -> None:
         super().__init__(*args)

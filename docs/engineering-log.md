@@ -11,7 +11,7 @@ for people who install and operate ShadowScan. Entries name the pull request
 they came from where one exists, and say what was deliberately not carried.
 Counts and figures quoted in an entry are those of its date.
 
-## 0.1.3 — 2026-11-20
+## Unreleased
 
 ### Issue #264 follow-ups: endpoint forms, surrender scalars, explicit reasons (October 21)
 
@@ -39,14 +39,27 @@ integrations, with regression tests on `main`; the rest land here.
   connector's offline mode reads through) and the export writer and runner
   in `connectors/base.py` recorded their diagnostics without `reason=`, so
   the text classifier put most of them in `other`. Each now names its
-  category at the failure branch (byte and file budgets `analysis-limit`,
-  undecodable or non-JSON input `unparsed-input`, symlinks and special files
-  `unresolved-link`, unreadable directories `access-denied`, oversized
-  skipped files `oversize-file`, unsupported or abandoned inputs
-  `unscanned-input`), `ConnectorError` carries an optional `reason` its
-  handler forwards (None keeps the text classification), and a repository
-  policy ratchet pins the count of reason-less diagnostic sites (537) so it
-  only falls as the #288 migration continues connector by connector.
+  category at the failure branch (byte and line budgets `analysis-limit`,
+  undecodable, non-JSON or corrupt gzip input `unparsed-input`, symlinks and
+  special files `unresolved-link`, unreadable files and directories
+  `access-denied`, files skipped whole for their size `oversize-file`,
+  unsupported or abandoned inputs `unscanned-input`), `ConnectorError`
+  carries an optional `reason` its handler forwards (None keeps the text
+  classification), and a repository policy ratchet pins the count of
+  reason-less diagnostic sites (537) so it only falls as the #288 migration
+  continues connector by connector.
+- Review corrections before merge (October 22): `gzip.BadGzipFile` is an
+  `OSError`, so a corrupt `.gz` export was counted as `access-denied` (whose
+  advice is to check permissions and credentials); it is `unparsed-input`.
+  The whole-file and line readers now count the same input alike: a
+  directory, FIFO, socket or device in a file's place is `unresolved-link`
+  in both (the whole-file reader had `unscanned-input`), and a file over the
+  per-file cap is `oversize-file` in both (the line reader had
+  `analysis-limit`). `ConnectorError.reason` is also a class attribute, so a
+  plugin subclass whose `__init__` does not call the base one cannot turn
+  the skip handler's read into an `AttributeError` that escapes `run()`.
+  The entries moved from the 0.1.3 section to `## Unreleased`: `v0.1.3` was
+  tagged on `aee3c984`, which does not contain them.
 - Also from the #308 review follow-ups: a dead read in
   `_redact_credential_calls` is removed and the migration-notes sections are
   ordered newest first. The `token (it's` prose shape from #264 is fixed on
@@ -55,6 +68,8 @@ integrations, with regression tests on `main`; the rest land here.
   that picks literals out of a completed past-bound credential call is
   unsafe — and stays recorded on the issue, with the many-opener extension
   budget exhaustion, as precision work needing its own design review.
+
+## 0.1.3 — 2026-11-20
 
 ### A README that stays true on the frozen PyPI page (October 22)
 

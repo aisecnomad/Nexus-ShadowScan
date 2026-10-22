@@ -232,3 +232,30 @@ def test_a_connector_error_reason_counts_the_skip(index):
     other = ConnectorContext(config={}, index=index)
     _Odd(other).run()
     assert other.stats is not None and other.stats.incomplete_reasons == {"timeout": 1}
+
+
+def test_a_connector_error_subclass_that_skips_the_base_init_is_still_handled(index):
+    # A plugin's ConnectorError subclass need not call ConnectorError.__init__;
+    # the handler must still record the skip instead of raising AttributeError.
+    class _PluginError(ConnectorError):
+        def __init__(self, detail: str) -> None:
+            self.detail = detail
+
+        def __str__(self) -> str:
+            return self.detail
+
+    class _Plugin(_Oversized):
+        name = "test.plugin"
+
+        def collect(self):
+            raise _PluginError("test.plugin: deadline exceeded while listing")
+            yield  # pragma: no cover
+
+        def analyze(self, records):
+            list(records)
+            return []
+
+    ctx = ConnectorContext(config={}, index=index)
+    assert _Plugin(ctx).run() == []
+    assert ctx.stats is not None and ctx.stats.skipped
+    assert ctx.stats.incomplete_reasons == {"timeout": 1}

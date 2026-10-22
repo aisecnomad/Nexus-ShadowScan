@@ -323,6 +323,10 @@ def read_offline_bytes(
         if modified:
             raise ValueError("offline input changed while being read")
         return raw
+    except NotRegularFileError as exc:
+        # A directory, FIFO, socket or device in the file's place, as iter_bounded_lines counts it.
+        conn.ctx.error(f"{conn.name}: {exc}", reason="unresolved-link")
+        return None
     except ValueError as exc:
         # The two raises above are fixed literals; anything else is an unread input.
         category = "oversize-file" if "byte limit" in str(exc) else "unscanned-input"
@@ -370,7 +374,8 @@ def iter_bounded_lines(
         with open_confined_file(path.expanduser().absolute(), label="offline input") as (raw, before):
             if before.st_size > min(conn.max_input_file_bytes, conn._MAX_OFFLINE_FILE_BYTES):
                 budget.limit_hit = f"max_input_file_bytes ({conn.max_input_file_bytes})"
-                ctx.warn(f"{name}: {budget.limit_hit} reached", reason="analysis-limit")
+                # The whole file is skipped for its size, as read_offline_bytes counts it.
+                ctx.warn(f"{name}: {budget.limit_hit} reached", reason="oversize-file")
                 return
             stream = gzip.GzipFile(fileobj=raw, mode="rb") if compressed else raw
             file_bytes = 0
@@ -418,9 +423,11 @@ def iter_bounded_lines(
         ctx.warn(f"{name}: {exc}", reason="unresolved-link")
     except (OSError, EOFError, gzip.BadGzipFile, ValueError, zlib.error) as exc:
         detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+        # BadGzipFile is an OSError, but a corrupt archive is content that did not parse.
+        unreadable = isinstance(exc, OSError) and not isinstance(exc, gzip.BadGzipFile)
         ctx.warn(
             f"{name}: offline input could not be read ({detail})",
-            reason="access-denied" if isinstance(exc, OSError) else "unparsed-input",
+            reason="access-denied" if unreadable else "unparsed-input",
         )
 
 
