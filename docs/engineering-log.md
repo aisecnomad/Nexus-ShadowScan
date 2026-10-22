@@ -765,11 +765,10 @@ CVE-2026-111943 (HIGH) in Wolfi `ca-certificates-bundle` 20260909-r2, fixed in
   for stale counts or the former repository name. The newest section, dated or
   `## Unreleased`, is now treated as current; contributor guidance names that
   section instead of `## Unreleased`.
-- The product guide and security policy said 0.1.3 was prepared for TestPyPI
-  and then PyPI and that 0.1.2 remained the latest published release; the
-  publication record dated 2026-10-22 replaces that wording. The README, which
-  is the PyPI project description, names no release date or state, so it stays
-  accurate on the 0.1.3 project page.
+- The README, product guide and security policy say 0.1.3 is planned for
+  TestPyPI and then PyPI on 2026-11-20 and that 0.1.2 remains the latest
+  published release. The README is the PyPI project description, so its wording
+  stays accurate on the 0.1.3 project page after publication.
 
 ### Repository hygiene after the 0.1.3 candidate (October 21)
 

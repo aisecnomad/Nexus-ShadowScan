@@ -1,6 +1,6 @@
 # Roadmap
 
-ShadowScan 0.1.3 is the published alpha pre-release (`NexusShadowScan` on
+ShadowScan 0.1.3 is the published alpha release (`NexusShadowScan` on
 PyPI, tag `v0.1.3`); `main` carries unreleased changes. This roadmap is
 intent, not a contract. Items move only when they keep the
 fail-closed trust model.

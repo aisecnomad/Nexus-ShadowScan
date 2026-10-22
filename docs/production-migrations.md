@@ -273,7 +273,7 @@ Expect these exit-code changes against the earlier October 17 behaviour:
 
 ## October 17 engine review migration (Unreleased)
 
-- **Every incremental cache entry misses once.** The entry format moves to 5:
+- **Every incremental cache entry misses once.** The entry format moves to 6:
   entries now record the scan-wide `max_coverage_gap` they were judged under,
   the coverage ledger and the declared omission count. Every existing entry,
   keyed or unkeyed, misses once after upgrading, so the first incremental scan

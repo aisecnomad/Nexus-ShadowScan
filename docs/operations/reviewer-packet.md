@@ -157,7 +157,7 @@ regressions. Use [repository-level field acceptance](../evaluation.md#repository
 for fresh independently selected full repositories; obtain human labels and
 authorized live tenant receipts before declaring those checks complete.
 
-For the unreleased Python re-export and governance assurance changes, review
+For the 0.1.3 Python re-export and governance assurance changes, review
 these paired cases:
 
 - A supported Python import-only re-export versus a cycle, a shadowed binding
@@ -176,7 +176,7 @@ the authored regression cases in this change are not a held-out field sample.
 
 ## Suggested deliverable
 
-For the unreleased review corrections, verify these paired cases:
+For the 0.1.3 review corrections, verify these paired cases:
 
 - Matching versus conflicting Python imports across exception and pattern-match
   alternatives, including handler aliases, guards and a no-match path. An

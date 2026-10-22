@@ -2,8 +2,8 @@
 
 ## From PyPI
 
-The published alpha `0.1.3` supports Python 3.11–3.14. Use a fresh virtual
-environment:
+The published alpha `0.1.3` supports Python 3.11–3.14 (on 3.12, use 3.12.4 or
+later). Use a fresh virtual environment:
 
 ```bash
 python -m pip install NexusShadowScan            # or: pipx install NexusShadowScan
