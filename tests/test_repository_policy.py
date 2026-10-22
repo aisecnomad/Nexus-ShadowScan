@@ -3366,3 +3366,47 @@ def test_openssf_page_statements_about_the_cryptography_match_the_code() -> None
         for path in (ROOT / directory).rglob(pattern)
     ]
     assert not native, native
+
+
+def test_diagnostics_without_an_explicit_reason_only_ever_decrease() -> None:
+    """Issue #264: migrate diagnostics from text classification to explicit reason= categories.
+
+    A diagnostic recorded without ``reason=`` is classified from its text by
+    ``incomplete_reason``, which lands ~40% of them in the ``other`` catch-all
+    the categories were meant to avoid. The migration is site by site (#288
+    moved ten, this ratchet's introduction moved the ``base.py`` and
+    ``connectors/offline.py`` funnels); this count may only fall. When you add
+    a ``reason=`` to existing sites, lower the bound to the new count; never
+    raise it for new reason-less diagnostics -- name the category at the call.
+    """
+    import ast as _ast
+
+    sites: list[str] = []
+    for path in sorted((ROOT / "shadowscan").rglob("*.py")):
+        tree = _ast.parse(path.read_text(encoding="utf-8"))
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.Call) or not isinstance(node.func, _ast.Attribute):
+                continue
+            method = node.func.attr
+            if method not in {"error", "warn", "coverage_gap"}:
+                continue
+            receiver = node.func.value
+            name = receiver.attr if isinstance(receiver, _ast.Attribute) else getattr(receiver, "id", "")
+            if name != "ctx":
+                continue
+            keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+            if "reason" in keywords:
+                continue
+            if method == "warn":
+                incomplete = keywords.get("incomplete")
+                if incomplete is None and len(node.args) > 1:
+                    incomplete = node.args[1]
+                if isinstance(incomplete, _ast.Constant) and incomplete.value is False:
+                    continue
+            sites.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+
+    bound = 537
+    assert len(sites) <= bound, (
+        f"{len(sites)} diagnostics lack an explicit reason= (bound {bound}); new diagnostics "
+        f"must name their incomplete-reason category. Newest sites:\n" + "\n".join(sites[-10:])
+    )

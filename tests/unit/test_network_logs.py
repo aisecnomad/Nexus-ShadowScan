@@ -1328,3 +1328,24 @@ def test_dns_store_accounting_stays_exact_under_overflow(monkeypatch):
             assert not (state.lossy and state.spans)
             assert all(len(spans) <= 3 for (sig, _), spans in state.spans.items() if not sig)
             assert state.ai_spans == sum(len(spans) for (sig, _), spans in state.spans.items() if sig) <= 4
+
+
+def test_private_service_connect_and_regional_endpoints_are_ai_hosts(run_connector, tmp_path):
+    # Issue #264: a Google AI API reached over Private Service Connect
+    # (``SERVICE-ENDPOINT.p.googleapis.com``) or its documented regional service
+    # endpoint (``SERVICE.REGION.rep.googleapis.com``) is the same destination
+    # as the public name; another service's private name is not an AI host.
+    log = tmp_path / "psc_dns.csv"
+    log.write_text(
+        "timestamp,client_ip,query,answers\n"
+        '2025-09-29T09:00:00Z,192.168.5.30,aiplatform-prodpsc.p.googleapis.com,"10.10.0.5"\n'
+        '2025-09-29T09:00:01Z,192.168.5.30,generativelanguage.us-central1.rep.googleapis.com,"10.10.0.6"\n'
+        '2025-09-29T09:00:02Z,192.168.5.31,storage-prodpsc.p.googleapis.com,"10.10.0.7"\n'
+        '2025-09-29T09:00:03Z,192.168.5.31,not-aiplatform-prodpsc.p.googleapis.com,"10.10.0.8"\n'
+    )
+    found, stats = scan(run_connector, log)
+    assert not stats.errors and not stats.incomplete
+    assert set(found) == {
+        ("192.168.5.30", "provider.google-vertex-ai"),
+        ("192.168.5.30", "provider.google-gemini"),
+    }

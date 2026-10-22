@@ -6,6 +6,17 @@ One summary per release. Detailed implementation history is maintained in the
 explain operator migrations. Earlier per-change entries are preserved in the
 [change-history archive](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/history/changelog-detail.md).
 
+## Unreleased
+
+- Issue #264 follow-ups: Google AI services reached over Private Service
+  Connect (`aiplatform-ENDPOINT.p.googleapis.com`) or a regional service
+  endpoint (`aiplatform.REGION.rep.googleapis.com`) are AI destinations in
+  network logs and eBPF events; an overrun scan's surrender keeps a finding
+  whose metadata holds a scalar subclass (an `IntEnum`, a numpy scalar, a
+  `datetime` subclass); and the shared offline-input and export funnels count
+  their diagnostics under explicit incomplete reasons, with a ratchet so
+  reason-less diagnostics only ever decrease.
+
 ## 0.1.3 — 2026-10-22
 
 - The README, which is the PyPI description, reads correctly on the frozen

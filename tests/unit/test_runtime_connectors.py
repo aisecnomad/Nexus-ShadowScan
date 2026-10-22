@@ -2781,6 +2781,34 @@ def test_ebpf_wrapped_hubble_keeps_an_enriched_top_level_destination():
 
 
 @pytest.mark.parametrize("service", sorted(GCP_AI_SERVICES))
+def test_ebpf_google_ai_regional_service_endpoint_destination(service):
+    # Issue #264: the documented regional service endpoint form
+    # (``SERVICE.REGION.rep.googleapis.com``) is the same destination as the
+    # public name.
+    connector = _ebpf_connector()
+    endpoint = service.removesuffix(".googleapis.com") + ".us-central1.rep.googleapis.com"
+    [finding] = connector.analyze([{"process_name": "python", "destination": endpoint, "port": 443}])
+    assert "llm-egress" in finding.tags
+    assert connector.ctx.stats.warnings == []
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "storage.us-central1.rep.googleapis.com",
+        "xaiplatform.us-central1.rep.googleapis.com",
+        "aiplatform.us-central1.rep.googleapis.com.example.com",
+        "fake.aiplatform.us-central1.rep.googleapis.com",
+        "aiplatform." + "x" * 64 + ".rep.googleapis.com",
+    ],
+)
+def test_ebpf_regional_service_endpoint_keeps_service_and_label_boundaries(endpoint):
+    connector = _ebpf_connector()
+    assert list(connector.analyze([{"process_name": "python", "destination": endpoint, "port": 443}])) == []
+    assert connector.ctx.stats.warnings == []
+
+
+@pytest.mark.parametrize("service", sorted(GCP_AI_SERVICES))
 def test_ebpf_google_ai_private_service_connect_destination(service):
     connector = _ebpf_connector()
     endpoint = service.removesuffix(".googleapis.com") + "-prodpsc.p.googleapis.com"
