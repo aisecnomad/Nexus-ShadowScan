@@ -2134,16 +2134,16 @@ _GAP_BUDGET_CLAIM = re.compile(r"(\d+(?:\.\d+)?)% coverage budget")
 
 
 def test_documented_coverage_budget_matches_the_default() -> None:
-    """The README states the gap budget; the code sets it.
+    """The product guide states the gap budget; the code sets it.
 
-    Every other count in this README is pinned to the code. The fail-closed
+    Every other count in the README and product guide is pinned to the code. The fail-closed
     wording describes behaviour an operator relies on for a CI gate, so it is
     pinned too rather than left to drift the way it did when the budget was
     introduced.
     """
     actual = DEFAULT_MAX_GAP_RATIO * 100
     claims = [(path, m) for path in _current_docs() for m in _GAP_BUDGET_CLAIM.finditer(_read(path))]
-    assert claims, "the README should state the coverage-gap budget"
+    assert claims, "the product guide should state the coverage-gap budget"
     for path, match in claims:
         claimed = float(match.group(1))
         assert claimed == actual, (
@@ -2186,8 +2186,10 @@ def test_the_fail_closed_summary_names_the_coverage_budget() -> None:
     )
     assert "report" in summary.lower(), "it must also say a tolerated gap is still reported"
 
-    pipeline = next((para for para in re.split(r"\n\s*\n", readme) if "fail closed:" in para), None)
-    assert pipeline is not None, "the README should keep its fail-closed pipeline paragraph"
+    # The README keeps only the capability row; the product guide carries the detail.
+    guide = _read(ROOT / "docs" / "reference" / "product-guide.md")
+    pipeline = next((para for para in re.split(r"\n\s*\n", guide) if "fail closed:" in para), None)
+    assert pipeline is not None, "the product guide should keep its fail-closed pipeline paragraph"
     assert "budget" in pipeline, "the pipeline paragraph must name the coverage budget"
     assert "strict_coverage" in pipeline, "and the option that restores strict accounting"
 

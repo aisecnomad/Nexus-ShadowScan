@@ -202,7 +202,7 @@ def test_make_and_ci_run_the_same_self_scan_on_every_python() -> None:
 
 
 def test_documents_describe_the_self_scan_and_the_gates_of_make_check() -> None:
-    for document in ("README.md", "docs/getting-started/quickstart.md", "docs/testing.md"):
+    for document in ("docs/getting-started/quickstart.md", "docs/testing.md"):
         assert "make self-scan" in _text(ROOT / document), f"{document} no longer names make self-scan"
     assert "shadowscan.self-scan.yaml" in _text(ROOT / "examples" / "README.md")
 

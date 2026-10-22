@@ -648,10 +648,11 @@ class TestEndToEnd:
         for key in match.group(1).split("."):
             published = published[key]
         assert published == stats.coverage["details"]
-        readme = (Path(__file__).resolve().parents[2] / "README.md").read_text(encoding="utf-8")
-        assert "`stats[].coverage.details`" in readme
+        guide = Path(__file__).resolve().parents[2] / "docs" / "reference" / "product-guide.md"
+        guide_text = guide.read_text(encoding="utf-8")
+        assert "`stats[].coverage.details`" in guide_text
         assert "``stats[].coverage.details``" in (coverage.__doc__ or "")
-        assert "coverage_gaps" not in readme + (coverage.__doc__ or "")
+        assert "coverage_gaps" not in guide_text + (coverage.__doc__ or "")
 
     def test_the_sarif_verdict_reads_cleanly_and_names_the_json_report(self, tmp_path) -> None:
         """SARIF escapes brackets in a message and has no coverage block of its own."""
@@ -689,7 +690,7 @@ class TestDocumentation:
         assert f"The first {MAX_PUBLISHED_GAPS} gaps" in section
         assert "SARIF has no coverage block" in section
 
-    @pytest.mark.parametrize("name", ["README.md", "docs/engineering-log.md"])
+    @pytest.mark.parametrize("name", ["docs/reference/product-guide.md", "docs/engineering-log.md"])
     def test_no_document_says_every_tolerated_gap_is_listed(self, name: str) -> None:
         """Only the first MAX_PUBLISHED_GAPS are listed; details_truncated counts the rest."""
         text = " ".join((self.ROOT / name).read_text(encoding="utf-8").split())
