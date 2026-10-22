@@ -84,14 +84,19 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
    included), so it must already read correctly for the published release: no
    planned date, no earlier release named as the latest, no wording that calls
    the candidate unpublished, and its images pinned to a commit on `main` whose
-   `docs/assets` files are byte-identical to the candidate's
-   (`test_readme_images_are_pinned_to_one_commit_holding_the_current_assets`
-   checks this in a full clone). Merge through the normal review process.
+   `docs/assets` files are byte-identical to the candidate's. CI's depth-1
+   checkouts cannot read the pinned commit, so in a full clone checked out at
+   the candidate run
+   `SHADOWSCAN_RELEASE_CANDIDATE=1 python -m pytest -rs tests/test_repository_consistency.py -k readme_images`
+   and confirm both tests passed rather than skipped; re-pin the images in a
+   reviewed change if they fail. Merge through the normal review process.
 2. **Review and accept the exact commit**, as the
    [release process](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/GOVERNANCE.md#release-process)
    requires. A green CI run is not that review.
-3. **Rehearse on TestPyPI.** Dispatch **Release candidate evidence** on `main`
-   from an administrator-authenticated GitHub CLI, then approve the
+3. **Rehearse on TestPyPI.** The upload freezes `README.md` as that
+   version's project description, so first repeat the step 1 `readme_images` check in a
+   full clone at the reviewed commit. Dispatch **Release candidate evidence** on
+   `main` from an administrator-authenticated GitHub CLI, then approve the
    `testpypi` deployment:
 
    ```bash

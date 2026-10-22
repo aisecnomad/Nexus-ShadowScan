@@ -97,9 +97,9 @@ report ──── table · json · sarif · csv · markdown · html · cyclone
 JSON reports ── diff · merge (fleet) · dashboard · controls · inventory stubs
 ```
 
-Detection knowledge lives in YAML signature packs and threat and control
-references in YAML mapping catalogs, so adding a product is a data change, not
-a code change.
+Most detection knowledge lives in YAML signature packs, and threat and control
+references in YAML mapping catalogs, so recognizing a new product is usually a
+data change rather than a code change.
 
 Collection and analysis fail closed: an API error, a timeout,
 a refused page, an unparseable manifest or a malformed export marks the scan
@@ -124,12 +124,12 @@ for the pipeline, the package layout and the connector contract.
 | **8 output formats** | `table` · `json` · `sarif` · `csv` · `markdown` · `html` · `cyclonedx` · `ocsf` |
 | **Risk scoring** | Additive, explainable 0-100 score with per-factor breakdown |
 | **Autonomy classification** | L0 (Chatbot) through L5 (Fully Autonomous) interval |
-| **Inventory reconciliation** | Agent Cards, `agents.yaml` lists, CSV inventories |
+| **Inventory reconciliation** | Agent Capability Cards, `agents.yaml` lists, CSV inventories, trusted vendor registries |
 | **Threat & control mappings** | OWASP ASI, OWASP LLM, MITRE ATLAS, MAESTRO, NIST AI RMF, ISO/IEC 42001, EU AI Act, AIUC-1 |
 | **Fleet operations** | Merge reports, dashboard, diff for drift detection, control evidence |
 | **CI/CD integration** | GitHub Actions SARIF upload, deterministic exit codes, drift gating |
 | **Fail-closed design** | Errors, timeouts and unbounded gaps produce exit 3 (incomplete), never a smaller clean report. Bounded gaps are budgeted (2% of entries by default) and always reported |
-| **Credential safety** | Known credential formats redacted before persistence; secret stores read for names only |
+| **Credential safety** | Known credential formats redacted before persistence; secret stores read for names and metadata only (Azure App Service settings are read and redacted) |
 
 ---
 
@@ -352,7 +352,7 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
 │ 133 findings  •  129 shadow (inventory: 4 registered agents)               │
 │ critical 16  high 51  medium 65  low 1                                     │
-│ cloud 30 identity 19 endpoint 18 …                                         │
+│ surfaces: cloud 30, code 13, endpoint 18, gateway 11, identity 19, …       │
 ╰────────────────────────────────────────────────────────────────────────────╯
  CRITICAL 100  SHADOW  code     agent-config Claude Code configured in repository root
  CRITICAL 100  SHADOW  code     mcp-server   MCP configuration: .mcp.json
@@ -801,7 +801,7 @@ credentials, personal data, and sensitive inventory even after redaction.
 ## Safety and security notes
 
 * Known credential formats, sensitive configuration fields, and credential-bearing URLs are **redacted** before findings or sanitized record exports are persisted. Redaction cannot identify every arbitrary secret; reports still contain security-sensitive inventory data.
-* Secret stores (Secrets Manager, Key Vault, Secret Manager, OCI Vault) are read for **names only**.
+* Secret stores (AWS Secrets Manager and Systems Manager Parameter Store, Google Secret Manager, OCI Vault) are read for **names and metadata only**. By default the Azure collector also reads App Service application settings: that call returns plaintext values and needs `Microsoft.Web/sites/config/list/action`, a Contributor-class permission that Reader lacks; the values are checked for credentials and redacted before persistence. Set `include_app_settings: false` to skip the call and the permission.
 * JWTs are never persisted; findings reference a truncated hash.
 * Built-in collectors inspect provider resources using read operations. Scope the audit identity to the documented read permissions and review any enabled third-party plugin separately.
 

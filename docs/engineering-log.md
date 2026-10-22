@@ -18,69 +18,87 @@ Counts and figures quoted in an entry are those of its date.
 `README.md` is the PyPI project description, and a version's description can
 never change after upload; the TestPyPI rehearsal freezes it too, before the
 tag exists. The 0.1.3 candidate's README would have stayed on both pages
-saying that 0.1.3 was planned for 2026-11-20, that 0.1.2 was the latest
-release, that "PyPI 0.1.2" supported only Python 3.11–3.13, and that newer
-commands needed a source install. An earlier entry below says the planned-date
-wording "stays accurate on the 0.1.3 project page after publication"; it does
-not, because the publishing runbook updated the README only after the upload.
+saying that 0.1.3 was planned (or, after #311, prepared) and unpublished, that
+0.1.2 was the latest release, that "PyPI 0.1.2" supported only Python
+3.11–3.13, and that newer commands needed a source install. An earlier entry
+below says the planned-date wording "stays accurate on the 0.1.3 project page
+after publication"; it does not, because the publishing runbook updated the
+README only after the upload. This change carries #311's commit and replaces
+it.
 
-- The README now names no release, date or "latest" version. The release state
-  says how to tell a published version (the PyPI release history and the
-  release tags), the requirements state the range of the release that ships
-  them (CPython 3.11–3.14, 3.12.4 or later on 3.12), and the documentation
-  section says the links track `main` and where an installed version's docs are.
-  The README's 3.11–3.13 exemption in the interpreter-span test is removed with
-  the note it covered. The publishing runbook checks the README when the
-  candidate is prepared (step 1) and no longer edits it after the upload
-  (step 8).
+- The README names no release, date or "latest" version. It says that on PyPI
+  it describes the release it was uploaded with and on `main` the current
+  source, which can be ahead of the latest release in commands, options and
+  Python versions; the release state says how to tell a published version
+  (the PyPI release history and the release tags); the documentation note says
+  where an installed release's docs are. The README's 3.11–3.13 exemption in
+  the interpreter-span test is removed with the note it covered. The
+  publishing runbook checks the README when the candidate is prepared (step 1)
+  and again before the rehearsal (step 3), and no longer edits it after the
+  upload (step 8).
 - The four README images loaded from `main`, so the frozen page would have
-  shown later banners and charts under its own text: the hero shows the
-  connector and signature counts, and the charts the benchmark figures the
-  table quotes. They now load from one full commit SHA, like the ShadowBench
-  report links. `test_readme_images_are_pinned_to_one_commit_holding_the_current_assets`
-  requires that, and in a full clone checks the pinned files are byte-identical
-  to the working tree, so regenerating an asset fails until the README is
-  re-pinned. `test_readme_links_work_on_the_package_index` now also reads the
-  `src` and `href` attributes of HTML tags, which it skipped.
-- Install and a first scan come first, followed by the tested offline-demo
-  output (`test_readme_demo_output_matches_the_offline_demo` now checks the
-  README's copy as well as the product guide's). An alpha, single-maintainer
-  and fail-closed note sits under the introduction, and the platform is stated:
-  Linux x86_64 is the validated deployment platform, macOS is tested for
-  development use, and Windows is refused.
-- Corrections found by checking every README claim against the code:
+  shown later banners and charts under its own text: the banner shows the
+  connector and signature counts, and the charts the figures the table quotes.
+  They now load from one full commit SHA, like the ShadowBench report links.
+  `test_readme_images_are_pinned_to_one_commit_holding_them` reads HTML and
+  Markdown images in every URL form that serves a repository file, requires one
+  40-character pin and existing assets, and in a full clone requires the pinned
+  commit to be in the history and to hold each file; CI's depth-1 checkout
+  checks only the form. Byte identity with the tree is a release-candidate
+  check (`test_readme_images_match_the_release_candidate`, run with
+  `SHADOWSCAN_RELEASE_CANDIDATE=1`), because adding a signature or connector
+  regenerates the banner and would otherwise fail every full-clone `make check`
+  until a follow-up re-pins. `test_readme_links_work_on_the_package_index` now
+  also reads HTML `src` and `href` attributes, quoted or not, which it skipped.
+- Install and a first scan come first, followed by the offline demo and its
+  abridged output. `test_readme_demo_output_matches_the_offline_demo` checks
+  the README's copy as well as the product guide's, and the two demo-output
+  tests share one demo run. An alpha, single-maintainer note sits under the
+  introduction, and the platform is stated: CI validates the hash-locked
+  install on Linux x86_64 only and runs the suite on macOS for development,
+  and Windows is refused except for the top-level `--help` and `--version`.
+- Corrections found by checking every README claim against the code and the
+  pinned ShadowBench reports:
   - "Currently the best-in-class open-source shadow AI scanner on ShadowBench"
-    is removed. The product guide says the archived scores establish no product
-    ranking, and in the cases run another tool has the higher in-scope F1. The
-    section now states what the three runs show, dated, with the caveats as a
-    list.
+    is removed. The product guide says the archived scores establish no
+    product ranking, and in the cases run AI-Infra-Guard's in-scope entity F1
+    (0.90, network only) is higher than ShadowScan's (0.82). The section states
+    what the three runs show, defines estate recall (over expected entities)
+    and in-scope value F1, and keeps every caveat as a list; the benchmarks are
+    described as built with AI coding assistants, as the product guide says.
   - The live and offline row said all 38 connectors replay exports and the
     other 10 are replay-only "by nature". 35 replay exports, the three code
-    connectors read a checkout or clones, and Kubernetes and OpenShift are
-    replay-only by design (README and product guide).
+    connectors read a checkout or clones, and the 10 read only exports by
+    design (README and product guide).
   - The self-scan paragraph blamed redaction test files exceeding sanitizer
     limits. `shadowscan code .` on a clone exits 3 because three files exceed
-    the per-file credential quota and the optional `benchmark-suite` submodule
-    is not initialized (README and product guide).
+    the credential quota of five per format and the optional
+    `benchmark-suite` submodule is not initialized (README and product guide).
   - `shadowscan run code.github --set repos=OWNER/REPO` exits 3: a single
-    `--set` value stays a string, which `repos` refuses. The table shows the
-    JSON-list form.
+    `--set` value stays a string, which `repos` refuses. The table now shows
+    `shadowscan code --github-repo OWNER/REPO`.
   - The coverage budget gains its cap (at most 100 weighted entries per scan
-    root), `--quick` its Git 2.45 requirement, the secret-store bullet the
-    Azure App Service settings it does read, and a bullet on what leaves the
-    machine. 0.1.3 is an alpha release, not a pre-release: pip installs it by
-    default.
-- The package summary drops the repeated name, keeps every surface word and the
-  "evidence" qualifier, and is 127 characters. The keywords drop generic terms
-  and the `langchain` detection target. The classifiers add
-  `Intended Audience :: Developers`, `Python :: 3 :: Only`,
-  `Implementation :: CPython` and `Topic :: Scientific/Engineering :: Artificial
-  Intelligence`. `Operating System :: MacOS` is not added, because macOS is
-  tested for development, not validated for deployment.
+    root), `--quick` its Git 2.45 requirement, the install block one installer
+    for the `cloud` extra, the secret-store bullet the Azure App Service
+    settings it does read (with their Contributor-class permission; Azure
+    reads no Key Vault secrets, also corrected in the product guide and
+    SECURITY.md), and the safety section what is never executed and what
+    leaves the machine. 0.1.3 is an alpha release, not a pre-release: pip
+    installs it by default.
+  - The authorship sentence names the two README pull requests (#229, #275)
+    carried from another account with co-author credit.
+- The package summary drops the repeated name, keeps every surface word, adds
+  the README tagline's "evidence" qualifier, and is 127 characters. The keywords
+  (also in CITATION.cff) drop generic terms and the `langchain` detection
+  target. The classifiers add `Intended Audience :: Developers`,
+  `Python :: 3 :: Only`, `Implementation :: CPython` and
+  `Topic :: Scientific/Engineering :: Artificial Intelligence`;
+  `Operating System :: MacOS` is not added, because macOS is tested for
+  development, not validated for deployment.
 - Not carried: rewriting links to the release tag at build time (the tag does
   not exist during the TestPyPI rehearsal, and the attested artifacts are built
-  from the reviewed tree unchanged) and appending release notes to the
-  description.
+  from the reviewed tree unchanged), appending release notes to the
+  description, and removing the counts from the banner.
 
 ### Blocking container vulnerabilities named as check annotations (October 21)
 

@@ -385,18 +385,42 @@ def test_absolute_repository_links_resolve_in_this_checkout(markdown: Path) -> N
     assert not problems, f"{_relative(markdown)}:\n  " + "\n  ".join(problems)
 
 
-_HTML_LINK_ATTRIBUTE = re.compile(r"""\b(?:src|href)\s*=\s*["']([^"']+)["']""")
+_HTML_LINK_ATTRIBUTE = re.compile(
+    r"""\b(src|href)\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s"'=<>`]+))""", re.IGNORECASE
+)
+_MARKDOWN_IMAGE = re.compile(r"!\[[^\]]*\]\(\s*<?([^)\s>]+)")
 # README images load from one full commit SHA, so the description frozen on a release's PyPI page
 # keeps showing the diagrams and charts its text describes after `main` regenerates or moves them.
 _PINNED_ASSET = re.compile(
     r"^https://raw\.githubusercontent\.com/aisecnomad/Nexus-ShadowScan/([0-9a-f]{40})/(docs/assets/[^/?#]+)$"
 )
+# Every URL form that serves a file of this repository at a ref; workflow badges are not among them.
+_REPOSITORY_FILE = re.compile(
+    r"^https?://(?:raw\.githubusercontent\.com/aisecnomad/Nexus-ShadowScan/"
+    r"|github\.com/aisecnomad/Nexus-ShadowScan/(?:raw|blob)/)",
+    re.IGNORECASE,
+)
+
+
+def _html_attributes(text: str) -> Iterator[tuple[int, str, str]]:
+    for number, line in _prose_lines(text):
+        for match in _HTML_LINK_ATTRIBUTE.finditer(_INLINE_CODE.sub("", line)):
+            yield number, match.group(1).lower(), next(value for value in match.groups()[1:] if value)
 
 
 def _html_link_targets(text: str) -> Iterator[tuple[int, str]]:
-    for number, line in _prose_lines(text):
-        for match in _HTML_LINK_ATTRIBUTE.finditer(_INLINE_CODE.sub("", line)):
-            yield number, match.group(1)
+    for number, _, target in _html_attributes(text):
+        yield number, target
+
+
+def _image_sources(text: str) -> Iterator[str]:
+    yield from (target for _, name, target in _html_attributes(text) if name == "src")
+    for _, line in _prose_lines(text):
+        yield from _MARKDOWN_IMAGE.findall(_INLINE_CODE.sub("", line))
+
+
+def _git(*args: str) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, check=False)
 
 
 def test_readme_links_work_on_the_package_index() -> None:
@@ -411,35 +435,71 @@ def test_readme_links_work_on_the_package_index() -> None:
     assert _pyproject()["project"]["readme"] == "README.md"
 
 
-def test_readme_images_are_pinned_to_one_commit_holding_the_current_assets() -> None:
-    """Every README image of this repository loads from one full SHA, never from a moving branch.
-
-    Where the pinned commit is in the local history (a full clone, not CI's depth-1 checkout),
-    each pinned file must also be byte-identical to the working tree, so regenerating an asset
-    fails here until the README is re-pinned to a commit on `main` that holds it.
-    """
+def _readme_image_pin() -> tuple[str, list[str]]:
+    """The commit every README image of this repository is pinned to, and the pinned paths."""
     images = [
-        target
-        for _, target in _html_link_targets(_read(ROOT / "README.md"))
-        if "raw.githubusercontent.com/aisecnomad/" in target
+        target for target in _image_sources(_read(ROOT / "README.md")) if _REPOSITORY_FILE.match(target)
     ]
     assert images, "the README should show the banner, the architecture diagram and the charts"
     pins = [_PINNED_ASSET.match(target) for target in images]
     assert all(pins), "pin README images to a 40-character commit SHA: " + repr(
         [target for target, pin in zip(images, pins, strict=True) if not pin]
     )
-    assert len({pin.group(1) for pin in pins if pin}) == 1, "pin every README image to the same commit"
-    for pin in filter(None, pins):
-        assert (ROOT / pin.group(2)).is_file(), f"{pin.group(2)} is not in the repository"
-        pinned = subprocess.run(
-            ["git", "-C", str(ROOT), "cat-file", "blob", f"{pin.group(1)}:{pin.group(2)}"],
-            capture_output=True,
-            check=False,
+    commits = {pin.group(1) for pin in pins if pin}
+    assert len(commits) == 1, "pin every README image to the same commit"
+    paths = [pin.group(2) for pin in pins if pin]
+    for path in paths:
+        assert (ROOT / path).is_file(), f"{path} is not in the repository"
+    return commits.pop(), paths
+
+
+def _pinned_commit_in_history(commit: str) -> None:
+    """Skip outside a Git checkout or in a shallow one; fail if ``commit`` is not in this history."""
+    top = _git("rev-parse", "--show-toplevel")
+    if top.returncode != 0 or Path(top.stdout.decode().strip()).resolve() != ROOT.resolve():
+        pytest.skip("not a Git checkout of this repository")
+    if _git("cat-file", "-e", f"{commit}^{{commit}}").returncode != 0:
+        if _git("rev-parse", "--is-shallow-repository").stdout.strip() == b"true":
+            pytest.skip(f"shallow clone without {commit[:12]}; check the pinned images in a full clone")
+        pytest.fail(f"README images are pinned to {commit[:12]}, which is not in this clone's history")
+    assert _git("merge-base", "--is-ancestor", commit, "HEAD").returncode == 0, (
+        f"pin the README images to a commit this revision descends from, not {commit[:12]}"
+    )
+
+
+def test_readme_images_are_pinned_to_one_commit_holding_them() -> None:
+    """Every README image of this repository loads from one full SHA, never from a moving branch.
+
+    In a full clone the pinned commit must be in this revision's history and hold every pinned
+    file, so a mistyped or unreachable pin fails here instead of freezing broken images on PyPI.
+    CI's depth-1 checkout checks only the URL form and the asset paths.
+    """
+    commit, paths = _readme_image_pin()
+    _pinned_commit_in_history(commit)
+    for path in paths:
+        assert _git("cat-file", "-e", f"{commit}:{path}").returncode == 0, (
+            f"{path} is not in {commit[:12]}; its pinned URL would not load"
         )
-        if pinned.returncode == 0:
-            assert pinned.stdout == (ROOT / pin.group(2)).read_bytes(), (
-                f"{pin.group(2)} changed after {pin.group(1)[:12]}; re-pin the README images"
-            )
+
+
+@pytest.mark.skipif(
+    not os.environ.get("SHADOWSCAN_RELEASE_CANDIDATE"),
+    reason="release-candidate check: set SHADOWSCAN_RELEASE_CANDIDATE=1 in a full clone of the candidate",
+)
+def test_readme_images_match_the_release_candidate() -> None:
+    """The pinned images are byte-identical to the candidate's, so the frozen page shows its own.
+
+    Adding a signature or connector regenerates the banner, which shows both counts, so this holds
+    only once the README is re-pinned; the publishing runbook runs it before the upload.
+    """
+    commit, paths = _readme_image_pin()
+    _pinned_commit_in_history(commit)
+    for path in paths:
+        pinned = _git("cat-file", "blob", f"{commit}:{path}")
+        assert pinned.returncode == 0, f"{path} is not in {commit[:12]}; its pinned URL would not load"
+        assert pinned.stdout == (ROOT / path).read_bytes(), (
+            f"{path} changed after {commit[:12]}; re-pin the README images to a commit on main"
+        )
 
 
 # Root documents the site includes as snippets (CHANGELOG.md, RELEASE_NOTES.md, SECURITY.md,
@@ -2170,8 +2230,14 @@ _DEMO_SURFACES = re.compile(r"\b(cloud|code|endpoint|gateway|identity|lowcode|ne
 _DEMO_ROW = re.compile(r"^ ([A-Z]+) +(\d+)  (\S+) +(\S+) +(\S+) +(.+?)\s*$", re.MULTILINE)
 
 
+@pytest.fixture(scope="module")
+def offline_demo(index):
+    """The bundled offline demo's result, run once for every check of its documented output."""
+    return Engine(ScanConfig.from_yaml(ROOT / "examples" / "shadowscan.offline.yaml"), index).run()
+
+
 @pytest.mark.parametrize("document", ["README.md", "docs/reference/product-guide.md"])
-def test_readme_demo_output_matches_the_offline_demo(index, document: str) -> None:
+def test_readme_demo_output_matches_the_offline_demo(offline_demo, document: str) -> None:
     """Each abridged copy of the demo output is the current result of the bundled offline demo."""
     readme = _read(ROOT / document)
     start = readme.index(_DEMO_COMMAND)
@@ -2180,7 +2246,7 @@ def test_readme_demo_output_matches_the_offline_demo(index, document: str) -> No
     header, _, table = block.partition("╰")
     totals = _DEMO_TOTALS.search(header)
     assert totals, "the README demo output should state the totals line"
-    result = Engine(ScanConfig.from_yaml(ROOT / "examples" / "shadowscan.offline.yaml"), index).run()
+    result = offline_demo
     findings = result.findings
     assert tuple(map(int, totals.groups())) == (
         len(findings),
@@ -2235,7 +2301,7 @@ def test_abridged_excerpt_check_rejects_values_the_output_lacks() -> None:
     assert not _abridged({"missing": 1}, actual)
 
 
-def test_readme_sarif_excerpt_is_the_first_result_of_the_offline_demo(index) -> None:
+def test_readme_sarif_excerpt_is_the_first_result_of_the_offline_demo(offline_demo) -> None:
     """The README's abridged SARIF result is current output of the demo the CLI example shows."""
     from shadowscan.reporters.sarif import render_sarif
 
@@ -2243,8 +2309,7 @@ def test_readme_sarif_excerpt_is_the_first_result_of_the_offline_demo(index) -> 
     start = readme.index("The same scan as SARIF")
     fence = readme.index("```json\n", start) + len("```json\n")
     excerpt = json.loads(readme[fence : readme.index("```", fence)])
-    result = Engine(ScanConfig.from_yaml(ROOT / "examples" / "shadowscan.offline.yaml"), index).run()
-    first = json.loads(render_sarif(result))["runs"][0]["results"][0]
+    first = json.loads(render_sarif(offline_demo))["runs"][0]["results"][0]
     assert _abridged(excerpt, first), "README SARIF excerpt is stale; rerun the demo with --format sarif"
 
 
