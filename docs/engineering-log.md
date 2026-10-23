@@ -11,7 +11,23 @@ for people who install and operate ShadowScan. Entries name the pull request
 they came from where one exists, and say what was deliberately not carried.
 Counts and figures quoted in an entry are those of its date.
 
-## Unreleased
+## 0.1.4 — 2026-10-23
+
+### Prepare NexusShadowScan 0.1.4 (October 23)
+
+The package, module and citation versions move to 0.1.4 and the release
+headings are dated, as the publishing runbook's first step asks. The
+candidate carries the five changes merged after `v0.1.3` was tagged on
+`aee3c984`: the #264 follow-ups (#310) and the review corrections to them
+(#316), the test-only liveness fix (#315), the record of the 0.1.3
+publication (#292) and the change-of-provenance explanation (#317). No
+connector, signature or mapping is added, so the README's images stay
+pinned to `84183af5`, whose `docs/assets` files are byte-identical to this
+candidate's (the `SHADOWSCAN_RELEASE_CANDIDATE=1` readme_images check), and
+the README, which is the PyPI description, names no release. The rollout
+guide's operator note on the diagnostic categories is dated to this release
+and the runbook examples name 0.1.4. Nothing is tagged or published; the
+publication record (runbook step 8) follows the upload.
 
 ### Review follow-ups to the #264 changes (October 22)
 

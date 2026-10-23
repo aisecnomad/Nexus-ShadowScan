@@ -8,6 +8,91 @@ records each in detail, and the
 [deployment and migration guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md)
 has the full upgrade steps.
 
+## 0.1.4 — 2026-10-23
+
+A patch release carrying every change on `main` since `v0.1.3` was tagged:
+the issue #264 follow-ups and the review corrections to them, a test-only
+fix for a child process that exits during cleanup, and the documentation
+that records the 0.1.3 publication and explains PyPI's change-of-provenance
+warning on it. No connector, signature or mapping is added. These notes
+prepare the release; confirm publication on
+[PyPI](https://pypi.org/project/NexusShadowScan/0.1.4/) and the
+[GitHub release](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.4)
+before installing this version from the production index. No independent
+human review is recorded in this release preparation. Publication and
+artifact attestations do not establish deployment acceptance. Details:
+[CHANGELOG.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md)
+and the operator note in the
+[deployment and migration guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#migration-notes-and-change-history).
+
+### Before you upgrade
+
+- Offline diagnostics name their own category. The shared offline readers
+  and directory walk, the shared export loader and the export writer, which
+  every connector's offline mode reads through, record explicit incomplete
+  reasons instead of leaving them to the text classifier, which counted most
+  of them as `other`. For the same inputs, `summary.incomplete_reasons`
+  moves counts from `other` to `unparsed-input` (a corrupt or undecodable
+  export), `upstream-error` (a provider error envelope or error row captured
+  in an export), `unscanned-input` (an uncollected next page, a missing
+  input, a file removed during the scan, or a FIFO, socket, device or
+  directory in a file's place), `unresolved-link` (a refused symbolic link),
+  `access-denied` (an unreadable input), `oversize-file` (a file skipped
+  whole for the per-file cap) and `analysis-limit` (spent byte and line
+  budgets, the YAML parser's resource limits, and the export writer's replay
+  limits, which were `oversize-file`). `gateway.logs` records its own
+  `.json` export diagnostics under the same categories. Update a gate or
+  dashboard that matches on these counts. Existing reports keep their
+  recorded categories; rescan for corrected counts. Whether a scan is
+  incomplete, and its exit code, do not change.
+- Google AI reached privately is an AI destination. The Vertex AI, Gemini,
+  Dialogflow and Discovery Engine signatures gain Private Service Connect
+  (`aiplatform-ENDPOINT.p.googleapis.com`, optionally led by a location, as
+  in `us-central1-aiplatform-restricted.p.googleapis.com`) and regional
+  service endpoint (`aiplatform.REGION.rep.googleapis.com`) domain patterns,
+  matched wherever signature hosts are: network and gateway logs, code and
+  low-code scans and eBPF events. A repository or log that names such an
+  endpoint can gain a Vertex AI, Gemini API or Agent Engine finding, and an
+  MCP tool whose description names one is tagged `tool-poisoning`, which
+  raises its risk. Rebaseline drift comparisons after upgrading.
+
+### What changes in scan results
+
+- A scan that surrenders at its deadline keeps a finding whose metadata
+  holds a scalar subclass (an `IntEnum`, a numpy scalar, a `datetime`
+  subclass such as a pandas `Timestamp`); the partial report omitted it
+  before. A subclass whose fields cannot rebuild its standard type (pandas
+  `NaT`) is reported as its text instead of failing the connector, and an
+  `int` or `float` subclass keeps its stored value.
+
+### Security and safety
+
+- Exact scalar types in finding metadata are matched by identity, so a
+  subclass whose metaclass imitates `datetime` no longer skips the sanitize
+  pass and reaches the JSON report through its own `__str__`. No subclass
+  code runs on the supervisor thread at surrender.
+- This release is attested under the same repository name and workflow as
+  0.1.3, so PyPI's change-of-provenance warning, which 0.1.3 carries because
+  0.1.2 was attested under the repository's earlier name, is not expected on
+  it. The warning on 0.1.3 cannot be cleared; the
+  [publishing runbook](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/operations/publishing.md#renaming-the-repository)
+  explains it.
+
+### Known limitations
+
+- `network.logs` parse diagnostics and the query-continuation message of
+  `lowcode.salesforce` are still classified from their text: the first
+  count as `upstream-error` and the second as `unparsed-input`.
+- A `str` subclass that overrides `__eq__`, under a sensitive key or in
+  `env` of a finding's metadata, passes redaction unchanged, because its
+  equality checks run its own code; a plain `str` subclass is withheld.
+  Built-in connectors produce plain strings; a plugin connector runs with
+  scanner privileges, as
+  [SECURITY.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md)
+  describes.
+- A `ConnectorError` raised from a connector's `__init__` drops its
+  `reason`, so that diagnostic is classified from its text.
+
 ## 0.1.3 — 2026-10-22
 
 The first release since the repository was renamed to
