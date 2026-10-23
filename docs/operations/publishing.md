@@ -183,16 +183,15 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
 
    To confirm the wheel from source rather than from the attestation, rebuild
    it the way `release.yml` does and compare digests. Every wheel entry is
-   stamped with the commit time (`SOURCE_DATE_EPOCH`) and keeps the file mode
-   of the source tree it was built from; the sdist does not normalize modes.
-   Rebuild from a `git archive` of the tag extracted under `umask 022`, as the
-   release runner's tree is: a tree written under a stricter umask, such as a
-   clone made under `umask 077`, gives a different wheel digest for the same
-   content. The wheel also names the setuptools version that built it, which
+   stamped with the commit time (`SOURCE_DATE_EPOCH`), and its file mode
+   comes from the umask of the build process; the sdist does not normalize
+   modes either. Rebuild from a `git archive` of the tag in a subshell under
+   `umask 022`, as the release runner builds: the same build run under a
+   stricter umask, such as `umask 077`, writes 0600 entries and a different
+   wheel digest for the same content. The wheel also names the setuptools version that built it, which
    is why the environment above installs the tag's lock rather than the
-   checkout's. `make build` applies the same stamp to a local build, but it
-   builds the checkout in place, so its wheel matches the release's only in a
-   checkout made under `umask 022`. The sdist itself is not byte-reproducible,
+   checkout's. `make build` applies the same stamp to a local build, but its
+   wheel matches the release's only when it runs under `umask 022`. The sdist itself is not byte-reproducible,
    because setuptools records build-time file times in it; its attestation and
    `SHA256SUMS` entry identify it.
 

@@ -75,8 +75,10 @@ matches `summary.incomplete_reasons` sees, for the same offline inputs:
 
 The readers and walk serve the offline mode of every connector except the code
 connectors, and the loader's categories apply to the connectors that parse
-through it, which is most of them. `gateway.logs` parses its own `.json`
-exports with the same categories.
+through it, which is most of them. `gateway.logs` counts the captured provider
+errors, uncollected pages and envelope-shape diagnostics of its own `.json`
+exports under the same categories; its empty-export and malformed-record
+errors are still classified from text, as `other`.
 `network.logs`' own JSON and line-log parsing and the continuation message of
 `lowcode.salesforce` still classify their diagnostics from text, and the text
 classifier reads the `network.logs:` prefix as a network failure, so those
@@ -111,7 +113,8 @@ above covers its diagnostic categories and Google AI endpoint signals, and the
 say where 0.1.3 counted those diagnostics and list its other operator-facing
 changes: `diff` baselines written by 0.1.3, a one-time incremental cache miss,
 findings kept when a connector's deadline expires, and scalar subclasses no
-longer reported unredacted through their own `__str__`.
+longer reported unredacted through their own `__str__` under keys the
+redaction does not withhold.
 
 ## Review before deployment
 
