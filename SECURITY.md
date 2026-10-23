@@ -636,7 +636,7 @@ and [connector permissions](https://github.com/aisecnomad/Nexus-ShadowScan/blob/
 
 ## Supported versions
 
-Version `0.1.3` is the latest published release, an alpha version. Fixes land
+Version `0.1.4` is the latest published release, an alpha version. Fixes land
 on `main`; there is no
 released-version backport commitment. Report the installed release version
 and artifact identity, or the full commit SHA for a source installation.

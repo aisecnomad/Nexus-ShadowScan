@@ -1,7 +1,7 @@
 # Roadmap
 
-ShadowScan 0.1.3 is the published alpha release (`NexusShadowScan` on
-PyPI, tag `v0.1.3`); `main` carries unreleased changes. This roadmap is
+ShadowScan 0.1.4 is the published alpha release (`NexusShadowScan` on
+PyPI, tag `v0.1.4`); `main` carries unreleased changes. This roadmap is
 intent, not a contract. Items move only when they keep the
 fail-closed trust model.
 
@@ -99,9 +99,9 @@ independent review of that release and on live validation.
 
 ## Later, after independent review
 
-- Done: the PyPI trusted publisher is registered, and 0.1.3 is published to
+- Done: the PyPI trusted publisher is registered, and 0.1.4 is published to
   PyPI as `NexusShadowScan` through the approval-gated trusted-publishing job
-  (tag `v0.1.3`). Nothing publishes automatically, and publication does not
+  (tag `v0.1.4`). Nothing publishes automatically, and publication does not
   establish independent review or deployment acceptance.
 - Next release: a candidate whose exact commit has independent human review
   and retained acceptance evidence for its deployment scope, as the

@@ -63,7 +63,7 @@ review record.
 - Treat confidence as a calibrated probability.
 - Treat author-written evaluation corpora as field precision or recall.
 - Treat `archive/reviews/` as an external audit.
-- Treat the `0.1.3` version string alone as proof that an installed build is the
+- Treat the `0.1.4` version string alone as proof that an installed build is the
   published, attested release; check the artifact against its attestation.
 - Treat GitHub Pages at <https://aisecnomad.github.io/Nexus-ShadowScan/> as the
   MkDocs site until Pages is switched to the Docs workflow artifact.
