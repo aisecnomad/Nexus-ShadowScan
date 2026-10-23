@@ -13,6 +13,27 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Precision follow-ups to the #320 head review (October 23)
+
+The five findings of the adversarial review of #320's head `8c106d0b`, all
+prose precision, are carried as that review recommended: `gateway.logs`'
+explicit reasons cover only the captured provider errors, uncollected pages
+and envelope-shape diagnostics of its own `.json` exports, while its
+empty-export and malformed-record errors stay text-classified as `other`
+(reproduced: an empty `gateway.logs` `.json` export is `other` on 0.1.3 and
+0.1.4 alike); a wheel entry's file mode comes from the umask of the build
+process, not from the source tree, so the step 6 guidance and this log's
+own echo say so (reproduced: a 664/775 tree builds the published digest
+under `umask 022`, and the same tree under `umask 077` builds 0600 entries
+and digest `2615d170…`); the second agent session merged #318 and #319
+only, which the release-notes introduction and the Published 0.1.4 row now
+say, as the deviation record already did; the 0.1.3 redaction gap is scoped
+to keys the redaction does not withhold, since a value under a sensitive
+key or in `env` was withheld in 0.1.3 too (reproduced on a `v0.1.3`
+archive); and the claim that a Claude Code session pushed `v0.1.3` is
+marked as resting on the maintainer's own record, which the repository
+cannot corroborate.
+
 ### Correct the 0.1.4 release notes and record its release deviations (October 23)
 
 This change follows the publication record below (runbook step 8). It adds
@@ -119,11 +140,12 @@ published, and a third pair for the wheel.
   - `docs/operations/publishing.md`, step 6: the digests come from the
     production run's `release-candidate-<SHA>` artifact, because any other
     run on the same commit, run 39913338824 among them, keeps one of the
-    same name with another sdist digest. The sdist does not normalize file
-    modes, so the rebuild extracts a `git archive` of the tag under
+    same name with another sdist digest. A wheel entry's file mode comes
+    from the umask of the build process (the sdist does not normalize
+    modes), so the rebuild runs its extraction and build in a subshell under
     `umask 022`: run under an outer `umask 077`, it reproduces `32c0a55a…`,
-    where the old snippet and `make build`, which build in place, do not in
-    a clone made under `umask 077`. The rebuild environment installs the
+    where the old snippet and `make build` do not when run under
+    `umask 077`. The rebuild environment installs the
     tag's own `requirements-build.lock`, because the wheel names the
     setuptools version that built it. Step 9's example moves to 0.1.5.
   - `docs/architecture.md`: a plugin's example lower bound is 0.1.4, the
@@ -138,9 +160,10 @@ published, and a third pair for the wheel.
     `v0.1.4` and dispatched the release-evidence workflow, which the
     deviations above contradict.
 - Not carried: the 0.1.3 row in `docs/connectors.md` records none of that
-  release's own deviations, although a Claude Code session also pushed
-  `v0.1.3` and published its GitHub release; they need a record of their
-  own. The sample outputs in `docs/operations/controls.md` and
+  release's own deviations, although, per the maintainer's own record, a
+  Claude Code session also pushed `v0.1.3` and published its GitHub
+  release; the repository holds no evidence of this beyond that record,
+  and they need a record of their own. The sample outputs in `docs/operations/controls.md` and
   `docs/operations/dashboard.md` still name 0.1.3, as the 0.1.3 candidate
   set them, for the next candidate's preparation. Recording the reviewer
   in `GOVERNANCE.md` and `MAINTAINERS.md`, and with it the reviewer item in

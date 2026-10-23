@@ -11,6 +11,14 @@ explain operator migrations. Earlier per-change entries are preserved in the
 - The 0.1.4 publication is recorded (tag `v0.1.4` on `94fda063`, the PyPI
   upload and the GitHub release of 2026-10-23).
 
+- The five precision findings of the #320 head review are carried: the
+  `gateway.logs` reason coverage is scoped to its provider-error,
+  pagination and envelope-shape diagnostics, the wheel-digest guidance
+  names the build-process umask, the deviation record names #318 and #319
+  as the merged pull requests, the 0.1.3 redaction gap is scoped to keys
+  the redaction does not withhold, and the v0.1.3 deviation note is marked
+  as the maintainer's own record.
+
 - The 0.1.4 release's review and its deviations from the publishing runbook
   and `AGENTS.md` are recorded; the 0.1.4 release notes, changelog summary
   and rollout guide are corrected against 0.1.3, and the publishing
@@ -27,8 +35,9 @@ explain operator migrations. Earlier per-change entries are preserved in the
   its liveness check and the cleanup kill.
 
 - Offline inputs are counted under explicit incomplete reasons: the shared
-  offline readers, directory walk and export loader, `gateway.logs`' own
-  JSON exports and the export writer name each diagnostic's category
+  offline readers, directory walk and export loader, the export writer and
+  the provider-error, pagination and envelope-shape diagnostics of
+  `gateway.logs`' own JSON exports name each diagnostic's category
   (corrupt, undecodable, malformed or empty input `unparsed-input`,
   captured provider errors `upstream-error`, uncollected pages and missing,
   vanished, unsupported or special files `unscanned-input`, refused links
@@ -56,7 +65,9 @@ explain operator migrations. Earlier per-change entries are preserved in the
   stores such a value as its standard type, or as its text when it cannot
   be rebuilt exactly, and that text is redacted, where 0.1.3 wrote a
   `date`, `datetime`, `time`, `timedelta`, `Decimal` or `UUID` subclass to
-  the JSON report through its own `__str__`, unredacted.
+  the JSON report through its own `__str__`, unredacted, under keys the
+  redaction does not withhold (a value under a sensitive key or in `env`
+  was withheld in 0.1.3 too).
 
 ## 0.1.3 — 2026-10-22
 

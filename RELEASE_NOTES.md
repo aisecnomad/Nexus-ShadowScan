@@ -35,7 +35,7 @@ published the GitHub release, steps the
 [publishing runbook](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/operations/publishing.md#per-release)
 reserves for the maintainer, and a second session, also at the
 maintainer's direction, dispatched the TestPyPI rehearsal and merged the
-reviewed pull requests; the maintainer approved every deployment.
+approved #318 and #319; the maintainer approved every deployment.
 Publication and artifact attestations do not establish deployment
 acceptance. Details:
 [CHANGELOG.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md)
@@ -77,9 +77,12 @@ and the operator note in the
   such an endpoint gains a low finding. Once you have rebaselined,
   `diff --fail-on-new` reports such endpoints as they appear.
 - Incomplete-reason counts move. The shared offline readers and directory
-  walk, the shared export loader, `gateway.logs`' own `.json` exports and
-  the export writer (`--dump-records`) record explicit incomplete reasons
-  instead of leaving them to the text classifier. For the same inputs,
+  walk, the shared export loader and the export writer (`--dump-records`)
+  record explicit incomplete reasons instead of leaving them to the text
+  classifier, and `gateway.logs` records the captured provider errors,
+  uncollected pages and envelope-shape diagnostics of its own `.json`
+  exports the same way; its empty-export and malformed-record errors are
+  still classified from text, as `other`. For the same inputs,
   `summary.incomplete_reasons` counts a corrupt, undecodable, malformed or
   empty export as `unparsed-input`; a provider error envelope or error row
   captured in an export as `upstream-error`; an uncollected next page, an
@@ -129,8 +132,9 @@ and the operator note in the
 
 - Redaction now covers scalar subclasses. In 0.1.3 a `date`, `datetime`,
   `time`, `timedelta`, `Decimal` or `UUID` subclass in finding metadata
-  passed the sanitize pass unchanged and reached the JSON report through
-  its own `__str__`, unredacted. 0.1.4 stores such a value as its standard
+  passed the sanitize pass unchanged and, under keys the redaction does not
+  withhold, reached the JSON report through its own `__str__`, unredacted;
+  a value under a sensitive key or in `env` was withheld in 0.1.3 too. 0.1.4 stores such a value as its standard
   type when the rebuilt value reads the same, and otherwise as its text,
   which is redacted like any other string; the exact types are matched by
   identity, so a metaclass cannot make a subclass pass as one. Only a
