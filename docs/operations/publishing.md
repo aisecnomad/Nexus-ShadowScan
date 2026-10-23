@@ -121,7 +121,7 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
    ```bash
    python -m venv /tmp/nss && . /tmp/nss/bin/activate
    python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
-   python -m pip install --no-deps --index-url https://test.pypi.org/simple/ NexusShadowScan==0.1.3
+   python -m pip install --no-deps --index-url https://test.pypi.org/simple/ NexusShadowScan==0.1.4
    # Leave the checkout: `python -m` would otherwise import its source, not the installed wheel.
    cd "$(mktemp -d)" && shadowscan --help && python -m shadowscan.signatures.validate && python -m shadowscan.mappings.validate
    ```
@@ -131,8 +131,8 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
    key. `--no-sign` overrides any local `tag.gpgSign` preference:
 
    ```bash
-   git tag --no-sign -a v0.1.3 -m "NexusShadowScan 0.1.3" <reviewed-40-character-sha>
-   git push origin refs/tags/v0.1.3
+   git tag --no-sign -a v0.1.4 -m "NexusShadowScan 0.1.4" <reviewed-40-character-sha>
+   git push origin refs/tags/v0.1.4
    ```
 
    A maintainer may instead sign the annotated tag with `git tag -s` when a
@@ -158,7 +158,7 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
    one resolved from the index:
 
    ```bash
-   version=0.1.3
+   version=0.1.4
    python -m venv "${TMPDIR:-/tmp}/rebuild" && "${TMPDIR:-/tmp}/rebuild/bin/python" -m pip install \
      --require-hashes --only-binary=:all: -r requirements-build.lock
    "${TMPDIR:-/tmp}/rebuild/bin/python" -m pip download --no-deps --only-binary=:all: \

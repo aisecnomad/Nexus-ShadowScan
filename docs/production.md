@@ -1,6 +1,6 @@
 # Production deployment and migration
 
-This is the rollout guide for version 0.1.3. It covers reviewed
+This is the rollout guide for version 0.1.4. It covers reviewed
 revisions, installation, validation, rollout, operation and migration.
 
 Automated validation establishes implementation behavior. Production rollout
@@ -49,7 +49,7 @@ Existing reports retain their recorded categories; rescan to obtain corrected
 reason counts. These corrections do not change whether the scan is incomplete
 or which finding evidence it retains.
 
-Unreleased: the shared offline readers and directory walk, the shared export
+0.1.4: the shared offline readers and directory walk, the shared export
 loader (`load_offline_file`) and the export writer now name explicit incomplete
 categories instead of leaving them to the text classifier, which counted most of
 the readers' and loader's diagnostics as `other`. A gate or dashboard that
@@ -94,7 +94,8 @@ Per-change migration and behavior notes for the changes between 0.1.2 and
 0.1.3 live in the [migration notes](production-migrations.md), and the dated log of
 every candidate change lives in the
 [candidate change history](history/production-change-history.md), so this
-page stays the rollout guide.
+page stays the rollout guide. 0.1.4 has no separate migration notes: its
+operator-facing changes are the note above.
 
 ## Review before deployment
 

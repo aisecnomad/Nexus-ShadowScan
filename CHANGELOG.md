@@ -6,7 +6,13 @@ One summary per release. Detailed implementation history is maintained in the
 explain operator migrations. Earlier per-change entries are preserved in the
 [change-history archive](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/history/changelog-detail.md).
 
-## Unreleased
+## 0.1.4 — 2026-10-23
+
+- The 0.1.3 publication is recorded (tag `v0.1.3` on `aee3c984`, the PyPI
+  upload and the GitHub release of 2026-10-22), the publishing runbook
+  explains PyPI's change-of-provenance warning on 0.1.3 and how a later
+  rename avoids one, and a test tolerates a child process that exits between
+  its liveness check and the cleanup kill.
 
 - Review follow-ups to #310: a scalar subclass whose fields cannot build its
   standard type (pandas `NaT`) no longer fails the connector, and an `int` or
