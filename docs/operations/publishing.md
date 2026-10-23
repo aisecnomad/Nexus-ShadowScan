@@ -288,7 +288,7 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
      version and its Python range, so the tests keep guarding the new text.
 
    `make policy` and `make docs` must pass on that change.
-9. **Open the next candidate.** Bump the version (for example to `0.1.4`) and
+9. **Open the next candidate.** Bump the version (for example to `0.1.5`) and
    add a new unreleased section to the changelog and release notes.
 
 ## Renaming the repository
@@ -343,11 +343,16 @@ not change the comparison. Deleting 0.1.2 would remove a published release
 that the install instructions verify with the old `--repo` value, and its file
 name could never be uploaded again. The next release from the same repository
 and `release.yml` carries no warning: within 14 days of 0.1.3 it is compared
-with 0.1.3, and after that it has nothing to compare against. The project
-page then shows that release. For a later rename, count the 14 days from the
-last release's PyPI upload time, not from the dates in the headings: 0.1.2 and
-0.1.3 are dated 14 calendar days apart, yet 0.1.3 was uploaded inside the
-window. Otherwise name the rename in the first release's notes, where PyPI's
+with 0.1.3, and after that it has nothing to compare against. Release 0.1.4
+followed 17 hours and 35 minutes after 0.1.3: its PyPI provenance for the
+wheel and the sdist names the same repository, `release.yml` and `pypi`
+environment as 0.1.3's, so no warning is expected on it. The project page,
+which would show the warning, was not observed from the session that
+prepared this record (PyPI answered it with a bot challenge), so the absence
+is unconfirmed. For a later rename, count the 14 days from the last release's
+PyPI upload time, not from the dates in the headings: 0.1.2 and 0.1.3 are
+dated 14 calendar days apart, yet 0.1.3 was uploaded inside the window.
+Otherwise name the rename in the first release's notes, where PyPI's
 [guidance](https://github.com/pypi/warehouse/blob/4969cf8c4598fb3a5503e1ae88b90db5541240a6/docs/user/using-pypi/package-security/provenance.md#change-of-provenance)
 asks users to confirm the change.
 

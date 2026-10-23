@@ -79,14 +79,14 @@ Passing the CI checks, the CodeQL analysis or the OpenSSF Scorecard is not indep
 | Criterion | Level | Status | Evidence |
 |---|---|---|---|
 | `version_unique` | MUST | **Met** | Each release has its own version in [`pyproject.toml`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/pyproject.toml). CI checks that `shadowscan/__init__.py` and `CITATION.cff` agree ([publishing a release](publishing.md#per-release), step 1). |
-| `version_semver` | SUGGESTED | **Met** | Versions are `MAJOR.MINOR.PATCH` (0.1.3). The [candidate compatibility contract](../api/compatibility.md) defines the boundary proposed for 1.0; the current alpha release does not promise stable compatibility. Answer with the version format, not a stability guarantee. |
-| `version_tags` | SUGGESTED | **Met** | Annotated tags `v0.1.1`, `v0.1.2` and `v0.1.3` exist (`git ls-remote --tags origin`, 2026-10-22). [Publishing a release](publishing.md#per-release), step 4, has the maintainer tag each reviewed release. |
+| `version_semver` | SUGGESTED | **Met** | Versions are `MAJOR.MINOR.PATCH` (0.1.4). The [candidate compatibility contract](../api/compatibility.md) defines the boundary proposed for 1.0; the current alpha release does not promise stable compatibility. Answer with the version format, not a stability guarantee. |
+| `version_tags` | SUGGESTED | **Met** | Annotated tags `v0.1.1`, `v0.1.2`, `v0.1.3` and `v0.1.4` exist (`git ls-remote --tags origin`, 2026-10-23). [Publishing a release](publishing.md#per-release), step 4, has the maintainer tag each reviewed release. |
 
 #### Release notes
 
 | Criterion | Level | Status | Evidence |
 |---|---|---|---|
-| `release_notes` | MUST | **Met** | [`RELEASE_NOTES.md`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/RELEASE_NOTES.md) has one written section per release, and [`CHANGELOG.md`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md) records the changes. Neither is a `git log`. |
+| `release_notes` | MUST | **Met** | [`RELEASE_NOTES.md`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/RELEASE_NOTES.md) has one written section per release, and [`CHANGELOG.md`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md) records the changes; the [v0.1.4 release page](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.4) carries the published version's notes, whose compatibility notes supersede the 0.1.4 section as tagged. Neither file is a `git log`. |
 | `release_notes_vulns` | MUST | **Confirm** | N/A is allowed when no release has fixed a publicly known vulnerability in ShadowScan itself that already had a CVE. Check the repository's [security advisories](https://github.com/aisecnomad/Nexus-ShadowScan/security/advisories) before choosing it. |
 
 ### Reporting
