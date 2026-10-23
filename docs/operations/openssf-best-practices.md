@@ -86,7 +86,7 @@ Passing the CI checks, the CodeQL analysis or the OpenSSF Scorecard is not indep
 
 | Criterion | Level | Status | Evidence |
 |---|---|---|---|
-| `release_notes` | MUST | **Met** | [`RELEASE_NOTES.md`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/RELEASE_NOTES.md) has one written section per release, and [`CHANGELOG.md`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md) records the changes. Neither is a `git log`. |
+| `release_notes` | MUST | **Met** | [`RELEASE_NOTES.md`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/RELEASE_NOTES.md) has one written section per release, and [`CHANGELOG.md`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md) records the changes. Neither is a `git log`. Each published release's GitHub page carries its notes too; the [0.1.4 release](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.4) notes supersede the 0.1.4 section as tagged, which misdescribes some changes, and `main` carries the corrected section. |
 | `release_notes_vulns` | MUST | **Confirm** | N/A is allowed when no release has fixed a publicly known vulnerability in ShadowScan itself that already had a CVE. Check the repository's [security advisories](https://github.com/aisecnomad/Nexus-ShadowScan/security/advisories) before choosing it. |
 
 ### Reporting

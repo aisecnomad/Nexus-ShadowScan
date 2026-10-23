@@ -70,32 +70,48 @@ matches `summary.incomplete_reasons` sees, for the same offline inputs:
   while expanding, line limits and the YAML parser's resource limits as
   `analysis-limit`;
 - the export writer's replay line and file byte limits (`--dump-records`) as
-  `analysis-limit`; before #310 they were `oversize-file`.
+  `analysis-limit`; in 0.1.3 they were `oversize-file`, as was a file turned
+  away by the spent `max_input_bytes` budget.
 
-The readers and walk serve every connector's offline mode, and the loader's
-categories apply to the connectors that parse through it, which is most of
-them. `gateway.logs` parses its own `.json` exports with the same categories.
-`network.logs` and the continuation message of `lowcode.salesforce` still
-classify their parse diagnostics from text, and the text classifier reads the
-`network.logs:` prefix as a network failure, so that connector's parse
-diagnostics count as `upstream-error`. Existing reports retain their recorded
+The readers and walk serve the offline mode of every connector except the code
+connectors, and the loader's categories apply to the connectors that parse
+through it, which is most of them. `gateway.logs` parses its own `.json`
+exports with the same categories.
+`network.logs`' own JSON and line-log parsing and the continuation message of
+`lowcode.salesforce` still classify their diagnostics from text, and the text
+classifier reads the `network.logs:` prefix as a network failure, so those
+`network.logs` diagnostics count as `upstream-error`; its CSV exports parse
+through the shared loader. Existing reports retain their recorded
 categories; rescan to obtain corrected reason counts. Whether the scan is
-incomplete, and its exit code, do not change. The Google AI domain signals now also name Private Service
-Connect names (`aiplatform-ENDPOINT.p.googleapis.com`, optionally led by a
-location) and regional service endpoints (`aiplatform.REGION.rep.googleapis.com`)
-wherever signature hosts are matched: network and gateway logs, code and
-low-code scans as well as eBPF events. A repository whose source names such an
-endpoint can gain a Vertex AI, Gemini API or Agent Engine finding, and an MCP
-tool whose description names one is tagged `tool-poisoning` (the eBPF host rule
-also serves that check, as it does for other model provider hosts), which raises
-its risk; re-baseline drift comparisons after upgrading.
+incomplete, and its exit code, do not change. The Google AI domain signals now
+also name Private Service Connect names (`aiplatform-ENDPOINT.p.googleapis.com`,
+optionally led by a location) and regional service endpoints
+(`aiplatform.REGION.rep.googleapis.com`), and the same forms for
+`generativelanguage`, `dialogflow` and `discoveryengine`, wherever signature
+hosts are matched, including network and gateway logs, code and low-code scans,
+identity tokens and application URLs, cloud resource text and A2A Agent Card
+interface URLs. A repository whose source names such an endpoint can gain a
+Vertex AI, Gemini API or Agent Engine finding. The eBPF host rule, which also
+serves the MCP tool-description check, already recognized the global Private
+Service Connect form in 0.1.3 and now also recognizes the location-led and
+regional forms of every Google AI service it knows, so an eBPF event naming one
+can gain an `llm-egress` finding and an MCP tool whose description names one is
+tagged `tool-poisoning`, which adds 15 to its risk. A scan gated with
+`--fail-on` can newly exit 2. A `diff` against a 0.1.3 baseline exits 3 until
+you re-baseline; after that, `diff --fail-on-new` reports such endpoints as they
+appear.
 
 Per-change migration and behavior notes for the changes between 0.1.2 and
 0.1.3 live in the [migration notes](production-migrations.md), and the dated log of
 every candidate change lives in the
 [candidate change history](history/production-change-history.md), so this
-page stays the rollout guide. 0.1.4 has no separate migration notes: its
-operator-facing changes are the note above.
+page stays the rollout guide. 0.1.4 has no separate migration notes: the note
+above covers its diagnostic categories and Google AI endpoint signals, and the
+[0.1.4 release notes](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/RELEASE_NOTES.md)
+say where 0.1.3 counted those diagnostics and list its other operator-facing
+changes: `diff` baselines written by 0.1.3, a one-time incremental cache miss,
+findings kept when a connector's deadline expires, and scalar subclasses no
+longer reported unredacted through their own `__str__`.
 
 ## Review before deployment
 

@@ -153,14 +153,15 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
    does not publish it. A draft supports attachment before GitHub makes an
    immutable release final. Existing mutable releases are also supported.
 6. **Verify what was published.** Both files must be on the index, and each
-   must match its attestation. Download them into a hash-locked environment,
-   so that preparing the sdist's metadata uses the locked backend rather than
-   one resolved from the index:
+   must match its attestation. Download them into an environment that holds
+   the tag's hash-locked build backend, so that preparing the sdist's metadata
+   uses that backend rather than one resolved from the index:
 
    ```bash
    version=0.1.4
+   git show "v$version:requirements-build.lock" > "${TMPDIR:-/tmp}/build.lock"
    python -m venv "${TMPDIR:-/tmp}/rebuild" && "${TMPDIR:-/tmp}/rebuild/bin/python" -m pip install \
-     --require-hashes --only-binary=:all: -r requirements-build.lock
+     --require-hashes --only-binary=:all: -r "${TMPDIR:-/tmp}/build.lock"
    "${TMPDIR:-/tmp}/rebuild/bin/python" -m pip download --no-deps --only-binary=:all: \
      --dest dists "NexusShadowScan==$version"
    "${TMPDIR:-/tmp}/rebuild/bin/python" -m pip download --no-deps --no-binary=:all: --no-build-isolation \
@@ -170,23 +171,37 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
    done
    ```
 
-   Compare both SHA-256 digests with `SHA256SUMS` in the retained
-   `release-candidate-<SHA>` artifact. On PyPI, each file's provenance should
-   name this repository, `release.yml` and the `pypi` environment.
+   Compare both SHA-256 digests with `SHA256SUMS` in the
+   `release-candidate-<SHA>` artifact of the production run, the
+   `publish: pypi` run that uploaded the files. Every run builds its own sdist,
+   and the sdist is not byte-reproducible, so any other run on the same
+   commit, whether evidence-only, a TestPyPI rehearsal or a `publish: pypi`
+   run that uploaded nothing, keeps an artifact with the same name and the
+   same wheel digest but a different sdist digest. On PyPI, each file's
+   provenance should name this repository, `release.yml` and the `pypi`
+   environment.
 
    To confirm the wheel from source rather than from the attestation, rebuild
-   it the way `release.yml` does and compare digests. The wheel is built from
-   the sdist, which normalizes file modes, and every wheel entry is stamped
-   with the commit time (`SOURCE_DATE_EPOCH`), so a rebuild of the tagged
-   commit with the same hash-locked backend and a default umask yields the
-   same wheel; `make build` applies the same stamp to a local build. The sdist
-   itself is not byte-reproducible, because setuptools records build-time file
-   times in it; its attestation and `SHA256SUMS` entry identify it.
+   it the way `release.yml` does and compare digests. Every wheel entry is
+   stamped with the commit time (`SOURCE_DATE_EPOCH`) and keeps the file mode
+   of the source tree it was built from; the sdist does not normalize modes.
+   Rebuild from a `git archive` of the tag extracted under `umask 022`, as the
+   release runner's tree is: a tree written under a stricter umask, such as a
+   clone made under `umask 077`, gives a different wheel digest for the same
+   content. The wheel also names the setuptools version that built it, which
+   is why the environment above installs the tag's lock rather than the
+   checkout's. `make build` applies the same stamp to a local build, but it
+   builds the checkout in place, so its wheel matches the release's only in a
+   checkout made under `umask 022`. The sdist itself is not byte-reproducible,
+   because setuptools records build-time file times in it; its attestation and
+   `SHA256SUMS` entry identify it.
 
    ```bash
-   git -c advice.detachedHead=false checkout --detach "v$version"
-   SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" "${TMPDIR:-/tmp}/rebuild/bin/python" -m build \
-     --no-isolation --outdir "${TMPDIR:-/tmp}/rebuild/dist" .
+   epoch="$(git show -s --format=%ct "v$version^{commit}")"
+   src="$(mktemp -d)"
+   (umask 022 && git archive --format=tar "v$version" | tar -xf - -C "$src" \
+     && cd "$src" && SOURCE_DATE_EPOCH="$epoch" "${TMPDIR:-/tmp}/rebuild/bin/python" -m build \
+     --no-isolation --outdir "${TMPDIR:-/tmp}/rebuild/dist" .)
    sha256sum "${TMPDIR:-/tmp}/rebuild/dist/"nexusshadowscan-*.whl dists/nexusshadowscan-*.whl
    ```
 
@@ -288,7 +303,7 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
      version and its Python range, so the tests keep guarding the new text.
 
    `make policy` and `make docs` must pass on that change.
-9. **Open the next candidate.** Bump the version (for example to `0.1.4`) and
+9. **Open the next candidate.** Bump the version (for example to `0.1.5`) and
    add a new unreleased section to the changelog and release notes.
 
 ## Renaming the repository

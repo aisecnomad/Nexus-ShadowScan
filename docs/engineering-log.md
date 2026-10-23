@@ -13,11 +13,146 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Correct the 0.1.4 release notes and record its release deviations (October 23)
+
+This change follows the publication record below (runbook step 8). It adds
+what that record leaves out, the review decision and the deviations from
+the publishing runbook and `AGENTS.md`, and corrects the 0.1.4 text that
+the tag carries. Publication details the record below does not give: the
+tag is annotated and unsigned (tag object `a4542b72`, created at 06:41
+UTC). TestPyPI has served 0.1.4 since 06:37 UTC and PyPI since 06:49 UTC,
+with `requires_python` `<3.15,>=3.11`. PyPI's provenance for both files
+names this repository, `release.yml` and the `pypi` environment, the same
+publisher as 0.1.3. The GitHub release, a pre-release with the 14 evidence
+files the `release-assets` job attached, was published at 07:08 UTC.
+
+Review: each change in the release (#310, #315, #316, #292, #317 and #318)
+was approved on its final head by immanueldahunsi-Project-Nexus, who
+authored or co-authored none of them; the approval of #318 covers the
+release source tree. The maintainer accepts these approvals as the
+independent human review that the release process in `GOVERNANCE.md`
+requires. The approval records do not describe what was checked, and the
+AI-agent reviews behind #316 are advisory only. The reviewer's account has
+write access, but the roles table in `GOVERNANCE.md` still lists no
+reviewer, and `MAINTAINERS.md`, where `GOVERNANCE.md` asks for a
+reviewer's write access to be recorded, does not name it.
+
+Deviations from the publishing runbook and `AGENTS.md`: at the
+maintainer's direction, a Claude Code session created the annotated
+`v0.1.4` tag under the maintainer's git name and email, which its tagger
+field records, and pushed it (step 4), created the draft GitHub release
+and dispatched the PyPI run (step 5), and published the release with its
+notes (step 7). It acted through the maintainer's GitHub account, which
+GitHub records as the release's author and the run's actor. The runbook
+leaves these steps to the maintainer, the release process in
+`GOVERNANCE.md` reserves the tag and the PyPI dispatch for the maintainer,
+and `AGENTS.md` tells coding agents not to publish a version tag, a PyPI
+package or a GitHub release. The maintainer approved every deployment.
+The TestPyPI rehearsal, at 06:02 UTC, and a second `publish: pypi` run,
+39913338824, at 06:44 UTC after the production run had built, were
+dispatched by a second Claude Code session through the same account, also
+at the maintainer's direction; that second session also merged the
+approved #318 and #319 after their non-author approvals, and its API
+attempt to approve the `testpypi` deployment was refused, so every
+deployment approval was the maintainer's own. The first session cancelled
+run 39913338824 at 07:03 UTC while its publish job waited for approval, so
+it uploaded nothing to PyPI or to the release.
+Its build and attest jobs had already run, so GitHub holds provenance and
+SBOM attestations of its own sdist (`2810f28b…`), which was never
+published, and a third pair for the wheel.
+
+- Records: the Published 0.1.4 row in `docs/connectors.md` gains the
+  review decision and the deviations; the OpenSSF `release_notes` evidence
+  says that the 0.1.4 release page's notes supersede the tagged section;
+  and the severity guide's enforcement caveat names 0.1.4. The 0.1.3
+  introduction in `RELEASE_NOTES.md`, which still said that its notes
+  prepare that release, now records its publication.
+- Corrections: three AI-agent reviews of the 0.1.4 text against 0.1.3,
+  which are not independent human review, found and reproduced errors that
+  the tag carries, and two AI-agent reviews of this change found more. The
+  GitHub release notes correct the tag's errors in brief and leave out the
+  known limitations; `main` carries the corrections in full, the known
+  limitations included.
+  - `RELEASE_NOTES.md`: incomplete-reason counts also move out of
+    `unresolved-link`, `oversize-file`, `unscanned-input` and, for
+    `network.logs`, `upstream-error`, while a link refused at the input
+    root or in the walk, a JSON or YAML syntax error, an unreadable JSONL
+    or CSV export, a JSON or YAML export over the per-file cap and the
+    YAML parser's limits keep their category (a link the confined open
+    refuses moves from `other` to `unresolved-link`). Three signatures gain
+    the Google patterns, each for its own hosts; there is no Dialogflow or
+    Discovery Engine signature. Signature hosts are also matched in
+    identity tokens, application URLs, cloud resource text and A2A Agent
+    Card interface URLs. eBPF events and the MCP check use the runtime host
+    rule, which already matched the global Private Service Connect form,
+    not signature hosts. `--fail-on` gates can newly exit 2, a `diff`
+    against a 0.1.3 baseline exits 3, and every incremental cache entry
+    misses once. The pandas `NaT` connector failure and the `int` and
+    `float` override were #310 regressions that never shipped, numpy
+    `float64` is the only numpy scalar affected, and the security change
+    against 0.1.3 is that `date`, `datetime`, `time`, `timedelta`,
+    `Decimal` and `UUID` subclasses no longer reach the JSON report
+    unredacted, not a metaclass bypass. Plugin authors are told about
+    `ConnectorError(reason=)` and that it needs 0.1.4, since 0.1.3 raises
+    `TypeError` for the keyword; a `ConnectorError` from `__init__` gets no
+    `incomplete_reasons` entry, not a text-classified one; only a `str`
+    subclass that compares equal to `""` or the redaction marker passes
+    redaction; `network.logs` CSV exports parse through the shared loader,
+    so only its own JSON and line-log diagnostics stay text-classified.
+    The provenance sentence states the publisher checked after the upload
+    and derives the absent warning from PyPI's rule: the project page sits
+    behind a bot challenge and was not checked. The introduction no longer
+    says that the notes prepare the release, says how the GitHub notes
+    differ, and names the steps the agent session took.
+  - `CHANGELOG.md`: the two per-change bullets carried from `## Unreleased`,
+    the first measuring its changes against #310 and the second
+    misdescribing eBPF and numpy against 0.1.3, become one summary per
+    topic against 0.1.3.
+  - `docs/production.md`: "before #310" becomes "in 0.1.3"; the readers and
+    walk do not serve the code connectors' offline mode; the Google
+    patterns cover each signature's own hosts and apply wherever signature
+    hosts are matched, identity tokens and cloud resource text included;
+    only `network.logs`' own JSON and line-log parsing stays
+    text-classified; the eBPF claim follows the release notes; and the
+    closing sentence names the release notes for the other
+    operator-facing changes.
+  - `docs/operations/publishing.md`, step 6: the digests come from the
+    production run's `release-candidate-<SHA>` artifact, because any other
+    run on the same commit, run 39913338824 among them, keeps one of the
+    same name with another sdist digest. The sdist does not normalize file
+    modes, so the rebuild extracts a `git archive` of the tag under
+    `umask 022`: run under an outer `umask 077`, it reproduces `32c0a55a…`,
+    where the old snippet and `make build`, which build in place, do not in
+    a clone made under `umask 077`. The rebuild environment installs the
+    tag's own `requirements-build.lock`, because the wheel names the
+    setuptools version that built it. Step 9's example moves to 0.1.5.
+  - `docs/architecture.md`: a plugin's example lower bound is 0.1.4, the
+    first release whose `ConnectorError` takes `reason=`.
+  - This log: the operator note is labelled with this release, not dated;
+    the #310 entries moved to the 0.1.4 section, then headed
+    `## Unreleased`; the October 21 entry names the three signatures, the
+    code connectors' exception and numpy `float64`; the October 22 entry
+    says which `str` subclass passes `_redact_value` and that
+    `network.logs` CSV exports parse through the shared loader; and the
+    publication record below no longer says that the maintainer tagged
+    `v0.1.4` and dispatched the release-evidence workflow, which the
+    deviations above contradict.
+- Not carried: the 0.1.3 row in `docs/connectors.md` records none of that
+  release's own deviations, although a Claude Code session also pushed
+  `v0.1.3` and published its GitHub release; they need a record of their
+  own. The sample outputs in `docs/operations/controls.md` and
+  `docs/operations/dashboard.md` still name 0.1.3, as the 0.1.3 candidate
+  set them, for the next candidate's preparation. Recording the reviewer
+  in `GOVERNANCE.md` and `MAINTAINERS.md`, and with it the reviewer item in
+  `ROADMAP.md` and the "No independent review" limit in the threat model,
+  is the maintainer's decision.
+
 ### Record the 0.1.4 publication (October 23)
 
-Version 0.1.4 was published on 2026-10-23: the maintainer tagged `v0.1.4`
-on `94fda063` (tree `79be1584`), dispatched the release-evidence workflow
-and approved the protected deployments. The TestPyPI rehearsal (run
+Version 0.1.4 was published on 2026-10-23 from the tag `v0.1.4` on
+`94fda063` (tree `79be1584`), and the maintainer approved the protected
+deployments; the entry above records who pushed the tag and dispatched
+each release-evidence run. The TestPyPI rehearsal (run
 39909123401) and the production upload (run 39913118001) both built from
 that commit. The published wheel (sha256 `32c0a55acba90049`...) is
 byte-identical to the rehearsal wheel and to a local rebuild from the
@@ -52,9 +187,9 @@ connector, signature or mapping is added, so the README's images stay
 pinned to `84183af5`, whose `docs/assets` files are byte-identical to this
 candidate's (the `SHADOWSCAN_RELEASE_CANDIDATE=1` readme_images check), and
 the README, which is the PyPI description, names no release. The rollout
-guide's operator note on the diagnostic categories is dated to this release
-and the runbook examples name 0.1.4. Nothing is tagged or published; the
-publication record (runbook step 8) follows the upload.
+guide's operator note on the diagnostic categories is labelled with this
+release and the runbook examples name 0.1.4. Nothing is tagged or
+published; the publication record (runbook step 8) follows the upload.
 
 ### Review follow-ups to the #264 changes (October 22)
 
@@ -147,16 +282,18 @@ review. Each code fix has a regression test that fails on the code before it
 Not carried, recorded for their own review: the detached copy at surrender
 still omits a finding whose `int` or `float` leaf a connector replaced in
 place with an equal subclass value after `sanitize()` (the verified-clean
-digest does not see the type change); a `str` subclass that overrides
-`__eq__`, under a sensitive key or in `env`, passes `_redact_value` unchanged,
-because its equality checks run its own code (a plain `str` subclass is
-withheld); the copy shares a custom `tzinfo` with the worker; a
-`ConnectorError` raised from a connector's `__init__` drops its `reason`; every
-reason-less `network.logs` diagnostic, its parse errors as well as `run()`'s
-catch-all, is classified with the connector name in its text, so it counts as
-`upstream-error`; and `lowcode.salesforce` reports an uncollected and an
-invalid query continuation in one message, counted as `unparsed-input`. Each
-predates #310 or is latent (no raise site passes a reason yet).
+digest does not see the type change); a `str` subclass whose `__eq__` reports
+it equal to `""` or the redaction marker, under a sensitive key or in `env`,
+passes `_redact_value` unchanged, because its equality checks run its own code
+(a plain `str` subclass is withheld); the copy shares a custom `tzinfo` with
+the worker; a `ConnectorError` raised from a connector's `__init__` drops its
+`reason`; every reason-less `network.logs` diagnostic, the errors of its own
+JSON and line-log parsing as well as `run()`'s catch-all, is classified with
+the connector name in its text, so it counts as `upstream-error` (its CSV
+exports parse through the shared loader); and `lowcode.salesforce` reports an
+uncollected and an invalid query continuation in one message, counted as
+`unparsed-input`. Each predates #310 or is latent (no raise site passes a
+reason yet).
 
 ### Issue #264 follow-ups: endpoint forms, surrender scalars, explicit reasons (October 21)
 
@@ -166,13 +303,14 @@ integrations, with regression tests on `main`; the rest land here.
 
 - Google Private Service Connect names were tagged in eBPF events but not in
   network logs, and the documented regional service endpoint form was tagged
-  nowhere. The Vertex AI, Gemini, Dialogflow and Discovery Engine signatures
-  gain anchored `SERVICE-ENDPOINT.p.googleapis.com` and
+  nowhere. The Vertex AI, Gemini API and Agent Engine signatures (the last
+  for the Dialogflow and Discovery Engine hosts) gain anchored
+  `SERVICE-ENDPOINT.p.googleapis.com` and
   `SERVICE.REGION.rep.googleapis.com` domain patterns, and the eBPF host
   expression gains the regional branch with the same service and label
   boundaries. A non-AI service's private name (`storage-prodpsc.p…`) still
   matches nothing.
-- A scalar subclass in finding metadata (an `IntEnum`, a numpy scalar, a
+- A scalar subclass in finding metadata (an `IntEnum`, a numpy `float64`, a
   `datetime` subclass) passed the worker's sanitize pass unchanged, and the
   surrender path's detached copy, which shares only exact types so no
   subclass code runs on the supervisor thread, omitted the whole finding; a
@@ -180,8 +318,9 @@ integrations, with regression tests on `main`; the rest land here.
   its exact standard type on the worker, so what a sanitize pass leaves is
   exactly what the detached copy shares. The copy's own invariant is
   untouched.
-- The shared offline-input funnel (`connectors/offline.py`, which every
-  connector's offline mode reads through) and the export writer and runner
+- The shared offline-input funnel (`connectors/offline.py`, which the
+  offline mode of every connector but the three code connectors reads
+  through) and the export writer and runner
   in `connectors/base.py` recorded their diagnostics without `reason=`, so
   the text classifier put most of them in `other`. Each now names its
   category at the failure branch (byte and line budgets `analysis-limit`,
@@ -203,8 +342,9 @@ integrations, with regression tests on `main`; the rest land here.
   `analysis-limit`). `ConnectorError.reason` is also a class attribute, so a
   plugin subclass whose `__init__` does not call the base one cannot turn
   the skip handler's read into an `AttributeError` that escapes `run()`.
-  The entries moved from the 0.1.3 section to `## Unreleased`: `v0.1.3` was
-  tagged on `aee3c984`, which does not contain them.
+  The entries moved from the 0.1.3 section to this release's section, then
+  headed `## Unreleased`: `v0.1.3` was tagged on `aee3c984`, which does not
+  contain them.
 - Also from the #308 review follow-ups: a dead read in
   `_redact_credential_calls` is removed and the migration-notes sections are
   ordered newest first. The `token (it's` prose shape from #264 is fixed on
