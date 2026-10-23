@@ -11,6 +11,54 @@ for people who install and operate ShadowScan. Entries name the pull request
 they came from where one exists, and say what was deliberately not carried.
 Counts and figures quoted in an entry are those of its date.
 
+## Unreleased
+
+### Record the 0.1.4 publication (October 23)
+
+0.1.4 was published on October 23: the annotated tag `v0.1.4` on `94fda063`
+(the squash merge of #318, whose tree the approved final head shares), the
+TestPyPI rehearsal (run 39909123401, 06:37 UTC), the PyPI upload (run
+39913118001, 06:49 UTC; wheel `32c0a55a…`, sdist `01ad5c9b…`) and the GitHub
+release of 07:08 UTC with the attested evidence attached. A second
+`publish: pypi` dispatch was cancelled before its upload. This change is the
+publishing runbook's step 8.
+
+- The published-version references name 0.1.4: the product guide's release
+  state, PyPI requirements and documentation link, the install guide, the
+  reviewer packet, ROADMAP.md, SECURITY.md, the severity guide, the OpenSSF
+  rows and the runbook's change-of-provenance paragraph (0.1.4 followed
+  0.1.3 by 17 hours 35 minutes under the same publisher, so no warning is
+  expected; the project page was not observed from the preparing session).
+  `docs/connectors.md` gains a "Published 0.1.4" row that cites the release
+  page, where the maintainer accepts the non-author approval of #318's
+  final head as the independent human review GOVERNANCE.md requires.
+- The 0.1.4 section of `RELEASE_NOTES.md` is rewritten. The release page
+  says the section at the tag misdescribed some changes; the new text
+  follows the page's compatibility notes, with each claim checked against
+  the code between `v0.1.3` and `v0.1.4`: the collection-scope fingerprint
+  and the incremental cache key cover the package version, so a 0.1.3
+  report is not a comparable `diff` baseline and the first `--incremental`
+  run rescans; the three Google signatures that gained Private Service
+  Connect and regional endpoint patterns, where signature domains are
+  matched, and that the eBPF and MCP host rule is separate; the 0.1.3
+  category of every moved incomplete reason (not all were `other`); the
+  scalar-subclass redaction and surrender behaviour; and `ConnectorError`'s
+  `reason=`. The rollout guide's 0.1.4 note gets the same corrections.
+- Verification recorded after the upload: both files downloaded from PyPI
+  match the candidate's `SHA256SUMS`; rebuilding the tag with the
+  hash-locked backend reproduces the published wheel digest; a hash-pinned
+  install on Linux x86_64 with CPython 3.12.3 passed the release smoke
+  checks. `gh attestation verify` was not run from the preparing session
+  (the Sigstore trust root was unreachable there); the release page records
+  the maintainer's verification.
+
+Not carried: the version stays 0.1.4 and `RELEASE_NOTES.md` opens no
+`## Unreleased` section, as after `v0.1.2` and `v0.1.3`; runbook step 9's
+bump happens in the next release's prepare change. The change was drafted
+and reviewed by AI agents in one workflow (four scouts, three rounds of
+adversarial lenses and refuters, a completeness critic), which is not
+independent human review.
+
 ## 0.1.4 — 2026-10-23
 
 ### Prepare NexusShadowScan 0.1.4 (October 23)

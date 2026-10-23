@@ -14,8 +14,9 @@ Published 2026-10-23: the annotated tag `v0.1.4` on the release commit
 `94fda063307c2c0c402a0610f378544b6189f809`, the squash merge of
 [PR #318](https://github.com/aisecnomad/Nexus-ShadowScan/pull/318), uploaded
 to [PyPI](https://pypi.org/project/NexusShadowScan/0.1.4/) and attached to the
-[GitHub release](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.4)
-(an alpha pre-release). A patch release of the five changes merged after
+[GitHub release](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.4),
+as an alpha release (the GitHub release is marked as a pre-release; pip
+installs it by default). A patch release of the five changes merged after
 0.1.3: the issue #264 follow-ups (#310) and the corrections that AI-agent
 reviews of them found (#316), a test-only fix for a child process that exits
 between a liveness check and the cleanup kill (#315), and the documentation
@@ -70,9 +71,10 @@ and the operator note in the
   check use is separate: it already matched the global Private Service Connect
   form in 0.1.3, and now also matches the location-led and regional forms of
   every Google AI service it knows. A repository or log can gain a Vertex AI,
-  Gemini API or Agent Engine finding, an eBPF event an `llm-egress` finding,
-  and an MCP tool whose description names such a host is tagged
-  `tool-poisoning`, which adds the 15-point `tool-poisoning` risk factor. A
+  Gemini API or Agent Engine finding, an eBPF event to such a host a finding
+  tagged `llm-egress`, and an MCP tool whose description names such a host is
+  tagged `tool-poisoning`, which adds the 15-point `tool-poisoning` risk
+  factor. A
   scan gated with `--fail-on` can therefore newly exit 2, and once you have
   rebaselined, `diff --fail-on-new` reports such endpoints as they appear.
 - Incomplete-reason counts move. The shared offline readers and directory
@@ -97,10 +99,13 @@ and the operator note in the
   replay line and file limits, were `oversize-file` and are now
   `analysis-limit`; the rest of a line-read export skipped once a byte budget
   was spent mid-file was `unscanned-input` and is now `analysis-limit`; and
-  every `network.logs` diagnostic without a named reason was, and stays,
-  `upstream-error`. A refused symbolic link stays `unresolved-link`, invalid
-  JSON or YAML stays `unparsed-input`, and the YAML parser's resource limits
-  stay `analysis-limit`. Update gates and dashboards that match any of these
+  most `network.logs` diagnostics were `upstream-error`, because the text
+  classifier reads the `network.logs:` prefix as a network failure: its
+  reader diagnostics now take the named categories above, and the connector's
+  own parse diagnostics, which still name no reason, stay `upstream-error`. A
+  refused symbolic link stays `unresolved-link`, invalid JSON or YAML stays
+  `unparsed-input`, and the YAML parser's resource limits stay
+  `analysis-limit`. Update gates and dashboards that match any of these
   categories, and rescan before comparing counts: existing reports keep their
   recorded categories. Whether a scan is incomplete, and its exit code, do not
   change.
@@ -108,8 +113,10 @@ and the operator note in the
   from 0.1.3; on 3.12, use 3.12.4 or later (see the 0.1.3 notes). After
   publication, a hash-pinned install of the published wheel on Linux x86_64
   with CPython 3.12.3 passed `pip check`, `shadowscan --version`, signature
-  and mapping validation and a sample scan; the release page records the same
-  test on macOS with CPython 3.12. For deployments, install a reviewed commit
+  and mapping validation and a sample scan (3.12.3 is below the floor above,
+  which guards the long-line redaction case the 0.1.3 notes describe; the
+  sample scan does not exercise it); the release page records the same test
+  on macOS with CPython 3.12. For deployments, install a reviewed commit
   from the hash locks, as the
   [deployment guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#install-from-a-reviewed-revision)
   describes.

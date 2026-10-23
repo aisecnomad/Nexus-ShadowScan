@@ -72,6 +72,17 @@ matches `summary.incomplete_reasons` sees, for the same offline inputs:
 - the export writer's replay line and file byte limits (`--dump-records`) as
   `analysis-limit`; before #310 they were `oversize-file`.
 
+Not every one of these diagnostics was `other` in 0.1.3: a missing or
+inaccessible input root and a FIFO, socket or device met in the directory walk
+were `unresolved-link` (now `unscanned-input`; an inaccessible root
+`access-denied`); a file the spent `max_input_bytes` budget turned away was
+`oversize-file`, as the export writer's replay limits were (now
+`analysis-limit`); the rest of a line-read export skipped once a byte budget
+was spent mid-file was `unscanned-input` (now `analysis-limit`); and most
+`network.logs` diagnostics were `upstream-error`, because the text classifier
+reads the `network.logs:` prefix as a network failure. Update a gate that
+matches any of these categories as well.
+
 The readers and walk serve every connector's offline mode, and the loader's
 categories apply to the connectors that parse through it, which is most of
 them. `gateway.logs` parses its own `.json` exports with the same categories.
@@ -80,22 +91,31 @@ classify their parse diagnostics from text, and the text classifier reads the
 `network.logs:` prefix as a network failure, so that connector's parse
 diagnostics count as `upstream-error`. Existing reports retain their recorded
 categories; rescan to obtain corrected reason counts. Whether the scan is
-incomplete, and its exit code, do not change. The Google AI domain signals now also name Private Service
-Connect names (`aiplatform-ENDPOINT.p.googleapis.com`, optionally led by a
-location) and regional service endpoints (`aiplatform.REGION.rep.googleapis.com`)
-wherever signature hosts are matched: network and gateway logs, code and
-low-code scans as well as eBPF events. A repository whose source names such an
-endpoint can gain a Vertex AI, Gemini API or Agent Engine finding, and an MCP
-tool whose description names one is tagged `tool-poisoning` (the eBPF host rule
-also serves that check, as it does for other model provider hosts), which raises
-its risk; re-baseline drift comparisons after upgrading.
+incomplete, and its exit code, do not change. The Google AI domain signals now
+also name Private Service Connect names (`aiplatform-ENDPOINT.p.googleapis.com`,
+optionally led by a location) and regional service endpoints
+(`aiplatform.REGION.rep.googleapis.com`) wherever signature hosts are matched:
+network and gateway logs, code and low-code scans, and every other connector
+that matches signature hosts (for example a cloud inventory endpoint or an
+interface URL an A2A Agent Card declares). The host rule that eBPF events and
+the MCP tool-description check use is separate from the signature patterns, as
+it is for other model provider hosts: it already matched the global Private
+Service Connect form in 0.1.3, and now also matches the location-led and
+regional forms of every Google AI service it knows. A repository whose source
+names such an endpoint can gain a Vertex AI, Gemini API or Agent Engine
+finding, an eBPF event to one a finding tagged `llm-egress`, and an MCP tool
+whose description names one is tagged `tool-poisoning`, which raises its
+risk; re-baseline drift comparisons after upgrading.
 
 Per-change migration and behavior notes for the changes between 0.1.2 and
 0.1.3 live in the [migration notes](production-migrations.md), and the dated log of
 every candidate change lives in the
 [candidate change history](history/production-change-history.md), so this
-page stays the rollout guide. 0.1.4 has no separate migration notes: its
-operator-facing changes are the note above.
+page stays the rollout guide. 0.1.4 has no separate migration notes: the
+note above covers its incomplete-reason and Google AI endpoint changes, and
+the [0.1.4 release notes](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/RELEASE_NOTES.md)
+list every upgrade effect, including the `diff` baseline and incremental-cache
+resets after upgrading.
 
 ## Review before deployment
 

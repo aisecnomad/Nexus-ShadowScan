@@ -6,6 +6,16 @@ One summary per release. Detailed implementation history is maintained in the
 explain operator migrations. Earlier per-change entries are preserved in the
 [change-history archive](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/history/changelog-detail.md).
 
+## Unreleased
+
+- The 0.1.4 publication is recorded (tag `v0.1.4` on `94fda063`, the PyPI
+  upload and the GitHub release of 2026-10-23): the published-version
+  references name 0.1.4, the connectors evidence table gains the release's
+  row, and the 0.1.4 release notes are rewritten to the release page's
+  compatibility notes, each claim checked against the code, with the rollout
+  guide's operator note saying which 0.1.3 category each moved incomplete
+  reason had.
+
 ## 0.1.4 — 2026-10-23
 
 - The 0.1.3 publication is recorded (tag `v0.1.3` on `aee3c984`, the PyPI
