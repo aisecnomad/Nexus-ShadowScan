@@ -11,6 +11,33 @@ for people who install and operate ShadowScan. Entries name the pull request
 they came from where one exists, and say what was deliberately not carried.
 Counts and figures quoted in an entry are those of its date.
 
+## Unreleased
+
+### Record the 0.1.4 publication (October 23)
+
+Version 0.1.4 was published on 2026-10-23: the maintainer tagged `v0.1.4`
+on `94fda063` (tree `79be1584`), dispatched the release-evidence workflow
+and approved the protected deployments. The TestPyPI rehearsal (run
+39909123401) and the production upload (run 39913118001) both built from
+that commit. The published wheel (sha256 `32c0a55acba90049`...) is
+byte-identical to the rehearsal wheel and to a local rebuild from the
+tagged commit, and both PyPI files carry SLSA provenance and SBOM
+attestations naming `release.yml` and that commit; the sdist
+(`01ad5c9b27201eeb`...) differs from the rehearsal sdist, as sdists are
+not byte-reproducible, and is identified by its own attestation. The
+GitHub release holds the candidate evidence, `SHA256SUMS` and the
+Sigstore bundles. PR #318's head (`70e12179`), whose tree is identical
+to the tagged squash commit, received a non-author approval.
+
+The documentation that names the published release moves from 0.1.3 to
+0.1.4: the product guide's release state and PyPI requirements note, the
+install guide, the connector evidence table (a Published 0.1.4 row), the
+OpenSSF version rows, the reviewer packet's version-string caution,
+ROADMAP.md and the supported versions in SECURITY.md. The headings of
+CHANGELOG.md, RELEASE_NOTES.md, this log and CITATION.cff already carry
+2026-10-23, the day of the tag and upload, so they are unchanged, and no
+consistency-test pin names the published version.
+
 ## 0.1.4 — 2026-10-23
 
 ### Prepare NexusShadowScan 0.1.4 (October 23)
