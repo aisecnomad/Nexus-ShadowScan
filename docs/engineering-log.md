@@ -11,7 +11,7 @@ for people who install and operate ShadowScan. Entries name the pull request
 they came from where one exists, and say what was deliberately not carried.
 Counts and figures quoted in an entry are those of its date.
 
-## Unreleased
+## 0.1.4 — 2026-10-23
 
 ### Review follow-ups to the #264 changes (October 22)
 

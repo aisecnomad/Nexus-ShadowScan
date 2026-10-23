@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "NexusShadowScan"
-version = "0.1.3"
+version = "0.1.4"
 description = "Find evidence of shadow AI agents across code, identity, LLM gateways, low-code, SaaS, cloud, endpoints, network and processes."
 readme = "README.md"
 license = "Apache-2.0"

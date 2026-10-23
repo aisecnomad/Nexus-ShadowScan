@@ -8,6 +8,60 @@ records each in detail, and the
 [deployment and migration guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md)
 has the full upgrade steps.
 
+## 0.1.4 — 2026-10-23
+
+A focused follow-up to 0.1.3. Offline-input diagnostics now name explicit
+incomplete categories, a scalar-subclass value in finding metadata can no
+longer fail a connector or drop a finding, and the Google AI domain signals
+recognize Private Service Connect and regional service endpoint names
+wherever signature hosts are matched. These notes prepare the release;
+confirm publication on
+[PyPI](https://pypi.org/project/NexusShadowScan/0.1.4/) and the
+[GitHub release](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.4)
+before installing this version from the production index. No independent
+human review is recorded in this release preparation. Publication and
+artifact attestations do not establish deployment acceptance. Details:
+[CHANGELOG.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md)
+and the
+[engineering log](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/engineering-log.md).
+
+### Before you upgrade
+
+- **Incomplete-reason counts move between categories.** The shared offline
+  readers and directory walk, the shared export loader and the export writer
+  name their own incomplete categories instead of leaving them to the text
+  classifier, which counted most of their diagnostics as `other`. For the
+  same offline inputs, a gate or dashboard that matches
+  `summary.incomplete_reasons` sees a corrupt or undecodable export as
+  `unparsed-input`; a captured provider error envelope or error row as
+  `upstream-error`; an uncollected next page, a missing or vanished input, or
+  a FIFO, socket, device or directory in a file's place as `unscanned-input`;
+  a refused symbolic link as `unresolved-link`; an unreadable input as
+  `access-denied`; a file skipped whole for the per-file cap as
+  `oversize-file`; and spent byte, line and parser resource limits — the
+  export writer's replay limits included, which 0.1.3 counted as
+  `oversize-file` — as `analysis-limit`. Existing reports retain their
+  recorded categories; rescan to obtain corrected reason counts. Whether a
+  scan is incomplete, and its exit code, do not change. See the
+  [production rollout guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#migration-notes-and-change-history).
+- **New Google AI endpoint signals can add findings.** The Vertex AI, Gemini,
+  Dialogflow and Discovery Engine signatures recognize Private Service
+  Connect names (`aiplatform-ENDPOINT.p.googleapis.com`, optionally led by a
+  location such as `us-central1-aiplatform-restricted.p.googleapis.com`) and
+  regional service endpoints (`aiplatform.REGION.rep.googleapis.com`)
+  wherever signature hosts are matched: network and gateway logs, code and
+  low-code scans as well as eBPF events. A repository or log that names such
+  an endpoint can gain a finding, and an MCP tool whose description names one
+  is tagged `tool-poisoning`, which raises its risk. Re-baseline drift
+  comparisons after upgrading.
+- **Scalar-subclass metadata is kept rather than fatal.** A connector finding
+  whose metadata holds a scalar subclass (an `IntEnum`, a numpy scalar, a
+  `datetime` subclass such as pandas `NaT` or a nanosecond `Timestamp`) no
+  longer fails the connector or loses the finding at an overrun scan's
+  surrender: an `int` or `float` subclass keeps its stored value, other
+  subclasses are rebuilt as their standard type when the rebuilt value reads
+  as the original and otherwise become that text.
+
 ## 0.1.3 — 2026-10-22
 
 The first release since the repository was renamed to

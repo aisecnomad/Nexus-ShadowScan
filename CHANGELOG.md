@@ -6,7 +6,7 @@ One summary per release. Detailed implementation history is maintained in the
 explain operator migrations. Earlier per-change entries are preserved in the
 [change-history archive](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/history/changelog-detail.md).
 
-## Unreleased
+## 0.1.4 — 2026-10-23
 
 - Review follow-ups to #310: a scalar subclass whose fields cannot build its
   standard type (pandas `NaT`) no longer fails the connector, and an `int` or

@@ -49,7 +49,7 @@ Existing reports retain their recorded categories; rescan to obtain corrected
 reason counts. These corrections do not change whether the scan is incomplete
 or which finding evidence it retains.
 
-Unreleased: the shared offline readers and directory walk, the shared export
+0.1.4: the shared offline readers and directory walk, the shared export
 loader (`load_offline_file`) and the export writer now name explicit incomplete
 categories instead of leaving them to the text classifier, which counted most of
 the readers' and loader's diagnostics as `other`. A gate or dashboard that
