@@ -50,10 +50,13 @@ and `AGENTS.md` tells coding agents not to publish a version tag, a PyPI
 package or a GitHub release. The maintainer approved every deployment.
 The TestPyPI rehearsal, at 06:02 UTC, and a second `publish: pypi` run,
 39913338824, at 06:44 UTC after the production run had built, were
-dispatched from the maintainer's account outside that session; whether
-the maintainer or another agent session started them is not recorded. That
-session cancelled run 39913338824 at 07:03 UTC while its publish job
-waited for approval, so it uploaded nothing to PyPI or to the release.
+dispatched by a second Claude Code session through the same account, also
+at the maintainer's direction; that second session also merged the
+approved #318 and #319 after their non-author approvals, and its API
+attempt to approve the `testpypi` deployment was refused, so every
+deployment approval was the maintainer's own. The first session cancelled
+run 39913338824 at 07:03 UTC while its publish job waited for approval, so
+it uploaded nothing to PyPI or to the release.
 Its build and attest jobs had already run, so GitHub holds provenance and
 SBOM attestations of its own sdist (`2810f28b…`), which was never
 published, and a third pair for the wheel.
@@ -149,7 +152,7 @@ published, and a third pair for the wheel.
 Version 0.1.4 was published on 2026-10-23 from the tag `v0.1.4` on
 `94fda063` (tree `79be1584`), and the maintainer approved the protected
 deployments; the entry above records who pushed the tag and dispatched
-each release-evidence run, where that is known. The TestPyPI rehearsal (run
+each release-evidence run. The TestPyPI rehearsal (run
 39909123401) and the production upload (run 39913118001) both built from
 that commit. The published wheel (sha256 `32c0a55acba90049`...) is
 byte-identical to the rehearsal wheel and to a local rebuild from the

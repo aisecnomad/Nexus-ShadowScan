@@ -33,7 +33,9 @@ maintainer's direction, a Claude Code session created and pushed the
 tag under the maintainer's git identity, dispatched the PyPI run and
 published the GitHub release, steps the
 [publishing runbook](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/operations/publishing.md#per-release)
-reserves for the maintainer; the maintainer approved every deployment.
+reserves for the maintainer, and a second session, also at the
+maintainer's direction, dispatched the TestPyPI rehearsal and merged the
+reviewed pull requests; the maintainer approved every deployment.
 Publication and artifact attestations do not establish deployment
 acceptance. Details:
 [CHANGELOG.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md)
