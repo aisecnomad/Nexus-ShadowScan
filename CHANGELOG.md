@@ -11,6 +11,13 @@ explain operator migrations. Earlier per-change entries are preserved in the
 - The 0.1.4 publication is recorded (tag `v0.1.4` on `94fda063`, the PyPI
   upload and the GitHub release of 2026-10-23).
 
+- The 0.1.4 release's review and its deviations from the publishing runbook
+  and `AGENTS.md` are recorded; the 0.1.4 release notes, changelog summary
+  and rollout guide are corrected against 0.1.3, and the publishing
+  runbook's step 6 names the production run's artifact and rebuilds the
+  wheel from an archive of the tag under `umask 022`, with the tag's own
+  build-backend lock.
+
 ## 0.1.4 — 2026-10-23
 
 - The 0.1.3 publication is recorded (tag `v0.1.3` on `aee3c984`, the PyPI
@@ -19,28 +26,37 @@ explain operator migrations. Earlier per-change entries are preserved in the
   rename avoids one, and a test tolerates a child process that exits between
   its liveness check and the cleanup kill.
 
-- Review follow-ups to #310: a scalar subclass whose fields cannot build its
-  standard type (pandas `NaT`) no longer fails the connector, and an `int` or
-  `float` subclass keeps its stored value, and a scalar subclass cannot pass as
-  exact through its metaclass; the shared offline readers, walk and export
-  loader, and `gateway.logs`' JSON exports, name each diagnostic's own category
-  (limits `analysis-limit`, captured provider errors `upstream-error`,
-  uncollected pages, vanished and special files `unscanned-input`, refused
-  links `unresolved-link`) instead of one for every message; Google AI
-  Private Service Connect names led by a location
-  (`us-central1-aiplatform-restricted.p.googleapis.com`) are AI destinations;
-  and the new Google domain signals apply wherever signature hosts are matched,
-  including code, gateway and low-code scans, and an MCP tool description that
-  names such a host is tagged `tool-poisoning`.
+- Offline inputs are counted under explicit incomplete reasons: the shared
+  offline readers, directory walk and export loader, `gateway.logs`' own
+  JSON exports and the export writer name each diagnostic's category
+  (corrupt, undecodable, malformed or empty input `unparsed-input`,
+  captured provider errors `upstream-error`, uncollected pages and missing,
+  vanished, unsupported or special files `unscanned-input`, refused links
+  `unresolved-link`, permission errors `access-denied`, files over the
+  per-file cap `oversize-file`, other limits `analysis-limit`) where 0.1.3
+  classified their text, counting many as `other`, some as
+  `unresolved-link`, `oversize-file` or `unscanned-input`, and most of
+  those from `network.logs` as `upstream-error`. Whether a scan is
+  incomplete, and its exit code, are unchanged; `ConnectorError` takes an
+  optional `reason`, and a repository ratchet keeps reason-less diagnostic
+  sites from growing.
 
-- Issue #264 follow-ups: Google AI services reached over Private Service
-  Connect (`aiplatform-ENDPOINT.p.googleapis.com`) or a regional service
-  endpoint (`aiplatform.REGION.rep.googleapis.com`) are AI destinations in
-  network logs and eBPF events; an overrun scan's surrender keeps a finding
-  whose metadata holds a scalar subclass (an `IntEnum`, a numpy scalar, a
-  `datetime` subclass); and the shared offline-input and export funnels count
-  their diagnostics under explicit incomplete reasons, with a ratchet so
-  reason-less diagnostics only ever decrease.
+- Google AI services reached through Private Service Connect
+  (`aiplatform-ENDPOINT.p.googleapis.com`, optionally led by a location such
+  as `us-central1-`) or a regional service endpoint
+  (`aiplatform.REGION.rep.googleapis.com`) are AI destinations wherever
+  signature hosts are matched, including network and gateway logs and code
+  and low-code scans; the eBPF host rule and the MCP tool-description check
+  (`tool-poisoning`), which already recognized the global Private Service
+  Connect form, recognize the location-led and regional forms too.
+
+- When a connector's deadline expires, its partial report keeps a finding
+  whose metadata holds a scalar subclass (an `IntEnum`, a numpy `float64`,
+  a pandas `Timestamp` or `NaT`), which 0.1.3 omitted. The sanitize pass
+  stores such a value as its standard type, or as its text when it cannot
+  be rebuilt exactly, and that text is redacted, where 0.1.3 wrote a
+  `date`, `datetime`, `time`, `timedelta`, `Decimal` or `UUID` subclass to
+  the JSON report through its own `__str__`, unredacted.
 
 ## 0.1.3 — 2026-10-22
 
