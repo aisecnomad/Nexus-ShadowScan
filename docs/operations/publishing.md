@@ -314,6 +314,10 @@ URLs. The repository was renamed from `aisecnomad/Project-Nexus` to
    workflow with `publish: true` again if the site is deployed from it.
 5. Point local clones at the new URL with
    `git remote set-url origin https://github.com/aisecnomad/Nexus-ShadowScan.git`.
+6. Upload the first release under the new name more than 14 days after the
+   last release, by PyPI upload time; otherwise PyPI flags it with a
+   **Change of provenance** warning that stays on that release (see below).
+   If it cannot wait, name the rename in that release's notes.
 
 Attestations keep the name they were signed under. Verify files released
 before a rename with the old `--repo` value, as the install instructions do
@@ -321,9 +325,9 @@ for 0.1.2.
 
 PyPI shows a **Change of provenance** warning on a release whose
 attestations name a different repository or workflow file from the
-previous attested release, when that release was uploaded less than 14 days
-earlier. As checked on October 22, 2026, PyPI's
-[comparison](https://github.com/pypi/warehouse/blob/4969cf8c4598fb3a5503e1ae88b90db5541240a6/warehouse/attestations/models.py)
+previous attested release, when that release was uploaded within 14 days
+before it (the window includes its far edge). As checked on October 22, 2026,
+PyPI's [comparison](https://github.com/pypi/warehouse/blob/4969cf8c4598fb3a5503e1ae88b90db5541240a6/warehouse/attestations/models.py)
 matches the publisher's repository name, not the numeric repository ID, and
 its [window](https://github.com/pypi/warehouse/blob/4969cf8c4598fb3a5503e1ae88b90db5541240a6/warehouse/packaging/models.py)
 is measured back from that release's own upload, so it never expires.
@@ -332,15 +336,18 @@ warning, with the former repository listed as removed and the new one as
 added. Both signing certificates name the same Source Repository Identifier
 (`1174915264`), which links the two names.
 
-The warning cannot be cleared on that release: attestations cannot be
-replaced, a file name cannot be uploaded twice, PyPI offers maintainers no
-way to dismiss it, and yanking the earlier release does not change the
-comparison. Do not delete the earlier release to clear it. The next release
-from the same `release.yml` and environment is compared with the first
-release under the new name and carries no warning, and the project page then
-shows that release. For a later rename, either upload the first release under
-the new name at least 14 days after the last one, or name the rename in its
-release notes, where PyPI's
+The warning cannot be cleared on 0.1.3 short of deleting 0.1.2, and 0.1.2
+stays: attestations cannot be replaced, a file name cannot be uploaded twice,
+PyPI offers maintainers no way to dismiss the warning, and yanking 0.1.2 does
+not change the comparison. Deleting 0.1.2 would remove a published release
+that the install instructions verify with the old `--repo` value, and its file
+name could never be uploaded again. The next release from the same repository
+and `release.yml` carries no warning: within 14 days of 0.1.3 it is compared
+with 0.1.3, and after that it has nothing to compare against. The project
+page then shows that release. For a later rename, count the 14 days from the
+last release's PyPI upload time, not from the dates in the headings: 0.1.2 and
+0.1.3 are dated 14 calendar days apart, yet 0.1.3 was uploaded inside the
+window. Otherwise name the rename in the first release's notes, where PyPI's
 [guidance](https://github.com/pypi/warehouse/blob/4969cf8c4598fb3a5503e1ae88b90db5541240a6/docs/user/using-pypi/package-security/provenance.md#change-of-provenance)
 asks users to confirm the change.
 
