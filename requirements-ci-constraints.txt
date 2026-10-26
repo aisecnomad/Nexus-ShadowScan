@@ -55,4 +55,4 @@ tomli==2.5.0
 tomli_w==1.2.0
 types-PyYAML==6.0.12.20260906
 types-requests==2.33.0.20261006
-virtualenv==21.14.11
+virtualenv==21.14.13
