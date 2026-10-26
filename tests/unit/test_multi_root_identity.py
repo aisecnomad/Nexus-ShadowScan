@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from shadowscan.config import ConnectorSpec, ScanConfig
+from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
 
 
@@ -180,3 +180,48 @@ def test_single_path_string_retains_legacy_resource(tmp_path, index, incremental
     ).run()
     assert result.complete and len(result.findings) == 1
     assert result.findings[0].resource == "github:acme/shared"
+
+
+def _entries_scan(tmp_path: Path, specs: list[ConnectorSpec], *, index, only: list[str] | None = None):
+    config = ScanConfig(connectors=specs, state_dir=str(tmp_path / "state"), parallel=1)
+    return Engine(config, index).run(only)
+
+
+def _entry(entry: str, **config) -> ConnectorSpec:
+    """A code.filesystem entry with id ``entry`` and its connector configuration."""
+    return ConnectorSpec("code.filesystem", {"use_git": False, **config}, label=entry)
+
+
+@pytest.mark.parametrize("layout", ["entry label", "nested label", "root ids"])
+def test_entries_repeating_a_label_for_different_roots_are_refused(tmp_path, index, layout):
+    # Separate entries do not get the per-root suffix of one entry's paths: the
+    # second repository's findings would take the first one's ids and approval.
+    first, second = _repositories(tmp_path)
+    shared = "github:acme/shared"
+    if layout == "entry label":
+        specs = [_entry(shared, path=str(root)) for root in (first, second)]
+    elif layout == "nested label":
+        specs = [_entry(f"entry-{n}", path=str(root), label=shared) for n, root in enumerate((first, second))]
+    else:
+        specs = [
+            _entry(f"entry-{n}", paths=[str(root)], root_ids=["main"], label=shared)
+            for n, root in enumerate((first, second))
+        ]
+    with pytest.raises(ConfigValidationError, match="distinct label"):
+        _entries_scan(tmp_path, specs, index=index)
+
+
+def test_entries_repeating_a_label_for_one_root_or_unrun_entries_still_scan(tmp_path, index):
+    first, second = _repositories(tmp_path)
+    shared = "github:acme/shared"
+    same_root = [_entry(shared, path=str(first)), _entry(shared, path=f"{tmp_path}/./first")]
+    result = _entries_scan(tmp_path, same_root, index=index)
+    assert result.complete and [f.resource for f in result.findings] == [shared]
+
+    # Unnamed labelled paths roots keep distinct hashed prefixes, and an entry
+    # left out by --only cannot collide with the one that runs.
+    hashed = [_entry(shared, paths=[str(root)]) for root in (first, second)]
+    assert len(_entries_scan(tmp_path, hashed, index=index).findings) == 2
+    selected = [_entry(shared, path=str(first)), _entry("entry-b", path=str(second), label=shared)]
+    only = _entries_scan(tmp_path, selected, index=index, only=["entry-b"])
+    assert only.complete and [f.metadata["scan_root"] for f in only.findings] == [str(second)]

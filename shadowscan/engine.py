@@ -1631,6 +1631,7 @@ class Engine:
         jobs = self._select_jobs(only)
         specs = [spec for _, spec in jobs]
         self.config.validate_connector_isolation(specs)
+        self.config.validate_distinct_scan_labels(specs)
         stats = self._selection_stats(specs) + self._inventory_stats(specs, result.started_at)
         cache = IncrementalCache(self.config, self.index, identity_key=self._identity_key)
         dump_records = self.config.dump_records

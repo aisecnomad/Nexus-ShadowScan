@@ -662,6 +662,11 @@ Include=... />`, `<PackageReference Update=... />`) and project files whose
 Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
 `max_notebook_size`, `max_ast_nodes`, `agent_granularity`, `scan_secrets`, `staged`, `strict_coverage`, `include_tests`, `profile`, `triage`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
+A scalar `path` gives every finding its label alone as the resource prefix, so
+a scan refuses (exit 1) a second entry that scans a different root under the
+same label, or under the same label and root ID: their findings would share
+ids and merge, and an approval of one repository would cover the other. Give
+each entry its own label, or list the roots in one entry's `paths`.
 
 `profile: ci` (`--profile ci`) declares the coverage gaps a source gate accepts
 in advance: unread symbolic links, non-regular entries, unparsed content,

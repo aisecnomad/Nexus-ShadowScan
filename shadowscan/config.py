@@ -516,6 +516,31 @@ def connector_timeout_is_default(value: object) -> bool:
     return isinstance(value, _DefaultConnectorTimeout)
 
 
+def _labelled_scan_roots(spec: ConnectorSpec) -> dict[str, str]:
+    """The ``code.filesystem`` roots of one entry that another entry could give the same resource prefix.
+
+    Keyed by that prefix, as ``FilesystemConnector._scan_label`` forms it: a
+    scalar root has its label alone and a ``root_ids`` root its label and ID.
+    An unlabelled root or an unnamed labelled ``paths`` root has its own path
+    or the hash of it, which no other root shares.
+    """
+    # The engine passes the entry label unless the connector configuration sets its own.
+    label = spec.config.get("label", spec.label)
+    if spec.name != "code.filesystem" or not isinstance(label, str) or not label:
+        return {}
+    paths, root_ids = spec.config.get("paths"), spec.config.get("root_ids")
+    if isinstance(paths, list):
+        named = root_ids if isinstance(root_ids, list) else []
+        roots = [(f"{label}/root-id-{root_id}", path) for root_id, path in zip(named, paths, strict=False)]
+    else:
+        roots = [(label, spec.config.get("input") or spec.config.get("path"))]
+    return {
+        prefix: os.path.abspath(os.path.expanduser(root))
+        for prefix, root in roots
+        if isinstance(root, str) and root
+    }
+
+
 @dataclass(slots=True)
 class ScanConfig:
     connectors: list[ConnectorSpec] = field(default_factory=list)
@@ -668,6 +693,25 @@ class ScanConfig:
                 "set options.allow_credential_mixing to true (or pass --allow-credential-mixing) "
                 "only for reviewed inputs"
             )
+
+    def validate_distinct_scan_labels(self, specs: list[ConnectorSpec]) -> None:
+        """Do not let two repositories share finding ids through a repeated label.
+
+        Findings merge by id, so a second ``code.filesystem`` entry that gives
+        another root the same label (or label and root ID) would fold that
+        repository's agents into the first one's findings and approvals.
+        """
+        roots: dict[str, str] = {}
+        for spec in specs:
+            # Repeats within one entry fail its own connector (validate_root_ids).
+            entry = _labelled_scan_roots(spec)
+            if any(roots.get(prefix, root) != root for prefix, root in entry.items()):
+                raise ConfigValidationError(
+                    "code.filesystem entries scan different roots under the same label, so their "
+                    "findings would merge; give each entry a distinct label, or list the roots in "
+                    "one entry's paths with distinct root_ids"
+                )
+            roots.update(entry)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], source: str | None = None) -> ScanConfig:

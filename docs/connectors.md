@@ -275,7 +275,9 @@ addition to the connector's own options:
   `--only`, progress and `dump_records` file names, and it is passed to the
   connector as the `label` key:
   `code.filesystem` prefixes resource ids with it and `gateway.logs` records it
-  as the gateway name.
+  as the gateway name. A scan refuses (exit 1) two `code.filesystem` entries
+  that give different roots the same label, or the same label and root ID,
+  because their findings would share ids and merge.
 - `config`: an optional nested mapping merged into the top-level keys, for
   configurations that keep credentials apart from entry metadata. A nested
   key replaces a top-level key of the same name.
