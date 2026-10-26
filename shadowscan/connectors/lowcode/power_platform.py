@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from functools import partial
 from typing import Any, ClassVar
 from urllib.parse import quote, urlsplit
@@ -30,6 +30,7 @@ from shadowscan.connectors.common import (
     apply_matches,
     blob_matches,
     config_boolean,
+    failure_outcome,
     failure_summary,
     finalize,
     name_matches,
@@ -45,6 +46,9 @@ from shadowscan.utils.text import get_path
 MAX_DEFINITION_CHARS = 300_000
 # Malformed or oversized provider fields raise these while one record is analysed.
 _RECORD_ERRORS = (AttributeError, TypeError, ValueError, KeyError, RecursionError, MatchTimeoutError)
+# Incomplete-reason category of a failed environment listing, by its live scope
+# outcome; any other failure is the provider's.
+_LISTING_REASONS = {"denied": "access-denied", "truncated": "analysis-limit"}
 
 BAP = "https://api.bap.microsoft.com"
 FLOW = "https://api.flow.microsoft.com"
@@ -189,12 +193,26 @@ class PowerPlatformConnector(BaseConnector):
         return HttpClient(base, headers={"Authorization": f"Bearer {self._token(scope)}"})
 
     # --------------------------------------------------------------- collect
+    def _environments(self, bap: HttpClient) -> Iterator[dict[str, Any]]:
+        """Listed environments; a failed continuation keeps those already listed.
+
+        analyze() reports agents only once the record stream ends, so a failure
+        that escaped collect() would discard every agent already collected.
+        """
+        try:
+            yield from bap.paginate_odata(
+                "/providers/Microsoft.BusinessAppPlatform/scopes/admin/environments",
+                params={"api-version": "2021-04-01"},
+            )
+        except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+            self.ctx.warn(
+                f"lowcode.power-platform: environments: {self._failure_reason(exc)}",
+                reason=_LISTING_REASONS.get(failure_outcome(exc), "upstream-error"),
+            )
+
     def collect(self) -> Iterable[dict[str, Any]]:
         bap = self._client(BAP, "https://service.powerapps.com/.default")
-        for env in bap.paginate_odata(
-            "/providers/Microsoft.BusinessAppPlatform/scopes/admin/environments",
-            params={"api-version": "2021-04-01"},
-        ):
+        for env in self._environments(bap):
             name = env.get("name")
             display = get_path(env, "properties.displayName")
             if self.only_envs and name not in self.only_envs and display not in self.only_envs:
@@ -207,8 +225,10 @@ class PowerPlatformConnector(BaseConnector):
             env["_kind"] = "environment"
             yield env
             env_id = quote(name, safe="")
-            flow = self._client(FLOW, "https://service.flow.microsoft.com/.default")
             try:
+                # Flows use their own token audience too; a refused token is this
+                # environment's flow gap, not the end of apps and Dataverse.
+                flow = self._client(FLOW, "https://service.flow.microsoft.com/.default")
                 for fl in flow.paginate_odata(
                     f"/providers/Microsoft.ProcessSimple/scopes/admin/environments/{env_id}/v2/flows",
                     params={"api-version": "2016-11-01", "$top": 250},
