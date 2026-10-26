@@ -20,6 +20,16 @@ explain operator migrations. Earlier per-change entries are preserved in the
 - Real ownership tests detect unavailable foreign-UID changes in restricted
   environments; the mocked ownership checks still run.
 
+- The OpenSSF Best Practices evidence page is re-checked on 2026-10-26: its one
+  MUST gap (`crypto_keylength`) is closed by the JWKS verifier's existing
+  RSA modulus bound, now covered by a regression test, and the page carries
+  the registration steps the maintainer must follow before the badge can
+  appear in the README. `SECURITY.md` states supported versions as a table.
+  A 2026-10-26 administrator readback of all three rulesets is recorded
+  (active, no bypass actors, matching the committed policy), the roadmap no
+  longer calls the bypass-actor removal outstanding, and the `performance`
+  label is added to `.github/labels.yml`.
+
 - Dependabot #323, #324 and #325 are carried with regenerated hash locks.
   setuptools 84.2.1 replaces 84.0.0 as the build backend and in the CI lock
   (GHSA-xmj3-9gf7-h52w made `pip-audit` fail on `main`), ruff 0.17.2 moves
@@ -32,6 +42,8 @@ explain operator migrations. Earlier per-change entries are preserved in the
   `/etc/apk/world`, so a plain upgrade held them at the vulnerable versions.
   virtualenv 21.14.13 (from #324) also fixes GHSA-cx6f-vjhg-g3cc in the CI
   lock, which Scorecard reports and #326 proposed alone.
+  The CI lock is resolved with uv 0.13.4: 0.11.32 vendors a CA bundle that
+  trusts the compromised emSign ECC root (GHSA-hq85-5cpj-mr62).
 
 - The 0.1.4 publication is recorded (tag `v0.1.4` on `94fda063`, the PyPI
   upload and the GitHub release of 2026-10-23).
