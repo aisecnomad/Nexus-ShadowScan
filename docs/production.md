@@ -55,7 +55,10 @@ their provider-specific reader validates shape, continuation and object limits.
 Conflicting collections in a List are rejected for document, array and JSONL
 inputs, including Lists carrying additional resource labels.
 `gateway.logs` likewise keeps the CloudWatch subscription batches and usage
-buckets it expands itself; one that carries a continuation is still incomplete.
+buckets it expands itself. Its expansion boundary rejects conflicting
+collections and marks pagination incomplete while retaining observed records.
+Automatic format detection now validates interval/results wrappers without a
+native record identity as usage buckets; identified events keep nested fields.
 Rescan affected exports before using an earlier complete report for assurance.
 
 CI failure annotations now redact test names, filenames, exception types and

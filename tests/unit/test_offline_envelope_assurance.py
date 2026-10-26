@@ -87,10 +87,14 @@ def test_collection_data_and_nested_error_page_are_not_native_records() -> None:
 _APP = {"_kind": "approved_app", "app": {"id": "A1", "name": "Claude"}, "scopes": []}
 
 
-def _cli_scan(tmp_path, connector: str, body: object, settings: tuple[str, ...] = ()):
-    source = tmp_path / "export.json"
+def _cli_scan(tmp_path, connector: str, body: object, settings: tuple[str, ...] = (), suffix: str = ".json"):
+    source = tmp_path / f"export{suffix}"
     report = tmp_path / "report.json"
-    source.write_text(json.dumps(body), encoding="utf-8")
+    if suffix == ".jsonl":
+        assert isinstance(body, list)
+        source.write_text("\n".join(json.dumps(record) for record in body), encoding="utf-8")
+    else:
+        source.write_text(json.dumps(body), encoding="utf-8")
     if connector == "saas.slack":
         settings = ("team_id=T1", *settings)
     outcome = CliRunner().invoke(
@@ -345,3 +349,99 @@ def test_gateway_nested_batch_with_a_continuation_is_still_incomplete(tmp_path):
     assert report["summary"]["complete"] is False
     assert report["stats"][0]["incomplete_reasons"] == {"unscanned-input": 1}
     assert "synthetic-uncollected-page" not in json.dumps(report)
+
+
+def _gateway_layout_scan(tmp_path, layout, record, neighbor, settings):
+    records = [record, neighbor]
+    body = record if layout == "single" else {"data": records} if layout == "envelope" else records
+    return _cli_scan(
+        tmp_path, "gateway.logs", body, settings, suffix=".jsonl" if layout == "jsonl" else ".json"
+    )
+
+
+@pytest.mark.parametrize("layout", ["single", "array", "envelope", "jsonl"])
+@pytest.mark.parametrize(
+    "family,label,settings",
+    [
+        ("cloudwatch", {"resource": {"labels": {"project_id": "synthetic"}}}, ("format=bedrock",)),
+        ("cloudwatch", {"type": "app"}, ("format=bedrock",)),
+        ("cloudwatch", {"_kind": "batch"}, ("format=bedrock",)),
+        ("usage", {"object": "bucket"}, ()),
+        ("usage", {"resource": "synthetic"}, ("format=openai-usage",)),
+        ("usage", {"type": "app"}, ("format=openai-usage",)),
+        ("usage", {"_kind": "usage"}, ("format=openai-usage",)),
+    ],
+)
+@pytest.mark.parametrize("ambiguous", [False, True], ids=["one-collection", "two-collections"])
+def test_gateway_collection_labels_preserve_context_without_hiding_ambiguity(
+    tmp_path, layout, family, label, settings, ambiguous
+):
+    record = _cloudwatch_batch(1) if family == "cloudwatch" else _usage_bucket(1761436800)
+    neighbor = _cloudwatch_batch(2) if family == "cloudwatch" else _usage_bucket(1761523200)
+    record.update(label)
+    if ambiguous:
+        key = "logEvents" if family == "cloudwatch" else "results"
+        record["records"], record[key] = record[key], []
+    outcome, report = _gateway_layout_scan(tmp_path, layout, record, neighbor, settings)
+
+    assert report["summary"]["complete"] is not ambiguous, outcome.output
+    assert (outcome.exit_code == 3) is ambiguous
+    assert report["stats"][0]["incomplete_reasons"] == ({"unparsed-input": 1} if ambiguous else {})
+    observed_records = int(not ambiguous) + int(layout != "single")
+    expected_requests = observed_records * (4 if family == "usage" else 1)
+    assert sum(finding["metadata"]["events"] for finding in report["findings"]) == expected_requests
+
+
+@pytest.mark.parametrize("layout", ["single", "array", "envelope", "jsonl"])
+@pytest.mark.parametrize("family", ["cloudwatch", "usage"])
+@pytest.mark.parametrize(
+    "pagination,reason",
+    [
+        ({"nextToken": "synthetic-uncollected-page"}, "unscanned-input"),
+        ({"nextToken": False}, "unparsed-input"),
+    ],
+)
+def test_gateway_collection_pagination_is_reported_once_and_observed_records_survive(
+    tmp_path, layout, family, pagination, reason
+):
+    record = _cloudwatch_batch(1) if family == "cloudwatch" else _usage_bucket(1761436800)
+    neighbor = _cloudwatch_batch(2) if family == "cloudwatch" else _usage_bucket(1761523200)
+    record.update(pagination)
+    settings = ("format=bedrock",) if family == "cloudwatch" else ("format=openai-usage",)
+    outcome, report = _gateway_layout_scan(tmp_path, layout, record, neighbor, settings)
+
+    assert outcome.exit_code == 3, outcome.output
+    assert report["stats"][0]["incomplete_reasons"] == {reason: 1}
+    expected_requests = (1 + int(layout != "single")) * (4 if family == "usage" else 1)
+    assert sum(finding["metadata"]["events"] for finding in report["findings"]) == expected_requests
+    assert "synthetic-uncollected-page" not in json.dumps(report)
+
+
+@pytest.mark.parametrize("layout", ["single", "array", "envelope", "jsonl"])
+@pytest.mark.parametrize("malformed", [False, True])
+def test_anonymous_usage_wrapper_is_validated_before_auto_format_event_detection(tmp_path, layout, malformed):
+    record = _usage_bucket(1761436800)
+    if malformed:
+        record.update(results={}, service="worker", model="gpt-4o")
+    outcome, report = _gateway_layout_scan(tmp_path, layout, record, _usage_bucket(1761523200), ())
+
+    assert report["summary"]["complete"] is not malformed, outcome.output
+    assert (outcome.exit_code == 3) is malformed
+    expected_requests = (int(not malformed) + int(layout != "single")) * 4
+    assert sum(finding["metadata"]["events"] for finding in report["findings"]) == expected_requests
+
+
+def test_native_gateway_event_keeps_ordinary_nested_results_in_auto_format(tmp_path):
+    record = {
+        "id": "native-event",
+        "service": "worker",
+        "model": "gpt-4o",
+        "start_time": 1761436800,
+        "end_time": 1761436801,
+        "results": {"answer": "ready"},
+    }
+    outcome, report = _cli_scan(tmp_path, "gateway.logs", [record])
+
+    assert report["summary"]["complete"] is True, outcome.output
+    assert outcome.exit_code != 3
+    assert sum(finding["metadata"]["events"] for finding in report["findings"]) == 1

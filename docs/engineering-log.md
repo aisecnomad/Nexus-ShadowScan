@@ -34,11 +34,16 @@ subscription batches (Bedrock invocation logs scanned complete with a finding
 on `main` and as `unparsed-input` with none) and an array of OpenAI usage
 buckets without `"object": "bucket"` (the same). The full suite did not
 exercise either shape; new tests do, for an array and an envelope, and fail
-with the opt-in removed. The opt-in declines a batch or bucket that carries a
-continuation, which `main` ignored, so it is now `unscanned-input`. The
-predicate and the envelope-context helper move into `gateway/normalise.py`, so
-`gateway/logs.py` shrinks (2,112 to 2,102 lines) and the complexity baseline
-is lowered rather than raised.
+with the opt-in removed. A common provider expansion boundary validates
+collection ambiguity and pagination across document, array, envelope and JSONL
+inputs. A continuation marks coverage incomplete while preserving observed
+records; resource-like labels cannot hide conflicting collections. Anonymous
+interval/results wrappers are validated as usage buckets in automatic mode,
+while identified native events retain ordinary nested results. The predicate,
+validation and envelope-context helpers live in `gateway/normalise.py`, so
+`gateway/logs.py` shrinks (2,112 to 2,099 lines) and the complexity baseline
+is lowered rather than raised. Pipeline tests cover those boundaries and check
+that diagnostics are counted once and do not expose continuation values.
 
 CI test annotations now sanitize node IDs, file attributes and exception types
 as well as failure messages at the output boundary. Sanitization precedes title
@@ -52,8 +57,8 @@ errors skip the real-ownership variant, while the mocked variants continue to
 exercise the refusal logic and unexpected operating-system errors still fail.
 
 The dependency, Action and base-image changes this pull request first carried,
-including the `apk upgrade --available` reset, landed through #328 and are
-recorded in its entry below.
+including the `apk upgrade --available` reset, are consolidated with the
+changes proposed in #328 in this pull request and recorded in its entry below.
 
 These changes are AI-assisted maintenance, not independent human review or live
 tenant acceptance. The pull request records validation and current CI evidence;
@@ -98,9 +103,10 @@ change carries all three and supersedes them:
   advisory feed, which `pip-audit` reads, lists none for either release yet.
   virtualenv is a development tool only; no runtime lock or worker image
   carries it.
-- `requirements-ci.lock`: regenerated with uv 0.11.32 and the command in
-  `docs/production.md`. The diff is those nine versions and their hashes and
-  nothing else; no package is added or removed.
+- `requirements-ci.lock`: regenerated with uv 0.13.4 and the command in
+  `docs/production.md`. This replaces the vulnerable local resolver 0.11.32;
+  the resulting package body is identical. The package diff is those nine
+  versions and their hashes; no package is added or removed.
 - `requirements-docs.lock`: platformdirs follows the CI pin to 4.13.5 so the
   combined `make install` set stays resolvable.
 - `.pre-commit-config.yaml`: the ruff hook moves to `f368fb36…`, which
@@ -122,8 +128,10 @@ change carries all three and supersedes them:
   versions, so a fixed base package reached the image only when the digest
   moved. Both stages now run `apk upgrade --no-cache --available`, which resets
   the versioned world entries (apk-upgrade(8), apk-tools 2.14.10) before the
-  Python pins are added; it also prunes world entries no repository offers,
-  which the build's git, setuid and `pip check` steps would catch. The
+  Python pins are added; it can also replace or downgrade packages and prune
+  world entries no repository offers. The build's git, setuid and `pip check`
+  steps verify their specific invariants, and the rebuilt image must pass the
+  vulnerability gate; those checks do not cover every possible package change. The
   Dockerfile comment that called the packages unpinned is corrected, and
   `test_container_updates_installed_base_packages_before_dependency_install`
   requires the reset in each stage (it fails with the flag removed). #327

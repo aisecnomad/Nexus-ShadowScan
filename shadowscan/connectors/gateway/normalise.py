@@ -23,7 +23,13 @@ from datetime import datetime
 from typing import Any
 
 from shadowscan.connectors.base import ConnectorError
-from shadowscan.connectors.offline import offline_pagination_issue
+from shadowscan.connectors.offline import (
+    _WRAPPERS,
+    PROVIDER_ERROR_RESPONSE,
+    is_error_record,
+    is_native_offline_record,
+    offline_pagination_issue,
+)
 from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.text import get_path, host_of, parse_timestamp
 
@@ -1111,13 +1117,44 @@ def envelope_context(rec: dict[str, Any]) -> dict[str, Any]:
     return {key: rec[key] for key in _ENVELOPE_CONTEXT_KEYS if key in rec}
 
 
-def expands_nested_collection(data: dict[str, Any]) -> bool:
-    """Whether gateway.logs expands ``data``, a collection inside a record array, itself.
+def collection_kind(data: dict[str, Any], format: str | None = None) -> str | None:
+    """The Gateway collection to expand, rather than treating it as an event.
 
-    A CloudWatch subscription batch gives each log event the batch context, and a
-    usage bucket's results need a valid interval and a request count; both fail
-    closed when malformed. Neither paginates, so a record carrying a continuation
-    stays with the shared record-array check.
+    An explicit usage format also recognizes malformed or labeled usage buckets.
+    In automatic mode an anonymous interval/results wrapper is a usage bucket;
+    an identified native event may legitimately carry those fields unchanged.
     """
-    shaped = "logEvents" in data or ("results" in data and "start_time" in data and "end_time" in data)
-    return shaped and offline_pagination_issue(data) is None
+    if data.get("object") == "bucket" or (format == "openai-usage" and "results" in data):
+        return "usage"
+    if "logEvents" in data:
+        return "cloudwatch"
+    if {"results", "start_time", "end_time"} <= data.keys() and not is_native_offline_record(data):
+        return "usage"
+    return None
+
+
+def expands_nested_collection(data: dict[str, Any]) -> bool:
+    """A supported collection whose shape and pagination are checked at expansion."""
+    return collection_kind(data) is not None
+
+
+def native_gateway_record(data: dict[str, Any]) -> bool:
+    """Resource-like labels cannot turn a recognized Gateway collection into an event."""
+    return collection_kind(data) is None and is_native_offline_record(data)
+
+
+def validate_collection(data: dict[str, Any], report: Callable[[str], None]) -> bool:
+    """Reject ambiguous collections, and report partial pages before expanding their observations.
+
+    This runs once at the expansion boundary for every input layout, including
+    provider collections nested in CloudWatch events and JSON payload wrappers.
+    """
+    if len(_WRAPPERS & data.keys()) > 1:
+        report("ambiguous export envelope contains multiple record collections")
+        return False
+    if is_error_record(data):
+        report(f"{PROVIDER_ERROR_RESPONSE} offline export; coverage is incomplete")
+    issue = offline_pagination_issue(data)
+    if issue:
+        report(issue)
+    return True

@@ -11,7 +11,8 @@ explain operator migrations. Earlier per-change entries are preserved in the
 - Offline record arrays reject misplaced collection envelopes as incomplete;
   valid neighboring records remain available. Kubernetes and OpenShift List
   records and `gateway.logs` CloudWatch batches and usage buckets, which those
-  connectors expand themselves, are kept.
+  connectors expand themselves, are kept. Provider expansion rejects conflicting
+  collections and validates anonymous gateway usage wrappers in automatic mode.
 
 - Redact every text field in CI test-failure annotations before truncation and
   workflow-command escaping, including parameterized test names and filenames.

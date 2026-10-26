@@ -63,7 +63,8 @@ Kubernetes and OpenShift retain their documented List records inside arrays:
 their provider-specific reader validates each list's shape and pagination and
 processes its observed objects under the object limit. `gateway.logs` keeps the
 CloudWatch subscription batches and usage buckets it expands and validates
-itself; a batch or bucket that carries a continuation stays incomplete.
+itself; conflicting collections are rejected, and a batch or bucket that
+carries a continuation stays incomplete while retaining observed records.
 
 Offline file and directory inputs use shared safety limits: 10,000 files,
 32 MiB per file and 256 MiB total per connector by default. JSONL, CSV and gateway
