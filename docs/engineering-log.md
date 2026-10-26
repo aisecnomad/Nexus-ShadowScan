@@ -31,6 +31,9 @@ incomplete categories; valid neighboring records and supported native nested
 fields are retained. Regression tests cover completion status, exit codes,
 reason counts and bounded diagnostics. This changes assurance behavior for
 affected exports, not the detection signatures or confidence policy.
+Kubernetes and OpenShift keep their provider-supported List records in arrays
+through a narrow collection-handling hook; their existing reader still checks
+shape, continuation metadata and object limits. Generic exports cannot opt in.
 
 CI test annotations now sanitize node IDs, file attributes and exception types
 as well as failure messages at the output boundary. Sanitization precedes title

@@ -865,6 +865,8 @@ def _nested_collection_issue(
     """
     if wrappers.isdisjoint(item) or cls._is_native_offline_record(item):
         return None
+    if len(wrappers & item.keys()) == 1 and cls._handles_nested_offline_collection(item):
+        return None
     return cls._offline_pagination_issue(item) or (
         "export record contains a collection envelope; expected a native record"
     )

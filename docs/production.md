@@ -50,6 +50,8 @@ makes coverage incomplete (exit 3), while valid neighboring records remain
 available. Uncollected continuation metadata is `unscanned-input`; invalid
 pagination metadata or an otherwise misplaced envelope is `unparsed-input`.
 Native records with supported nested collection fields retain those fields.
+Kubernetes and OpenShift also retain their supported List records inside arrays;
+their provider-specific reader validates shape, continuation and object limits.
 Rescan affected exports before using an earlier complete report for assurance.
 
 CI failure annotations now redact test names, filenames, exception types and

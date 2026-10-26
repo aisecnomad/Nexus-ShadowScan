@@ -2195,6 +2195,45 @@ def test_kubernetes_final_list_page_stays_complete(tmp_path, connector_type, lay
 
 
 @pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+@pytest.mark.parametrize("kind", [None, "List", "PodList", "DeploymentList"])
+def test_kubernetes_nested_native_lists_preserve_observed_items_and_pagination(
+    tmp_path, connector_type, kind
+):
+    envelope = json.loads((FIXTURES / "kubernetes/chunked_list.json").read_text())
+    if kind is None:
+        envelope.pop("kind")
+    else:
+        envelope["kind"] = kind
+    source = _write_kubernetes_layout(tmp_path, "array", envelope)
+
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+
+    assert ctx.stats is not None and ctx.stats.incomplete
+    assert any("uncollected next page" in warning for warning in ctx.stats.warnings)
+    assert [finding.resource for finding in findings] == ["k8s:synthetic/ai/Pod/local-model"]
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+@pytest.mark.parametrize(
+    "envelope",
+    [
+        {"kind": "List", "items": "invalid"},
+        {"kind": "List", "items": [], "records": [{"kind": "Pod"}]},
+        {"kind": "ordinary-page", "items": []},
+    ],
+)
+def test_kubernetes_nested_collection_exceptions_still_reject_invalid_shapes(
+    tmp_path, connector_type, envelope
+):
+    source = _write_kubernetes_layout(tmp_path, "array", envelope)
+
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+
+    assert ctx.stats is not None and ctx.stats.incomplete
+    assert findings == []
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
 @pytest.mark.parametrize("layout", ["single", "array", "jsonl"])
 @pytest.mark.parametrize(
     "metadata,complete",
