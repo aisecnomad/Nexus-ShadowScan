@@ -977,7 +977,9 @@ app id is matched as the app's client id.
 configured, it must match exactly before inventory calls begin, and it is sent
 with `users.list`, the `admin.apps.*` lists and `team.integrationLogs`: an
 org-level token (the Enterprise token the `admin.apps.*` lists need) is refused
-there without it, and a workspace-level token ignores it. Missing/null
+there without it, and a workspace-level token ignores it. A bot user marked
+`deleted` (the bot user of an uninstalled app) is not reported as installed, and a
+non-boolean `deleted` flag is a malformed record. Missing/null
 collection arrays and malformed pagination are incomplete coverage, and so is
 an offline `team.integrationLogs` page whose `paging.page` is below
 `paging.pages`. Later

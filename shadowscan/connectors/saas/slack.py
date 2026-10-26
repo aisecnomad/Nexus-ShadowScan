@@ -327,6 +327,10 @@ class SlackConnector(BaseConnector):
                 export.foreign_records += 1
                 continue
             if kind == "bot_user":
+                if rec.get("deleted") is True:
+                    # Slack deactivates the bot user of an uninstalled app; it
+                    # is not evidence that the app is installed.
+                    continue
                 app_id = get_path(rec, "profile.api_app_id") or rec.get("id")
                 app_key = str(app_id)
                 existing = export.bots.get(app_key)
@@ -418,7 +422,8 @@ class SlackConnector(BaseConnector):
         ):
             return None
         if any(
-            rec.get(key) is not None and not isinstance(rec[key], bool) for key in ("is_bot", "is_app_user")
+            rec.get(key) is not None and not isinstance(rec[key], bool)
+            for key in ("is_bot", "is_app_user", "deleted")
         ):
             return None
         kind = rec.get("_kind") or _infer(rec)

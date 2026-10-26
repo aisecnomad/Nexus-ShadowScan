@@ -363,6 +363,45 @@ def test_record_of_another_workspace_is_skipped_not_scan_wide(run_connector, tmp
     ]
 
 
+def _bot(user_id, app_id, deleted):
+    return {
+        "id": user_id,
+        "is_bot": True,
+        "deleted": deleted,
+        "profile": {"api_app_id": app_id, "real_name": "Claude"},
+        "name": "claude",
+    }
+
+
+def test_slack_deleted_bot_user_is_not_an_installed_app(run_connector, tmp_path):
+    # users.list keeps the bot user of an uninstalled app, with deleted: true.
+    records = [
+        {"_kind": "team", "id": "T0AAA", "name": "Acme", "domain": "acme"},
+        _bot("U1", "A1", True),
+        {"app": {"id": "A2", "name": "Claude"}, "scopes": [{"name": "chat:write"}]},
+        _bot("U2", "A2", True),
+        _bot("U3", "A3", True),
+        _bot("U4", "A3", False),
+    ]
+    export = tmp_path / "slack.json"
+    export.write_text(json.dumps(records))
+    findings, ctx = run_connector("saas.slack", input=str(export))
+    by_app = {f.metadata["app_id"]: f for f in findings}
+    assert sorted(by_app) == ["A2", "A3"]
+    assert by_app["A2"].metadata["status"] == "approved" and by_app["A2"].metadata["bot_user_id"] is None
+    assert "bot-user" not in by_app["A2"].tags
+    assert by_app["A3"].metadata["status"] == "installed" and by_app["A3"].metadata["bot_user_id"] == "U4"
+    assert not ctx.stats.incomplete and not ctx.stats.warnings
+
+
+def test_slack_non_boolean_deleted_flag_is_malformed(run_connector, tmp_path):
+    records = [{"_kind": "team", "id": "T0AAA", "name": "Acme", "domain": "acme"}, _bot("U1", "A1", "yes")]
+    export = tmp_path / "slack.json"
+    export.write_text(json.dumps(records))
+    findings, ctx = run_connector("saas.slack", input=str(export))
+    assert findings == [] and ctx.stats.incomplete
+
+
 @pytest.mark.parametrize("team_id", [None, "T1"])
 def test_slack_names_the_workspace_on_calls_an_org_token_requires_it_for(index, monkeypatch, team_id):
     # Slack documents team_id as required with an org-level token (the Enterprise
