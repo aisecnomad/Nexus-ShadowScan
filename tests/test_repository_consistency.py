@@ -924,9 +924,9 @@ def _package_strings(path: Path) -> str:
     return "\n\n".join(strings)
 
 
-def _interpreter_claims() -> Iterator[tuple[str, str, bool]]:
-    """``(document, span, about_macos)`` for every interpreter span a current document or package
-    string states."""
+def _interpreter_paragraphs() -> Iterator[tuple[str, str]]:
+    """``(document, paragraph)`` for every whitespace-normalized paragraph of a current document,
+    lock header or package string."""
     texts = [(_relative(path), _current_text(path)) for path in _current_docs()]
     texts += [(name, _comment_header(ROOT / name)) for name in _LOCK_HEADERS]
     texts += [
@@ -934,9 +934,15 @@ def _interpreter_claims() -> Iterator[tuple[str, str, bool]]:
     ]
     for name, text in texts:
         for paragraph in re.split(r"\n[ \t]*\n", text):
-            paragraph = " ".join(paragraph.split())
-            for span, macos in _interpreter_spans(paragraph):
-                yield name, span, macos
+            yield name, " ".join(paragraph.split())
+
+
+def _interpreter_claims() -> Iterator[tuple[str, str, bool]]:
+    """``(document, span, about_macos)`` for every interpreter span a current document or package
+    string states."""
+    for name, paragraph in _interpreter_paragraphs():
+        for span, macos in _interpreter_spans(paragraph):
+            yield name, span, macos
 
 
 def test_documented_interpreter_ranges_match_the_classifiers_and_ci() -> None:
@@ -1034,6 +1040,52 @@ def test_interpreter_span_matcher_reads_ordinary_spellings(
 ) -> None:
     """The range check above is only as good as the matcher: each spelling here once passed it."""
     assert [(_span_minors(span), macos) for span, macos in _interpreter_spans(paragraph)] == expected
+
+
+# A minimum with no upper bound ("Python 3.11 or later", "3.11 or newer") states a requirement that
+# every later interpreter meets, but requires-python refuses those past its upper bound. "3.12+" and
+# "3.12 and later" describe behavior from a version on, and a bounded minimum ("3.11 or later
+# (tested through 3.14)") is a span the range check above reads.
+_OPEN_MINIMUM = re.compile(rf"{_MINOR_VERSION},? or (?:later|newer|above)\b")
+
+
+def _open_minimums(paragraph: str) -> list[str]:
+    spans = [match.span() for match in _INTERPRETER_SPAN.finditer(paragraph)]
+    return [
+        match.group(0)
+        for match in _OPEN_MINIMUM.finditer(paragraph)
+        if not any(start <= match.start() < end for start, end in spans)
+    ]
+
+
+def test_documented_interpreter_minimums_state_an_upper_bound() -> None:
+    """The pre-commit guide asked for "Python 3.11 or later"; pre-commit builds the hook's
+    environment with the Python it runs on, and pip refuses to install the hook on 3.15."""
+    open_ended = [
+        f"{name}: {minimum!r}"
+        for name, paragraph in _interpreter_paragraphs()
+        for minimum in _open_minimums(paragraph)
+    ]
+    requires = _pyproject()["project"]["requires-python"]
+    assert not open_ended, f"open-ended minimums admit Pythons {requires} refuses:\n" + "\n".join(open_ended)
+
+
+@pytest.mark.parametrize(
+    ("paragraph", "expected"),
+    [
+        ("Use Python 3.11 or later, Git 2.45 or later and a POSIX host", ["3.11 or later"]),
+        ("Python `3.11` or newer", ["`3.11` or newer"]),
+        ("Python 3.11, or above", ["3.11, or above"]),
+        ("Python 3.11 or later (tested through 3.13)", []),
+        ("Use Python 3.11–3.14 (on 3.12, use 3.12.4 or later)", []),
+        ("Python 3.12+ tokenizers stop at 200 levels and 3.11 has no limit", []),
+        ("on Python 3.12 and later a codec error is a gap", []),
+    ],
+)
+def test_open_interpreter_minimum_matcher_reads_ordinary_spellings(
+    paragraph: str, expected: list[str]
+) -> None:
+    assert _open_minimums(paragraph) == expected
 
 
 def test_distribution_rename_preserves_cli_and_plugin_contract() -> None:
