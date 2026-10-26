@@ -44,6 +44,13 @@ change carries all three and supersedes them:
 - `requirements-ci-constraints.txt`: #323 and #324 as proposed (coverage
   7.17.0, filelock 4.2.4, hypothesis 6.170.8, pip 26.2.2, platformdirs 4.13.5,
   python-discovery 1.6.4, ruff 0.17.2, virtualenv 21.14.13).
+  virtualenv 21.14.13 is itself a security fix: its changelog names
+  GHSA-cx6f-vjhg-g3cc (bash ran commands embedded in a `--prompt` or
+  environment name under `promptvars`). Scorecard's Vulnerabilities check
+  reports it against 21.14.11, and #326 proposed the bump alone, but PyPI's
+  advisory feed, which `pip-audit` reads, lists none for either release yet.
+  virtualenv is a development tool only; no runtime lock or worker image
+  carries it.
 - `requirements-ci.lock`: regenerated with uv 0.11.32 and the command in
   `docs/production.md`. The diff is those nine versions and their hashes and
   nothing else; no package is added or removed.
@@ -62,6 +69,18 @@ change carries all three and supersedes them:
   and wolfi-keys 1-r14, read from the registry layers, each verified against its
   digest, without running the image. No Trivy ignore, severity or exit-code
   change; the python-3.12 3.12.15-r0 pins stay, as their comment requires.
+- Why `apk upgrade` did not already fix it: the base image records every
+  package it ships at an exact version in `/etc/apk/world` (the pinned index
+  lists `libbrotlicommon1=1.2.0-r6`), and a plain `apk upgrade` keeps those
+  versions, so a fixed base package reached the image only when the digest
+  moved. Both stages now run `apk upgrade --no-cache --available`, which resets
+  the versioned world entries (apk-upgrade(8), apk-tools 2.14.10) before the
+  Python pins are added; it also prunes world entries no repository offers,
+  which the build's git, setuid and `pip check` steps would catch. The
+  Dockerfile comment that called the packages unpinned is corrected, and
+  `test_container_updates_installed_base_packages_before_dependency_install`
+  requires the reset in each stage (it fails with the flag removed). #327
+  found the world pinning and proposed the same flag.
 
 Verification: all four development locks install together under
 `--require-hashes --only-binary=:all:` on CPython 3.12 and `pip check` is clean;
@@ -70,8 +89,10 @@ the five locks, nor in the installed environment; `make policy` passes;
 `mkdocs build --strict` passes on the updated docs lock; and `python -m build
 --no-isolation` with the new backend writes a wheel that installs against the
 runtime lock alone and passes both validators outside the checkout. The image
-was not built here (the session cannot reach the Wolfi package repository):
-this change's own `container-security` job is the check that matters.
+was not built here (the session cannot reach the Wolfi package repository).
+On the first head of #328 (`0a3f51a3`, digest change only) CI's
+`container-security` job built the image and passed the HIGH/CRITICAL scan,
+and the `test (3.12)` and `test (3.14)` legs passed `pip-audit`.
 
 ### Precision follow-ups to the #320 head review (October 23)
 
