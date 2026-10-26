@@ -309,7 +309,8 @@ def _run_and_emit_with_deadline(
         # handlers: a termination signal must stop live clones from here.
         with terminate_clones_on_signal():
             # The engine ends LLM triage early enough to emit the report before the watchdog fires.
-            result = engine.run(only=only, job_deadline=job_deadline)
+            # Command-level stats join before a record-export manifest states the run's completeness.
+            result = engine.run(only=only, job_deadline=job_deadline, extra_stats=extra_stats or ())
     except SetupError as exc:
         # SetupError messages are credential-free by contract (shadowscan.errors).
         raise click.ClickException(str(exc)) from None
@@ -321,7 +322,6 @@ def _run_and_emit_with_deadline(
     except Exception as exc:  # noqa: BLE001 - third-party exception text may echo credentials
         _log_masked_failure("scan setup failed", exc)
         raise click.ClickException(f"{SETUP_FAILED} ({type(exc).__name__})") from None
-    result.stats.extend(extra_stats or [])
     # With abandoned workers, arm a bounded exit watchdog so the process cannot
     # hang indefinitely during report emission or clone cleanup. An armed job
     # deadline already bounds both, and its report time must not be cut short.
