@@ -51,9 +51,10 @@ change carries all three and supersedes them:
   advisory feed, which `pip-audit` reads, lists none for either release yet.
   virtualenv is a development tool only; no runtime lock or worker image
   carries it.
-- `requirements-ci.lock`: regenerated with uv 0.11.32 and the command in
-  `docs/production.md`. The diff is those nine versions and their hashes and
-  nothing else; no package is added or removed.
+- `requirements-ci.lock`: regenerated with uv 0.13.4 and the command in
+  `docs/production.md`. This replaces the vulnerable local resolver 0.11.32;
+  the resulting package body is identical. The package diff is those nine
+  versions and their hashes; no package is added or removed.
 - `requirements-docs.lock`: platformdirs follows the CI pin to 4.13.5 so the
   combined `make install` set stays resolvable.
 - `.pre-commit-config.yaml`: the ruff hook moves to `f368fb36…`, which
@@ -75,8 +76,10 @@ change carries all three and supersedes them:
   versions, so a fixed base package reached the image only when the digest
   moved. Both stages now run `apk upgrade --no-cache --available`, which resets
   the versioned world entries (apk-upgrade(8), apk-tools 2.14.10) before the
-  Python pins are added; it also prunes world entries no repository offers,
-  which the build's git, setuid and `pip check` steps would catch. The
+  Python pins are added; it can also replace or downgrade packages and prune
+  world entries no repository offers. The build's git, setuid and `pip check`
+  steps verify their specific invariants, and the rebuilt image must pass the
+  vulnerability gate; those checks do not cover every possible package change. The
   Dockerfile comment that called the packages unpinned is corrected, and
   `test_container_updates_installed_base_packages_before_dependency_install`
   requires the reset in each stage (it fails with the flag removed). #327

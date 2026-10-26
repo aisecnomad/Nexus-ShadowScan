@@ -20,6 +20,8 @@ explain operator migrations. Earlier per-change entries are preserved in the
   `/etc/apk/world`, so a plain upgrade held them at the vulnerable versions.
   virtualenv 21.14.13 (from #324) also fixes GHSA-cx6f-vjhg-g3cc in the CI
   lock, which Scorecard reports and #326 proposed alone.
+  The CI lock is resolved with uv 0.13.4: 0.11.32 vendors a CA bundle that
+  trusts the compromised emSign ECC root (GHSA-hq85-5cpj-mr62).
 
 - The 0.1.4 publication is recorded (tag `v0.1.4` on `94fda063`, the PyPI
   upload and the GitHub release of 2026-10-23).
