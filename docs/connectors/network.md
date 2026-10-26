@@ -64,7 +64,10 @@ Zeek `TTLs`, generic `ttls`, `ttl`/`TTL`, and explicitly supplied Route 53
 TTL metadata are accepted. Vector TTLs must align with the answers. A
 response containing a CNAME and IP answers uses the shortest answer TTL;
 CNAME-only records do not produce an IP association, and chains are never
-resolved over the network. IPv4 and IPv6 addresses are normalized. Sampled
+resolved over the network. IPv4 and IPv6 addresses are normalized. An
+IPv4-mapped IPv6 address, as dual-stack resolvers and proxies log IPv4 peers
+(`::ffff:192.0.2.10`), is the IPv4 address it carries, for clients, servers
+and DNS answers alike. Sampled
 `dns_attribution` metadata preserves host, address, the first answer's
 observation time and original TTL, flow timestamps and context; when later
 answers extended that answer's validity, `valid_until` gives the end of the

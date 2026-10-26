@@ -710,6 +710,26 @@ def test_dns_cname_chain_uses_shortest_ttl_and_ipv6_normalization(run_connector,
     assert found[("192.0.2.10", "provider.openai")].metadata["bytes_out"] == 100
 
 
+@pytest.mark.parametrize("mapped", ["answer", "server"])
+def test_ipv4_mapped_addresses_are_the_ipv4_host(run_connector, tmp_path, mapped):
+    # A dual-stack resolver or proxy logs IPv4 peers as ::ffff:a.b.c.d; flow
+    # and TLS logs write the same hosts in dotted form.
+    rows = _temporal_rows()
+    rows[0]["client"] = "::ffff:192.0.2.10"
+    if mapped == "answer":
+        rows[0]["answers"] = ["::ffff:203.0.113.8"]
+    else:
+        rows[1]["dst_ip"] = "::FFFF:cb00:7108"
+    rows.append({"client": "::ffff:c000:20a", "sni": "api.openai.com", "ts": 1002})
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete and not stats.warnings
+    assert set(found) == {("192.0.2.10", "provider.openai")}
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert (finding.metadata["dns_queries"], finding.metadata["tls_connections"]) == (1, 1)
+    assert finding.metadata["flows"] == 1 and finding.metadata["bytes_out"] == 100
+    assert finding.metadata["dns_attribution"][0]["address"] == "203.0.113.8"
+
+
 @pytest.mark.parametrize("negative_ttl", [60, None])
 def test_shared_address_conflict_including_unknown_validity_blocks_dns(run_connector, tmp_path, negative_ttl):
     rows = _temporal_rows()
