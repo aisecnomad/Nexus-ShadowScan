@@ -591,6 +591,7 @@ class _ConnectorRunner:
             surface = resolved.surface
             if isinstance(surface, Surface):
                 self._scopes.declare_surface(number, surface)
+        self._extend_deadline_for_large_input(spec, _hooks(resolved), state)
         roots = spec.config.get("paths")
         root_ids = spec.config.get("root_ids")
         if isinstance(roots, list):
@@ -696,7 +697,9 @@ class _ConnectorRunner:
 
         Done here rather than before the job starts, so it reuses the class
         the runner has already resolved: a second lookup would happen outside
-        the job's origin-policy scope.
+        the job's origin-policy scope. Done once per job, from every root it
+        scans: the roots of a split job share its deadline, and raising it
+        again for each root would carry the job past ``MAX_AUTO_TIMEOUT``.
         """
         if not connector_timeout_is_default(self._config.connector_timeout_seconds):
             return
@@ -749,7 +752,6 @@ class _ConnectorRunner:
             resolved = _hook_failure(spec.name, "inherits_instance_credentials_approval()", exc)
             hooks, inherits_approval = _hooks(resolved), True
         cfg = self._connector_config(spec, inherits_approval, dump_key)
-        self._extend_deadline_for_large_input(spec, hooks, state)
         identity_key = self._run_identity_key if hooks.uses_run_identity_key else None
         ctx = ConnectorContext(
             config=cfg,

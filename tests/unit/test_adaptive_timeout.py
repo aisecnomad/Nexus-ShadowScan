@@ -296,6 +296,24 @@ class TestDeadlineExtension:
         grew = self._extend(ScanConfig(connectors=[]), spec, self._state(DEFAULT_CONNECTOR_TIMEOUT))
         assert grew == pytest.approx(MAX_AUTO_TIMEOUT - DEFAULT_CONNECTOR_TIMEOUT)
 
+    def test_a_job_split_into_roots_stays_under_the_ceiling(self, tmp_path, monkeypatch) -> None:
+        # Regression: an incremental job split into repository roots estimated
+        # every root, cached ones included, and raised the shared deadline again
+        # for each, so four large roots ran to 6840 s instead of at most 1800 s.
+        roots = [tmp_path / f"repo{i}" for i in range(4)]
+        for root in roots:
+            _tree(root, 20)
+        monkeypatch.setattr(FilesystemConnector, "_ENTRIES_PER_DEFAULT_BUDGET", 1)
+        spec = ConnectorSpec("code.filesystem", {"paths": [str(root) for root in roots], "use_git": False})
+        cfg = ScanConfig(connectors=[spec], incremental=True, state_dir=str(tmp_path / "state"))
+        for _ in range(2):  # every root analysed, then every root reused from the cache
+            state = _JobState()
+            before = time.monotonic()
+            _, _, stats = _runner(cfg).run(1, spec, state)
+            assert state.deadline is not None
+            assert before + MAX_AUTO_TIMEOUT <= state.deadline <= time.monotonic() + MAX_AUTO_TIMEOUT
+        assert stats.cached, "the job must have run split into per-root cache units"
+
     def test_an_estimate_that_raises_leaves_the_deadline_alone(self, tmp_path, monkeypatch) -> None:
         def boom(cls, config, default):
             raise RuntimeError("probe exploded")
