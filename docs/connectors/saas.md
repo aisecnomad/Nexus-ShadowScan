@@ -27,7 +27,11 @@ then sent with `users.list`, the `admin.apps.*` lists and `team.integrationLogs`
 Slack requires it from an org-level token (the Enterprise token the
 `admin.apps.*` lists need) and ignores it from a workspace-level token, so set
 it whenever the token is an org-level one. Missing/null
-collection arrays and malformed pagination are incomplete coverage. Later
+collection arrays and malformed pagination are incomplete coverage. Offline,
+a saved `team.integrationLogs` page whose `paging.page` is below
+`paging.pages` is an uncollected next page and a malformed `paging` object is
+invalid pagination metadata; either keeps the page's logs and makes the scan
+incomplete, as a `response_metadata.next_cursor` does for the other lists. Later
 network failures retain already collected observations; provider error text is
 not copied into diagnostics. Complete live acceptance generally requires an
 appropriately scoped administrative audit token, not an ordinary bot token.

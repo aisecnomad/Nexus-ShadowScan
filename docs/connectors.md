@@ -765,7 +765,9 @@ Options: `domain` (tenant domain such as `acme.eu.auth0.com`, env
 
 Client grants whose parent client is unavailable remain distinct unresolved
 observations and make coverage incomplete. An inventory card cannot approve
-an unresolved identity.
+an unresolved identity. An offline `clients` page whose `total` exceeds its
+`start` plus its clients, or that carries a checkpoint `next` token, is an
+uncollected next page and makes the scan incomplete.
 
 ### `identity.jwt`
 Decodes tokens (never stored) and classifies the holder as `human`, `service`,
@@ -954,6 +956,7 @@ Live error envelopes and malformed collections make coverage incomplete, even
 beside an empty collection; that page is omitted and earlier valid pages remain.
 Missing or malformed pagination metadata also makes live collection incomplete
 instead of ending the inventory successfully; that page's records are kept.
+A saved `/v2/zaps` page replayed offline is held to the same `links.next` rule.
 
 ### `lowcode.workato`
 Workato recipes with GenAI/agentic providers; triggers (Scheduler →
@@ -975,7 +978,9 @@ configured, it must match exactly before inventory calls begin, and it is sent
 with `users.list`, the `admin.apps.*` lists and `team.integrationLogs`: an
 org-level token (the Enterprise token the `admin.apps.*` lists need) is refused
 there without it, and a workspace-level token ignores it. Missing/null
-collection arrays and malformed pagination are incomplete coverage. Later
+collection arrays and malformed pagination are incomplete coverage, and so is
+an offline `team.integrationLogs` page whose `paging.page` is below
+`paging.pages`. Later
 network failures retain already collected observations; provider error text is
 not copied into diagnostics. Complete live acceptance generally requires an
 appropriately scoped administrative audit token, not an ordinary bot token.

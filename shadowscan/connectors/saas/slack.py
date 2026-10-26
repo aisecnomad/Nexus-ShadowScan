@@ -26,6 +26,7 @@ from requests import RequestException
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import failure_summary, finalize
 from shadowscan.connectors.identity.common import app_product_or_hint, assess_app, summarize_scopes
+from shadowscan.connectors.offline import UNCOLLECTED_NEXT_PAGE
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.text import get_path, parse_timestamp, to_iso
@@ -207,6 +208,27 @@ class SlackConnector(BaseConnector):
             seen.add(cursor)
             params["cursor"] = cursor
         self.ctx.warn(f"saas.slack: page limit for {path}", incomplete=True)
+
+    @staticmethod
+    def _offline_pagination_issue(data: dict[str, Any]) -> str | None:
+        # team.integrationLogs pages by number (paging.page of paging.pages)
+        # rather than by the cursor the shared check reads; collect() reads to
+        # the last page, so an earlier saved page is a partial export.
+        issue = BaseConnector._offline_pagination_issue(data)
+        if issue or "paging" not in data:
+            return issue
+        paging = data["paging"]
+        page = paging.get("page", 1) if isinstance(paging, dict) else None
+        pages = paging.get("pages") if isinstance(paging, dict) else None
+        if (
+            type(page) is not int
+            or type(pages) is not int
+            or page < 1
+            or pages < 0
+            or (pages == 0 and data.get("logs"))
+        ):
+            return "offline export has invalid pagination metadata"
+        return UNCOLLECTED_NEXT_PAGE if page < pages else None
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         export = self._index_records(records)

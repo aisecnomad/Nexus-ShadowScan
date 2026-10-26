@@ -41,6 +41,7 @@ from shadowscan.connectors.lowcode.graph import (
     GraphAnalysis,
     analyze_workflow_graph,
 )
+from shadowscan.connectors.offline import UNCOLLECTED_NEXT_PAGE
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -852,6 +853,22 @@ class ZapierConnector(_AutomationBase):
             url = next_url or None
         if url:
             self.ctx.warn("lowcode.zapier: pagination limit reached")
+
+    @staticmethod
+    def _offline_pagination_issue(data: dict[str, Any]) -> str | None:
+        # A saved /v2/zaps page continues in links.next, read as collect() reads
+        # it: null or "" is the last page and any other string a page the export
+        # does not hold. Account exports carry no links object.
+        issue = BaseConnector._offline_pagination_issue(data)
+        if issue or "links" not in data:
+            return issue
+        links = data["links"]
+        if not isinstance(links, dict) or "next" not in links:
+            return "offline export has invalid pagination metadata"
+        next_url = links["next"]
+        if next_url is not None and (not isinstance(next_url, str) or (next_url and not next_url.strip())):
+            return "offline export has invalid pagination metadata"
+        return UNCOLLECTED_NEXT_PAGE if next_url else None
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         total = unnamed = 0
