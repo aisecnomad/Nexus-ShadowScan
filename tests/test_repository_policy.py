@@ -1453,13 +1453,14 @@ def test_container_updates_installed_base_packages_before_dependency_install() -
     runtime_add = re.search(rf"&& apk add --no-cache {python} git ", runtime)
     assert build_add and runtime_add, "both stages install python-3.12 (and pip or git) with apk"
     assert build_add["pin"] == runtime_add["pin"], "the build and runtime interpreters must match"
-    # Base images can constrain every inherited package to an exact version.
-    # --available clears those inherited constraints so signed repository fixes
-    # are selected, but it must run before our deliberate Python revision pins.
+    # The base image pins every package it ships to an exact version in
+    # /etc/apk/world; without --available, `apk upgrade` holds them there and a
+    # fixed base package never reaches the image. The reset must precede the
+    # deliberate Python pins, and each stage upgrades exactly once.
     for stage, install in ((build, build_add), (runtime, runtime_add)):
         commands = "\n".join(line for line in stage.splitlines() if not line.lstrip().startswith("#"))
         assert commands.count("apk upgrade") == 1
-        assert stage.index("RUN apk upgrade --no-cache --available") < install.start()
+        assert stage.index("RUN apk upgrade --no-cache --available \\\n") < install.start()
     # pip and the build tools never reach the runtime stage.
     assert "pip" not in runtime.split("RUN apk upgrade", 1)[1].split("\nCOPY --from=build")[0].replace(
         "python-3.12", ""

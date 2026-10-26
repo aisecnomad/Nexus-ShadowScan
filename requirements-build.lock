@@ -1,7 +1,8 @@
 # Build backend lock for the shadowscan wheel. It carries the exact
 # [build-system] requires from pyproject.toml with the SHA-256 hash of every
 # artifact PyPI publishes for those releases (wheel and sdist), captured from
-# https://pypi.org/pypi/<name>/<version>/json on 2026-09-24.
+# https://pypi.org/pypi/<name>/<version>/json on 2026-09-24 (setuptools
+# 84.2.1, for GHSA-xmj3-9gf7-h52w, on 2026-10-26).
 #
 # Install with --require-hashes --only-binary=:all: before building the package
 # with --no-build-isolation, so pip never resolves a build backend from the live
@@ -9,7 +10,6 @@
 # this file. Keep the versions identical to pyproject.toml's [build-system]
 # table; CI fails when they drift. To refresh: bump pyproject.toml, then copy
 # the sha256 of every file listed by the PyPI JSON API for the new release.
-# setuptools 84.2.1 hashes refreshed from PyPI JSON on 2026-10-26.
 setuptools==84.2.1 \
     --hash=sha256:3ff8b3b5492a0aa66960f4419365a86b84e013070d4313e4d4a6894f5d64d6bc \
     --hash=sha256:ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2

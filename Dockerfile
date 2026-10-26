@@ -18,7 +18,8 @@
 # Base image: Chainguard's Wolfi base (glibc, rolling security fixes), pinned in
 # both stages to the multi-arch image index digest of chainguard/wolfi-base:latest
 # (the Docker-Content-Digest of the tag's OCI index, which covers the
-# linux/amd64 manifest), resolved from Docker Hub on 2026-10-26. Python 3.12,
+# linux/amd64 manifest), resolved from Docker Hub; the commit that last changed
+# the FROM lines records when. Python 3.12,
 # Git and every native library they load are Wolfi packages, so the CI image
 # scan inventories the interpreter as well; a Python built outside the package
 # manager, as in the official python images, is invisible to it. util-linux,
@@ -43,14 +44,17 @@
 # builder can do the same (docs/production.md).
 FROM chainguard/wolfi-base:latest@sha256:360896efb0753a5701c48f860e17130c205eae5a264797aa3e7ea126ee2923a7 AS build
 
-# The base image pins inherited packages in /etc/apk/world. Plain `apk upgrade`
-# preserves those exact constraints, including vulnerable inherited versions.
-# --available resets those constraints against the same signed repositories
-# before this Dockerfile installs its explicit Python compatibility pins below.
-# It can replace or downgrade packages when the configured repository requires
-# it; the resulting image must still pass the blocking vulnerability scan. See
-# https://github.com/alpinelinux/apk-tools/blob/v2.14.10/doc/apk-upgrade.8.scd
-# Live package resolution means this image is not byte-for-byte reproducible.
+# apk packages are deliberately not version-pinned here: Wolfi is a rolling
+# distribution, and a pinned package stops receiving security fixes. The base
+# image, however, records every package it ships at an exact version in
+# /etc/apk/world (libbrotlicommon1=1.2.0-r6, for example), and a plain
+# `apk upgrade` holds those versions, so a fix to a base package never reached
+# the image until the digest moved. --available resets the versioned world
+# entries (apk-upgrade(8), apk-tools 2.14) before the Python pins below are
+# added; it also prunes world entries no repository still offers. The base
+# image digest fixes the package set the build starts from; apk still reads the
+# live Wolfi repository and checks its signatures against the keys in the base
+# image, so the image is not byte-for-byte reproducible from this file alone.
 #
 # Temporary exception: python-3.12 3.12.15-r1, published on 2026-10-02, has no
 # SHA-224 or SHA3-224 (no builtin _sha2 module, and its OpenSSL refuses both),

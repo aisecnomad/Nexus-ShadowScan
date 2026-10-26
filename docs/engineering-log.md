@@ -13,15 +13,7 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
-### Dependency maintenance and offline completeness (October 26)
-
-The October 26 scheduled CI run exposed setuptools 84.0.0 advisory
-GHSA-xmj3-9gf7-h52w in the build and development environment. Refresh the
-setuptools backend and hash locks alongside the pending development dependency
-updates. Keep shared pins consistent across the build, CI and documentation
-locks, and advance the Ruff pre-commit revision with the CLI version. Carry the
-pending setup-python, CodeQL and PyPI publish Action updates as verified full
-commit pins; their least-privilege permissions and checkout settings stay intact.
+### Offline completeness, annotation redaction and ownership tests (October 26)
 
 The shared offline reader now enforces the record-array format at each array
 member, using the same native-record classification as the document-level reader.
@@ -59,21 +51,95 @@ user namespace may lack permission to assign that UID; only known capability
 errors skip the real-ownership variant, while the mocked variants continue to
 exercise the refusal logic and unexpected operating-system errors still fail.
 
-The scheduled container scan also blocked vulnerable Brotli libraries. The
-old base image's `/etc/apk/world` pinned them to 1.2.0-r6, so an ordinary
-`apk upgrade` retained them even after the configured signed repository offered
-fixed versions. Refresh both base-image digests and use `apk upgrade --available`
-in both stages to reset inherited version constraints before applying the
-existing explicit Python compatibility pins. This intentionally follows the
-configured repository's available package set, which can include replacements
-or downgrades; repository keys and the blocking vulnerability gate are unchanged.
-The Docker policy regression checks this order in both stages. A successful
-container rebuild and vulnerability scan remain required before merge.
+The dependency, Action and base-image changes this pull request first carried,
+including the `apk upgrade --available` reset, landed through #328 and are
+recorded in its entry below.
 
 These changes are AI-assisted maintenance, not independent human review or live
 tenant acceptance. The pull request records validation and current CI evidence;
 no release tag, package publication or branch-protection change is part of this
 maintenance.
+
+### Dependabot #323-#325 carried; setuptools advisory and base image refresh (October 26)
+
+The scheduled CI run of October 26 on `d2ac5048` failed in two places with no
+change on `main`, so every open pull request's `CI gate` was red:
+
+- **`pip-audit`, every test leg.** GHSA-xmj3-9gf7-h52w (fixed in setuptools
+  84.1.0) was published after `main`'s last audit and covers setuptools 84.0.0,
+  which `requirements-build.lock` and `requirements-ci.lock` pin. The advisory
+  is a path traversal in setuptools' legacy wheel-to-egg installation on
+  Windows (`namespace_packages.txt` from a wheel can place an `__init__.py`
+  outside the egg directory). ShadowScan builds on Linux and never takes that
+  path, but the strict audit gate is right to refuse it, so no ignore is added.
+- **`container-security`.** Trivy reported `wolfi:libbrotlicommon1`,
+  `libbrotlidec1` and `libbrotlienc1` 1.2.0-r6, fixed in 1.2.0-r7. The apk
+  database of the pinned index `sha256:81211e15…` (amd64 manifest
+  `sha256:76811b69…`, created 2026-10-20) lists exactly 1.2.0-r6.
+
+Dependabot raised the reviewed inputs but, as before, cannot refresh the hash
+locks, so #323 (ruff) and #324 (eight pins, setuptools among them) fail CI on
+their own, and #325 (actions) is red only through `main`'s audit failure. This
+change carries all three and supersedes them:
+
+- `pyproject.toml`: the `[build-system]` pin moves to setuptools 84.2.1 (the
+  release #324 proposes; 84.1.0 is the first fixed one) and the `[dev]` floor
+  to `>=84.2.1`, so an unlocked development install cannot resolve the
+  advisory's range either.
+- `requirements-build.lock`: setuptools 84.2.1 with both artifact hashes from
+  the PyPI JSON API (`ca140b45…` wheel, `3ff8b3b5…` sdist), neither yanked.
+- `requirements-ci-constraints.txt`: #323 and #324 as proposed (coverage
+  7.17.0, filelock 4.2.4, hypothesis 6.170.8, pip 26.2.2, platformdirs 4.13.5,
+  python-discovery 1.6.4, ruff 0.17.2, virtualenv 21.14.13).
+  virtualenv 21.14.13 is itself a security fix: its changelog names
+  GHSA-cx6f-vjhg-g3cc (bash ran commands embedded in a `--prompt` or
+  environment name under `promptvars`). Scorecard's Vulnerabilities check
+  reports it against 21.14.11, and #326 proposed the bump alone, but PyPI's
+  advisory feed, which `pip-audit` reads, lists none for either release yet.
+  virtualenv is a development tool only; no runtime lock or worker image
+  carries it.
+- `requirements-ci.lock`: regenerated with uv 0.11.32 and the command in
+  `docs/production.md`. The diff is those nine versions and their hashes and
+  nothing else; no package is added or removed.
+- `requirements-docs.lock`: platformdirs follows the CI pin to 4.13.5 so the
+  combined `make install` set stays resolvable.
+- `.pre-commit-config.yaml`: the ruff hook moves to `f368fb36…`, which
+  `git ls-remote` resolves for ruff-pre-commit `v0.17.2`.
+- Workflows and `examples/`: the 25 pins of #325. `git ls-remote` resolves
+  setup-python `v7.1.0` to `6d4fd22b…` and the annotated tags codeql-action
+  `v4.39.1` and gh-action-pypi-publish `v1.14.3` to `9b325408…` and
+  `7245906f…`, the commits pinned.
+- `Dockerfile`: both `FROM` lines move to the `chainguard/wolfi-base:latest`
+  index `sha256:360896efb0753a5701c48f860e17130c205eae5a264797aa3e7ea126ee2923a7`
+  (created 2026-10-23), served identically by Docker Hub and `mirror.gcr.io`.
+  Its amd64 manifest (`sha256:8e250f5e…`) lists libbrotli 1.2.1-r1, glibc 2.44-r9
+  and wolfi-keys 1-r14, read from the registry layers, each verified against its
+  digest, without running the image. No Trivy ignore, severity or exit-code
+  change; the python-3.12 3.12.15-r0 pins stay, as their comment requires.
+- Why `apk upgrade` did not already fix it: the base image records every
+  package it ships at an exact version in `/etc/apk/world` (the pinned index
+  lists `libbrotlicommon1=1.2.0-r6`), and a plain `apk upgrade` keeps those
+  versions, so a fixed base package reached the image only when the digest
+  moved. Both stages now run `apk upgrade --no-cache --available`, which resets
+  the versioned world entries (apk-upgrade(8), apk-tools 2.14.10) before the
+  Python pins are added; it also prunes world entries no repository offers,
+  which the build's git, setuid and `pip check` steps would catch. The
+  Dockerfile comment that called the packages unpinned is corrected, and
+  `test_container_updates_installed_base_packages_before_dependency_install`
+  requires the reset in each stage (it fails with the flag removed). #327
+  found the world pinning and proposed the same flag.
+
+Verification: all four development locks install together under
+`--require-hashes --only-binary=:all:` on CPython 3.12 and `pip check` is clean;
+`pip-audit --require-hashes --strict` reports no known vulnerabilities in any of
+the five locks, nor in the installed environment; `make policy` passes;
+`mkdocs build --strict` passes on the updated docs lock; and `python -m build
+--no-isolation` with the new backend writes a wheel that installs against the
+runtime lock alone and passes both validators outside the checkout. The image
+was not built here (the session cannot reach the Wolfi package repository).
+On the first head of #328 (`0a3f51a3`, digest change only) CI's
+`container-security` job built the image and passed the HIGH/CRITICAL scan,
+and the `test (3.12)` and `test (3.14)` legs passed `pip-audit`.
 
 ### Precision follow-ups to the #320 head review (October 23)
 

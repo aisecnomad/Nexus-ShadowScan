@@ -8,9 +8,7 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## Unreleased
 
-- Refresh the build and development dependency locks with the reviewed dependency
-  updates, including the fixed setuptools release, and update pinned CI Actions.
-  Offline record arrays reject misplaced collection envelopes as incomplete;
+- Offline record arrays reject misplaced collection envelopes as incomplete;
   valid neighboring records remain available. Kubernetes and OpenShift List
   records and `gateway.logs` CloudWatch batches and usage buckets, which those
   connectors expand themselves, are kept.
@@ -21,9 +19,18 @@ explain operator migrations. Earlier per-change entries are preserved in the
 - Real ownership tests detect unavailable foreign-UID changes in restricted
   environments; the mocked ownership checks still run.
 
-- Refresh the pinned container base and reset inherited package-version
-  constraints before upgrading, so fixed OS packages can be selected. Keep
-  the explicit Python compatibility pins and blocking vulnerability scan.
+- Dependabot #323, #324 and #325 are carried with regenerated hash locks.
+  setuptools 84.2.1 replaces 84.0.0 as the build backend and in the CI lock
+  (GHSA-xmj3-9gf7-h52w made `pip-audit` fail on `main`), ruff 0.17.2 moves
+  with its pre-commit hook, seven other reviewed CI pins and the docs lock's
+  platformdirs follow, and the workflows move to setup-python 7.1.0, CodeQL
+  Action 4.39.1 and gh-action-pypi-publish 1.14.3. The worker image moves to
+  the `wolfi-base` index that ships brotli 1.2.1-r1; the previous index's
+  libbrotli 1.2.0-r6 failed the container scan. Both image stages now run
+  `apk upgrade --available`: the base image pins its packages in
+  `/etc/apk/world`, so a plain upgrade held them at the vulnerable versions.
+  virtualenv 21.14.13 (from #324) also fixes GHSA-cx6f-vjhg-g3cc in the CI
+  lock, which Scorecard reports and #326 proposed alone.
 
 - The 0.1.4 publication is recorded (tag `v0.1.4` on `94fda063`, the PyPI
   upload and the GitHub release of 2026-10-23).
