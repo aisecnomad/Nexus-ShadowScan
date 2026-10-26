@@ -80,7 +80,7 @@ Grouped by boundary, in STRIDE terms where the category is meaningful.
 | A server-supplied link leaving the credential's origin | Pagination and continuation links are pinned to the configured origin, including its port. | `validate_url(origin=...)` |
 | Credential theft via git configuration of untrusted content | `url.*.insteadOf`, credential helpers and smudge filters cannot act: system and global configuration are disabled, inherited `GIT_CONFIG_*` is stripped, and the terminal prompt is off. Git is not passed the provider token variables (`GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`); a clone carries only its origin-scoped header. | `safe_git_env`, `utils/git.py` |
 | Weakened transport | TLS verification is never disabled; a private CA is added through `ca_bundle` rather than by turning verification off. | `utils/http.py` |
-| Unbounded responses | Response bodies are size-capped and must also finish within a multiple of the client timeout, so a slow drip cannot hold a connector open. | `MAX_RESPONSE_BYTES`, `READ_DEADLINE_FACTOR` |
+| Unbounded responses | Response bodies are size-capped and must also finish within a multiple of the client timeout, so a slow drip cannot hold a connector open. | `DEFAULT_MAX_RESPONSE_BYTES`, `READ_DEADLINE_FACTOR` |
 
 Private destinations require a deliberate grant. Prefer the per-connector
 `allow_private_origin`, which applies to that connector alone, over the

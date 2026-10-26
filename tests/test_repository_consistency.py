@@ -8,7 +8,8 @@ CI matrices, `requires-python` and every documented interpreter range match the
 classifiers, the Makefile and pre-commit hooks run what CI runs, every CodeQL
 action step is pinned to the same release, the docs toolchain comes from its lock
 everywhere, and documented counts, the README's demo output, CSV report markers,
-the HTTP read deadline and the plugin execution default match the shipped code.
+the HTTP read deadline, the plugin execution default and the threat model's
+control locations match the shipped code.
 Run both modules with ``make policy``.
 """
 
@@ -2126,6 +2127,69 @@ def test_documented_http_read_deadline_matches_the_client() -> None:
     for path, match in claims:
         claimed = (_READ_DEADLINE_FACTORS.get(match.group(1)), int(match.group(2)))
         assert claimed == expected, f"{_relative(path)} says {match.group(0)!r}; the client uses {expected}"
+
+
+_THREAT_MODEL = ROOT / "docs" / "security" / "threat-model.md"
+_TABLE_CELL_BREAK = re.compile(r"(?<!\\)\|")
+_CODE_SPAN = re.compile(r"`([^`]+)`")
+
+
+def _threat_model_locations() -> list[str]:
+    """The code spans in the Where column of each of the threat model's control tables."""
+    locations: list[str] = []
+    where: int | None = None
+    for line in _read(_THREAT_MODEL).splitlines():
+        cells = [cell.strip() for cell in _TABLE_CELL_BREAK.split(line)[1:-1]] if line.startswith("|") else []
+        if not cells:
+            where = None
+        elif where is None:
+            where = cells.index("Where") if "Where" in cells else None
+        elif not set("".join(cells)) <= set("-:"):
+            locations.extend(_CODE_SPAN.findall(cells[where]))
+    return locations
+
+
+def _bindings(body: list[ast.stmt]) -> Iterator[tuple[str, ast.stmt]]:
+    for node in body:
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield node.name, node
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            yield from ((target.id, node) for target in targets if isinstance(target, ast.Name))
+
+
+def _package_definitions() -> dict[str, set[str]]:
+    """Each name a package module binds at top level, with the names a class of that name binds."""
+    definitions: dict[str, set[str]] = {}
+    for path in sorted((ROOT / "shadowscan").rglob("*.py")):
+        for name, node in _bindings(ast.parse(_read(path)).body):
+            members = definitions.setdefault(name, set())
+            if isinstance(node, ast.ClassDef):
+                members.update(member for member, _ in _bindings(node.body))
+    return definitions
+
+
+def test_threat_model_locates_each_control_in_code_that_exists() -> None:
+    """Every Where entry is a package file or a name the package defines, so a reviewer's search finds it.
+
+    Regression: the unbounded-responses row named ``MAX_RESPONSE_BYTES``; the cap is
+    ``DEFAULT_MAX_RESPONSE_BYTES``, and a search for the documented name found nothing.
+    """
+    locations = _threat_model_locations()
+    assert {location.endswith(".py") for location in locations} == {True, False}, (
+        "the threat model should locate controls by file and by name"
+    )
+    definitions = _package_definitions()
+    missing = []
+    for location in locations:
+        if location.endswith(".py"):
+            found = any((ROOT / "shadowscan").rglob(location))
+        else:
+            name, _, member = location.split("(", 1)[0].partition(".")
+            found = name in definitions and (not member or member in definitions[name])
+        if not found:
+            missing.append(location)
+    assert not missing, f"{_relative(_THREAT_MODEL)} locates controls at {missing}, which the package lacks"
 
 
 def test_documented_automatic_deadline_ceiling_matches_the_probe() -> None:
