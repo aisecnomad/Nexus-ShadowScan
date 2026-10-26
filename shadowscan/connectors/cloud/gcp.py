@@ -949,7 +949,7 @@ class GcpConnector(BaseConnector):
                 body["pageToken"] = token
             try:
                 data = self.http.post_json(url, json=body)
-            except (HttpError, RequestException) as exc:
+            except (HttpError, RequestException, ValueError) as exc:
                 self._attest(url, failure_outcome(exc), project)
                 self.ctx.warn(f"cloud.gcp: audit logs not readable for {project} ({failure_summary(exc)})")
                 return
