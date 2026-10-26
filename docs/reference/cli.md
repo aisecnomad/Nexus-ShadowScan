@@ -78,7 +78,8 @@ shadowscan run saas.slack --input slack-export.json          # offline re-analys
 
 Scan workstation AI clients.
 
-Scans well-known AI client configuration locations on the local workstation: Claude Desktop, Claude Code, Cursor, Windsurf, VS Code extensions, Ollama, and more.
+Scans well-known AI client configuration locations on the local workstation: Claude Desktop, Claude Code, Cursor, Windsurf, VS Code with the Cline and Roo Code extension settings, Gemini CLI, Codex CLI, and more ([developer endpoints](../scanning.md#developer-endpoints) has the full list).
+It reads configuration and instruction files only: local model stores and editor or browser extension directories are inventoried by the `endpoint.inventory` connector (`shadowscan run endpoint.inventory`).
 
 ```bash
 shadowscan endpoint                                # scan current user's profile

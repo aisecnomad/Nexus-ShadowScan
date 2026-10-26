@@ -48,6 +48,7 @@ from shadowscan.connectors.common import MAX_PAGES
 from shadowscan.connectors.endpoint.catalog import MODEL_STORES
 from shadowscan.connectors.endpoint.runtime import EbpfConnector, HostConnector, OtelConnector
 from shadowscan.coverage import DEFAULT_MAX_GAP_RATIO
+from shadowscan.endpoint import CLIENTS as ENDPOINT_CLIENTS
 from shadowscan.engine import DEFAULT_CONNECTOR_TIMEOUT, Engine
 from shadowscan.models import ScanStats
 from shadowscan.reporters.csv_ import _safe_cell
@@ -1936,6 +1937,22 @@ def test_endpoint_guide_names_every_google_ai_service_the_ebpf_host_rule_takes()
     for host in GCP_AI_SERVICES:
         assert f"`{host.removesuffix('.googleapis.com')}`" in text, host
     assert "`aiplatform.mtls.googleapis.com`" in text
+
+
+def test_endpoint_command_summaries_name_only_clients_it_reads() -> None:
+    """Regression: the CLI reference and the product guide's command table said `shadowscan
+    endpoint` covers Ollama, but the command reads only the client configuration locations in
+    shadowscan.endpoint.LOCATIONS. Local model stores are the endpoint.inventory connector's, so a
+    model runtime the command has no location for must not be named in its summaries."""
+    absent = {store.product for store in MODEL_STORES if store.runtime not in ENDPOINT_CLIENTS}
+    assert "Ollama" in absent
+    reference = _markdown_section(_read(ROOT / "docs" / "reference" / "cli.md"), "### `shadowscan endpoint`")
+    guide = _read(ROOT / "docs" / "reference" / "product-guide.md")
+    row = next(line for line in guide.splitlines() if line.startswith("| `shadowscan endpoint` |"))
+    for name, text in (("docs/reference/cli.md", reference), ("the product guide's command table", row)):
+        named = sorted(product for product in absent if re.search(rf"\b{re.escape(product)}\b", text))
+        assert not named, f"{name} says `shadowscan endpoint` reads {named}, which it has no location for"
+    assert "`endpoint.inventory`" in reference, "the CLI reference should name the connector that covers them"
 
 
 # --- Migration notes ------------------------------------------------------------

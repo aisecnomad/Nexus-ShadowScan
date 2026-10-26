@@ -200,7 +200,7 @@ for walkthroughs of each surface and the
 | `shadowscan code [PATHS...]` | Scan repos for agent frameworks, MCP, coding agents, IaC, secrets |
 | `shadowscan scan -c CONFIG` | Run every connector in a YAML config file |
 | `shadowscan run CONNECTOR` | Run a single connector ad-hoc (`--set key=val`) |
-| `shadowscan endpoint` | Scan workstation AI clients (Claude, Cursor, Windsurf, Ollama, …) |
+| `shadowscan endpoint` | Scan workstation AI client configuration (Claude, Cursor, Windsurf, VS Code, …) |
 | `shadowscan gateway LOGS...` | Analyze LLM gateway / provider / proxy logs |
 | `shadowscan jwt [TOKENS...]` | Classify JWTs as human, service, or agent |
 | `shadowscan merge REPORTS...` | Combine JSON reports into one fleet report |
