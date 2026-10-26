@@ -18,6 +18,21 @@ explain operator migrations. Earlier per-change entries are preserved in the
   longer calls the bypass-actor removal outstanding, and the `performance`
   label is added to `.github/labels.yml`.
 
+- Dependabot #323, #324 and #325 are carried with regenerated hash locks.
+  setuptools 84.2.1 replaces 84.0.0 as the build backend and in the CI lock
+  (GHSA-xmj3-9gf7-h52w made `pip-audit` fail on `main`), ruff 0.17.2 moves
+  with its pre-commit hook, seven other reviewed CI pins and the docs lock's
+  platformdirs follow, and the workflows move to setup-python 7.1.0, CodeQL
+  Action 4.39.1 and gh-action-pypi-publish 1.14.3. The worker image moves to
+  the `wolfi-base` index that ships brotli 1.2.1-r1; the previous index's
+  libbrotli 1.2.0-r6 failed the container scan. Both image stages now run
+  `apk upgrade --available`: the base image pins its packages in
+  `/etc/apk/world`, so a plain upgrade held them at the vulnerable versions.
+  virtualenv 21.14.13 (from #324) also fixes GHSA-cx6f-vjhg-g3cc in the CI
+  lock, which Scorecard reports and #326 proposed alone.
+  The CI lock is resolved with uv 0.13.4: 0.11.32 vendors a CA bundle that
+  trusts the compromised emSign ECC root (GHSA-hq85-5cpj-mr62).
+
 - The 0.1.4 publication is recorded (tag `v0.1.4` on `94fda063`, the PyPI
   upload and the GitHub release of 2026-10-23).
 

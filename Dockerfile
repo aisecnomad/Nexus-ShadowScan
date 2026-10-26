@@ -42,10 +42,16 @@
 # Anonymous Docker Hub pulls are rate limited. CI pulls this digest through the
 # mirror.gcr.io pull-through cache; a digest pull is content-verified, so any
 # builder can do the same (docs/production.md).
-FROM chainguard/wolfi-base:latest@sha256:81211e15a86ea1d5357f284482af45730c51de45eaf10ad9ce205d6bfc2df323 AS build
+FROM chainguard/wolfi-base:latest@sha256:360896efb0753a5701c48f860e17130c205eae5a264797aa3e7ea126ee2923a7 AS build
 
-# apk packages are deliberately not version-pinned: Wolfi is a rolling
+# apk packages are deliberately not version-pinned here: Wolfi is a rolling
 # distribution, and a pinned package stops receiving security fixes. The base
+# image, however, records every package it ships at an exact version in
+# /etc/apk/world (libbrotlicommon1=1.2.0-r6, for example), and a plain
+# `apk upgrade` holds those versions, so a fix to a base package never reached
+# the image until the digest moved. --available resets the versioned world
+# entries (apk-upgrade(8), apk-tools 2.14) before the Python pins below are
+# added; it also prunes world entries no repository still offers. The base
 # image digest fixes the package set the build starts from; apk still reads the
 # live Wolfi repository and checks its signatures against the keys in the base
 # image, so the image is not byte-for-byte reproducible from this file alone.
@@ -57,7 +63,7 @@ FROM chainguard/wolfi-base:latest@sha256:81211e15a86ea1d5357f284482af45730c51de4
 # runtime copies a virtual environment bound to its interpreter). Drop both pins
 # once a newer revision passes `python3.12 -c "import hashlib; hashlib.sha224(b'')"`.
 # hadolint ignore=DL3018
-RUN apk upgrade --no-cache \
+RUN apk upgrade --no-cache --available \
     && apk add --no-cache python-3.12=3.12.15-r0 python-3.12-base=3.12.15-r0 py3.12-pip
 
 WORKDIR /opt/shadowscan
@@ -84,7 +90,7 @@ RUN python3.12 -m venv --without-pip /opt/venv \
         /opt/wheel/nexusshadowscan-*.whl \
     && python3.12 -m pip --python /opt/venv/bin/python check
 
-FROM chainguard/wolfi-base:latest@sha256:81211e15a86ea1d5357f284482af45730c51de45eaf10ad9ce205d6bfc2df323
+FROM chainguard/wolfi-base:latest@sha256:360896efb0753a5701c48f860e17130c205eae5a264797aa3e7ea126ee2923a7
 
 LABEL org.opencontainers.image.source="https://github.com/aisecnomad/Nexus-ShadowScan" \
       org.opencontainers.image.description="ShadowScan disposable scan worker" \
@@ -96,7 +102,7 @@ LABEL org.opencontainers.image.source="https://github.com/aisecnomad/Nexus-Shado
 # remains. The base image provides the nonroot account (65532).
 # python-3.12 is pinned with the build stage (see there).
 # hadolint ignore=DL3018
-RUN apk upgrade --no-cache \
+RUN apk upgrade --no-cache --available \
     && apk add --no-cache python-3.12=3.12.15-r0 python-3.12-base=3.12.15-r0 git \
     && find / -xdev -type f -perm /6000 -exec chmod a-s {} + \
     && test -z "$(find / -xdev -type f -perm /6000 -print -quit)" \
