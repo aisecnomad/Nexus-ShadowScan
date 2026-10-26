@@ -229,6 +229,35 @@ def test_vpc_flows_with_the_default_format_and_no_header(run_connector, tmp_path
     assert found[("10.0.0.4", "provider.mistral")].metadata["flows"] == 1
 
 
+@pytest.mark.parametrize(("vpc", "flows"), [("vpc-0abc", 1), ("vpc-0def", 0)])
+def test_vpc_flow_vpc_id_header_scopes_route53_attribution(run_connector, tmp_path, vpc, flows):
+    # Route 53 Resolver logs name the VPC vpc_id; VPC Flow Logs text headers spell it vpc-id.
+    (tmp_path / "r53.jsonl").write_text(
+        json.dumps(
+            {
+                "vpc_id": "vpc-0abc",
+                "query_timestamp": "2025-09-29T08:05:00Z",
+                "query_name": "api.openai.com.",
+                "answers": [{"Rdata": "162.159.140.245", "Type": "A", "Class": "IN"}],
+                "srcaddr": "10.0.0.5",
+                "ttl": 300,
+            }
+        )
+        + "\n"
+    )
+    (tmp_path / "flows.log").write_text(
+        "version vpc-id account-id interface-id srcaddr dstaddr srcport dstport protocol packets bytes"
+        " start end action log-status\n"
+        f"5 {vpc} 1 eni-1 10.0.0.5 162.159.140.245 53001 443 6 10 5000 1759133110 1759133170 ACCEPT OK\n"
+    )
+    found, stats = scan(run_connector, tmp_path)
+    assert not stats.incomplete and not stats.warnings
+    finding = found[("10.0.0.5", "provider.openai")]
+    assert finding.metadata["flows"] == flows and finding.metadata["bytes_out"] == 5000 * flows
+    attributions = finding.metadata.get("dns_attribution", [])
+    assert [item["network_id"] for item in attributions] == ["vpc-0abc"] * flows
+
+
 @pytest.mark.parametrize("suffix", ["log", "json"])
 @pytest.mark.parametrize("status", ["SKIPDATA", "UNKNOWN", "-"])
 def test_vpc_missing_capture_or_unknown_status_fails_cli_closed(tmp_path, suffix, status):
@@ -959,7 +988,13 @@ def test_truncated_input_preserves_direct_tls_context_with_limitations(run_conne
 
 
 @pytest.mark.parametrize(
-    ("first", "alias"), [("sensor", "sensor_id"), ("network_id", "vpc_id"), ("resolver", "resolver_id")]
+    ("first", "alias"),
+    [
+        ("sensor", "sensor_id"),
+        ("network_id", "vpc_id"),
+        ("network_id", "vpc-id"),
+        ("resolver", "resolver_id"),
+    ],
 )
 def test_conflicting_context_aliases_cannot_be_used_for_attribution(run_connector, tmp_path, first, alias):
     rows = _temporal_rows()

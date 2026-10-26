@@ -664,7 +664,9 @@ class NetworkLogConnector(BaseConnector, _NoDump):
 
     def _context(self, row: dict[str, Any], name: str, *, flow_only: bool = False) -> _Context | None:
         values = []
-        for aliases in (("sensor", "sensor_id"), ("network_id", "vpc_id"), ("resolver", "resolver_id")):
+        # Route 53 Resolver logs name the VPC vpc_id; VPC Flow Logs text headers spell it vpc-id.
+        networks = ("network_id", "vpc_id", "vpc-id")
+        for aliases in (("sensor", "sensor_id"), networks, ("resolver", "resolver_id")):
             supplied = [row[key] for key in aliases if row.get(key) not in (None, "", "-")]
             if (
                 any(
