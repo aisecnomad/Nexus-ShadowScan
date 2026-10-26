@@ -675,7 +675,7 @@ def diff_changed_files(
         require_local_git_metadata(Path(root_str), timeout=min(timeout, 10.0))
     except ValueError as exc:
         raise DiffError(f"git metadata preflight refused: {exc}") from None
-    env = metadata_git_env()
+    env = metadata_git_env(root_str)
     env["GIT_NO_REPLACE_OBJECTS"] = "1"
     try:
         result = run_bounded_metadata(
@@ -900,15 +900,25 @@ def git_argv_prefix() -> list[str]:
     return ["git", "-c", f"core.hooksPath={os.devnull}"]
 
 
-def metadata_git_env() -> dict[str, str]:
+def _discovery_ceiling(root: str | os.PathLike[str]) -> str:
+    """The directory above *root* as Git sees it after ``-C``: discovery must not enter it."""
+    return os.path.dirname(os.path.realpath(root))
+
+
+def metadata_git_env(root: str | os.PathLike[str] | None = None) -> dict[str, str]:
     """Keep opt-in history inspection offline, including promisor object reads.
 
     ``protocol.allow=never`` alone is insufficient: a repository can specify a
     more specific ``protocol.<helper>.allow=always``. An empty allow-list takes
     precedence over every such setting. Clone authentication must never be
     passed to this environment.
+
+    With *root*, Git opens ``root/.git`` (the directory the preflight inspected)
+    or nothing. When Git does not accept that directory, discovery would otherwise
+    open the scan root itself as a bare repository, or an enclosing repository,
+    with configuration includes and alternate object stores nothing inspected.
     """
-    return safe_git_env(
+    env = safe_git_env(
         {
             **git_config_overlay(
                 [
@@ -918,6 +928,7 @@ def metadata_git_env() -> dict[str, str]:
                     ("maintenance.auto", "false"),
                     ("gc.auto", "0"),
                     ("protocol.allow", "never"),
+                    ("safe.bareRepository", "explicit"),
                 ]
             ),
             "GIT_ALLOW_PROTOCOL": "",
@@ -926,6 +937,9 @@ def metadata_git_env() -> dict[str, str]:
             "GIT_OPTIONAL_LOCKS": "0",
         }
     )
+    if root is not None:
+        env["GIT_CEILING_DIRECTORIES"] = _discovery_ceiling(root)
+    return env
 
 
 def metadata_git_argv_prefix() -> list[str]:
@@ -1041,6 +1055,9 @@ def require_local_git_metadata(path: Path, *, timeout: float = 10.0) -> None:
     """
     if isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("git metadata inspection deadline exceeded")
+    if os.pathsep in _discovery_ceiling(path):
+        # GIT_CEILING_DIRECTORIES (metadata_git_env) is a list split on os.pathsep.
+        raise ValueError("git metadata root cannot bound repository discovery")
     deadline = time.monotonic() + timeout
     marker = path / ".git"
     pending = [PurePosixPath(".")]
@@ -1124,7 +1141,7 @@ def read_gitlink_paths(
     except ValueError as exc:
         _gitlink_failure(diagnostics, "metadata preflight refused input", exc)
         return None
-    env = metadata_git_env()
+    env = metadata_git_env(path)
     env["GIT_NO_REPLACE_OBJECTS"] = "1"
     from shadowscan.connectors.base import ConnectorContext
 
@@ -1199,7 +1216,7 @@ def read_git_snapshot(path: str | os.PathLike[str], *, timeout: float = 10.0) ->
         require_local_git_metadata(Path(root), timeout=min(timeout, 10.0))
     except ValueError:
         return None
-    env = metadata_git_env()
+    env = metadata_git_env(root)
     env["GIT_NO_REPLACE_OBJECTS"] = "1"
     from shadowscan.connectors.base import ConnectorContext
 

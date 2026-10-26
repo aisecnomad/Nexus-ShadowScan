@@ -505,8 +505,12 @@ History enrichment requires Git 2.45 or later and a self-contained `.git`
 directory; external gitfiles and symlinks are not accepted for enrichment.
 Metadata preflight also rejects common-directory and alternate-object
 indirections, local `include`/`includeIf` configuration sections, internal links
-and special files. Local `config` and `config.worktree` use confined reads with
-a 1 MiB limit and a conservative UTF-8, single-line configuration grammar.
+and special files. Git then opens only that `.git` directory: when Git does not
+accept it, the read fails instead of using the scan root as a bare repository
+or a repository above it, and a root whose parent path contains `:` is refused
+because it cannot bound that search. Local `config` and `config.worktree` use
+confined reads with a 1 MiB limit and a conservative UTF-8, single-line
+configuration grammar.
 Ordinary sections, quoted or deprecated dotted subsections, comments and
 single-line values work; unsupported section syntax, continuations and multiline
 values make coverage incomplete before Git starts. Inputs must remain immutable

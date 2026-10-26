@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import subprocess
 import zlib
@@ -12,7 +13,14 @@ import pytest
 
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code.filesystem import FilesystemConnector
-from shadowscan.utils.git import read_git_snapshot, read_gitlink_paths, safe_git_env
+from shadowscan.utils.git import (
+    git_argv_prefix,
+    metadata_git_env,
+    read_git_snapshot,
+    read_gitlink_paths,
+    require_local_git_metadata,
+    safe_git_env,
+)
 
 
 def _git(root: Path, *args: str, data: bytes | None = None) -> bytes:
@@ -25,11 +33,12 @@ def _git(root: Path, *args: str, data: bytes | None = None) -> bytes:
     ).stdout
 
 
-def _repository(root: Path) -> Path:
+def _repository(root: Path, source: str = "agent.py") -> Path:
     root.mkdir()
     _git(root, "init", "--quiet", "-b", "main")
-    (root / "agent.py").write_text("from crewai import Agent\n")
-    _git(root, "add", "agent.py")
+    (root / source).parent.mkdir(exist_ok=True)
+    (root / source).write_text("from crewai import Agent\n")
+    _git(root, "add", source)
     # A commit starts `git maintenance run --auto`, which Git 2.47 and later
     # detach. The background process holds .git/objects/maintenance.lock while
     # the tests below rewrite .git, and its removal raced shutil.rmtree.
@@ -96,6 +105,55 @@ def test_history_readers_reject_external_metadata_and_keep_source_findings(tmp_p
     assert connector.ctx.stats.incomplete
     assert all(finding.owner is None for finding in findings)
     assert "synthetic-outside@example.test" not in repr([finding.to_dict() for finding in findings])
+
+
+@pytest.mark.parametrize("fallback", ["bare-scan-root", "enclosing-repository"])
+def test_history_readers_never_fall_back_from_an_unusable_git_directory(tmp_path, index, fallback):
+    outside = _repository(tmp_path / "outside", "vendored/agent.py")
+    if fallback == "bare-scan-root":
+        # The scan root is itself a bare repository whose include and alternate
+        # object store the preflight never inspects; only root/.git is vetted.
+        root = tmp_path / "scanned"
+        subprocess.run(["git", "init", "--quiet", "--bare", str(root)], env=safe_git_env(), check=True)
+        (root / "objects" / "info" / "alternates").write_text(str(outside / ".git" / "objects") + "\n")
+        (tmp_path / "outside.gitconfig").write_text("[core]\n abbrev = 12\n")
+        with (root / "config").open("a") as config:
+            config.write(f'[include]\n path = "{tmp_path / "outside.gitconfig"}"\n')
+        head = _git(outside, "rev-parse", "HEAD").strip().decode("ascii")
+        (root / "HEAD").write_text(head + "\n")
+        (root / "agent.py").write_text("from crewai import Agent\n")
+    else:
+        # A directory another repository tracks: Git would walk up to that repository.
+        root = outside / "vendored"
+    (root / ".git").mkdir()
+    (root / ".git" / "README").write_text("not a repository\n")
+
+    # Ask Git directly as well, without the Git 2.45 option, so every host checks discovery.
+    opened = subprocess.run(
+        [*git_argv_prefix(), "-C", str(root), "rev-parse", "--absolute-git-dir"],
+        env=metadata_git_env(root),
+        capture_output=True,
+        check=False,
+    )
+    assert opened.returncode != 0 and not opened.stdout
+    assert read_git_snapshot(root) is None
+    assert read_gitlink_paths(root) is None
+    connector = FilesystemConnector(
+        ConnectorContext(config={"path": str(root), "use_git": True}, index=index)
+    )
+    findings = connector.run()
+    assert any("framework.crewai" in finding.frameworks for finding in findings)
+    assert connector.ctx.stats.incomplete
+    assert "synthetic-outside@example.test" not in repr([finding.to_dict() for finding in findings])
+
+
+def test_metadata_root_whose_discovery_ceiling_git_would_split_is_refused(tmp_path):
+    parent = tmp_path / f"parent{os.pathsep}name"
+    parent.mkdir()
+    root = _repository(parent / "scanned")
+    with pytest.raises(ValueError, match="cannot bound repository discovery"):
+        require_local_git_metadata(root)
+    assert read_gitlink_paths(root) is None
 
 
 def test_compressed_commit_with_large_author_cannot_expand_report_metadata(tmp_path, index):

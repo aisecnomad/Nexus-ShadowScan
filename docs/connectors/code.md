@@ -568,7 +568,11 @@ reviewed local metadata. The metadata command must support `--no-lazy-fetch`;
 unsupported Git versions or failed history reads mark the scan incomplete.
 Metadata reads cannot initiate a transport, fetch missing objects or use hooks.
 Local metadata must be self-contained: config includes, internal links and
-alternate/common metadata directories are rejected. Local `config` and
+alternate/common metadata directories are rejected. Git opens only the scan
+root's own `.git`: when Git does not accept that directory, the read fails
+instead of using the scan root as a bare repository or a repository above it
+(a root whose parent path contains `:` cannot bound that search and is
+refused). Local `config` and
 `config.worktree` reads are bounded to 1 MiB; unsupported section syntax,
 encodings, continuations or multiline values make coverage incomplete before
 Git runs. Use immutable checkouts; preflight does not sandbox Git.

@@ -256,7 +256,7 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
             # scanned repository and are untrusted.
             result = run_bounded_metadata(
                 [*metadata_git_argv_prefix(), "-C", str(root), *args],
-                metadata_git_env(),
+                metadata_git_env(root),
                 _BudgetContext(),  # type: ignore[arg-type]
                 timeout=budget.timeout(10),
                 strict_utf8=True,
