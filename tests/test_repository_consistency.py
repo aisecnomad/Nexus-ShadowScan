@@ -368,6 +368,50 @@ def test_former_name_check_flags_unexplained_references() -> None:
         assert _names_former_repository(stale), stale
 
 
+# With `--repo` alone, `gh attestation verify` accepts an attestation that any workflow, branch or
+# runner of the repository signed. A documented check pins what tools/release/assets.py pins:
+# release.yml on main at the released commit, on a GitHub-hosted runner. Dated logs and archived
+# records describe commands rather than prescribe them.
+_ATTESTATION_VERIFY = re.compile(r"gh attestation verify (?=[^\s`-])")
+_RELEASE_IDENTITY = {
+    "--signer-workflow": r"--signer-workflow \S+/\.github/workflows/release\.yml\s",
+    "--source-ref": r"--source-ref refs/heads/main\s",
+    "--source-digest": r"--source-digest \S",
+    "--signer-digest": r"--signer-digest \S",
+    "--deny-self-hosted-runners": r"--deny-self-hosted-runners\s",
+}
+_ATTESTATION_RECORDS = ("archive/", "docs/history/", "CHANGELOG.md", "docs/engineering-log.md")
+
+
+def _attestation_commands(text: str) -> Iterator[tuple[int, str]]:
+    """Yield ``(line_number, command)`` for each ``gh attestation verify`` of a file, continuations joined."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if (match := _ATTESTATION_VERIFY.search(line)) is None:
+            continue
+        command, end = line[match.start() :], index
+        while command.endswith("\\") and end + 1 < len(lines):
+            end += 1
+            command = command[:-1] + " " + lines[end].strip()
+        yield index + 1, command + " "
+
+
+def test_documented_attestation_checks_pin_the_release_identity() -> None:
+    """Regression: the install guide verified a download with `--repo` alone."""
+    found, weak = set(), []
+    for path in _markdown_files():
+        name = _relative(path)
+        if name.startswith(_ATTESTATION_RECORDS):
+            continue
+        for number, command in _attestation_commands(_read(path)):
+            found.add(name)
+            missing = [flag for flag, pattern in _RELEASE_IDENTITY.items() if not re.search(pattern, command)]
+            if missing:
+                weak.append(f"{name}:{number}: missing {' '.join(missing)}")
+    assert {"docs/getting-started/install.md", "docs/operations/publishing.md"} <= found
+    assert not weak, "pin the release identity:\n  " + "\n  ".join(weak)
+
+
 @pytest.mark.parametrize("markdown", _markdown_files(), ids=_relative)
 def test_absolute_repository_links_resolve_in_this_checkout(markdown: Path) -> None:
     """Links that must stay absolute (README on PyPI, the changelog on the docs site) still cannot rot."""
