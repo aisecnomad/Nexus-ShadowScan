@@ -13,12 +13,15 @@ import hashlib
 import itertools
 import json
 import random
+import re
 import string
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
+from shadowscan.utils import redaction_formats
 from tools import check_secrets
 from tools.check_secrets import digest, display, findings, main
 
@@ -26,6 +29,7 @@ _ALNUM = string.ascii_letters + string.digits
 _UPPER = string.ascii_uppercase + string.digits
 _BASE64 = _ALNUM + "+/"
 _URLSAFE = _ALNUM + "_-"
+_HEX = string.digits + "abcdef"
 
 
 def _random(seed: str, length: int, alphabet: str = _ALNUM) -> str:
@@ -38,6 +42,7 @@ _PLANTED = [
     ("openai-legacy", "OpenAI API key", "OPENAI_API_KEY=" + "sk" + "-", _random("o1", 48), ""),
     ("openai-project", "OpenAI project key", "sk-" + "proj" + "-", _random("o2", 40, _URLSAFE), ""),
     ("anthropic", "Anthropic API key", "sk-" + "ant-" + "api03-", _random("a1", 40, _URLSAFE), ""),
+    ("anthropic-oauth", "Anthropic API key", "sk-" + "ant-" + "oat01-", _random("a2", 60, _URLSAFE), ""),
     ("aws-akia", "AWS access key ID", "AK" + "IA", _random("k1", 16, _UPPER), ""),
     ("aws-asia", "AWS access key ID", "AS" + "IA", _random("k2", 16, _UPPER), ""),
     ("aws-secret", "AWS secret access key", "aws_secret_" + "access_key = ", _random("k3", 40, _BASE64), ""),
@@ -54,14 +59,155 @@ _PLANTED = [
         "",
     ),
     ("gitlab", "GitLab token", "gl" + "pat-", _random("l1", 20, _URLSAFE), ""),
+    ("gitlab-runner", "GitLab token", "gl" + "rt-", _random("l2", 20, _URLSAFE), ""),
+    ("gitlab-trigger", "GitLab token", "gl" + "ptt-", _random("l3", 40, _HEX), ""),
+    ("gitlab-runner-registration", "GitLab token", "GR" + "1348941", _random("l4", 20, _URLSAFE), ""),
     ("slack-bot", "Slack token", "xo" + "xb-" + "123456789012-1234567890123-", _random("s1", 24), ""),
     ("slack-user", "Slack token", "xo" + "xp-" + "123456789012-123456789012-", _random("s2", 32), ""),
     ("slack-app", "Slack token", "xo" + "xa-" + "2-", _random("s3", 30), ""),
     ("slack-refresh", "Slack token", "xo" + "xr-" + "1-", _random("s4", 30), ""),
+    ("slack-rotating", "Slack token", "xo" + "xe.xoxp-" + "1-", _random("s5", 40), ""),
+    (
+        "slack-app-level",
+        "Slack token",
+        "xa" + "pp-" + "1-A0123456789-1234567890123-",
+        _random("s6", 64, _HEX),
+        "",
+    ),
     ("google", "Google API key", "AI" + "za", _random("y1", 35, _URLSAFE), ""),
+    ("google-oauth-access", "Google OAuth credential", "ya" + "29.", _random("y2", 80, _URLSAFE), ""),
+    ("google-oauth-refresh", "Google OAuth credential", "1/" + "/0", _random("y3", 60, _URLSAFE), ""),
+    ("google-client-secret", "Google OAuth credential", "GOC" + "SPX-", _random("y4", 28, _URLSAFE), ""),
     ("huggingface", "Hugging Face token", "hf" + "_", _random("h1", 34), ""),
-    ("stripe-secret", "Stripe live key", "sk" + "_live_", _random("p1", 24), ""),
-    ("stripe-restricted", "Stripe live key", "rk" + "_live_", _random("p2", 24), ""),
+    ("stripe-secret", "Stripe key", "sk" + "_live_", _random("p1", 24), ""),
+    ("stripe-restricted", "Stripe key", "rk" + "_live_", _random("p2", 24), ""),
+    ("stripe-test", "Stripe key", "sk" + "_test_", _random("p3", 24), ""),
+    ("stripe-webhook-secret", "Stripe key", "wh" + "sec_", _random("p4", 32), ""),
+    ("openrouter", "AI service API key", "sk-" + "or-v1-", _random("i1", 64, _HEX), ""),
+    ("langfuse", "AI service API key", "sk-" + "lf-", _random("i2", 36, _URLSAFE), ""),
+    ("litellm", "AI service API key", "sk-" + "litellm-", _random("i3", 32), ""),
+    ("groq", "AI service API key", "gs" + "k_", _random("i4", 52), ""),
+    ("pinecone", "AI service API key", "pc" + "sk_", _random("i5", 60, _ALNUM + "_"), ""),
+    ("e2b", "AI service API key", "e2" + "b_", _random("i6", 40, _HEX), ""),
+    ("together", "AI service API key", "tgp" + "_v1_", _random("i7", 43, _URLSAFE), ""),
+    (
+        "langsmith",
+        "AI service API key",
+        "ls" + "v2_pt_",
+        _random("i8", 32, _HEX) + "_" + _random("i9", 10, _HEX),
+        "",
+    ),
+    ("tavily", "AI service API key", "tv" + "ly-dev-", _random("ia", 32), ""),
+    ("xai", "AI service API key", "xa" + "i-", _random("ib", 80), ""),
+    ("perplexity", "AI service API key", "pp" + "lx-", _random("ic", 48), ""),
+    ("cerebras", "AI service API key", "cs" + "k-", _random("id", 48), ""),
+    ("nvidia", "AI service API key", "nv" + "api-", _random("ie", 64, _URLSAFE), ""),
+    ("replicate", "AI service API key", "r" + "8_", _random("if", 37), ""),
+    ("firecrawl", "AI service API key", "f" + "c-", _random("ig", 32, _HEX), ""),
+    ("elevenlabs", "AI service API key", "sk" + "_", _random("ih", 48, _HEX), ""),
+    ("fireworks", "AI service API key", "fw" + "_", _random("ii", 24), ""),
+    ("bedrock-long-term", "AI service API key", "AB" + "SK", _random("ij", 120, _BASE64), ""),
+    ("bedrock-short-term", "AI service API key", "bedrock-" + "api-key-", _random("ik", 60, _URLSAFE), ""),
+    ("npm", "package registry token", "np" + "m_", _random("r1", 36), ""),
+    ("pypi", "package registry token", "py" + "pi-AgE", _random("r2", 80, _URLSAFE), ""),
+    ("digitalocean", "developer platform token", "do" + "p_v1_", _random("d1", 64, _HEX), ""),
+    (
+        "sendgrid",
+        "developer platform token",
+        "S" + "G.",
+        _random("d2", 22, _URLSAFE) + "." + _random("d3", 43, _URLSAFE),
+        "",
+    ),
+    ("databricks", "developer platform token", "da" + "pi", _random("d4", 32, _HEX), ""),
+    ("shopify", "developer platform token", "sh" + "pat_", _random("d5", 32, _HEX), ""),
+    ("atlassian", "developer platform token", "ATA" + "TT3", _random("d6", 180, _URLSAFE), ""),
+    ("linear", "developer platform token", "lin" + "_api_", _random("d7", 40), ""),
+    ("notion", "developer platform token", "nt" + "n_", _random("d8", 46), ""),
+    (
+        "postman",
+        "developer platform token",
+        "PM" + "AK-",
+        _random("d9", 24, _HEX) + "-" + _random("da", 34, _HEX),
+        "",
+    ),
+    ("doppler", "developer platform token", "d" + "p.pt.", _random("db", 43), ""),
+    ("supabase-access", "developer platform token", "sb" + "p_", _random("dc", 40, _HEX), ""),
+    ("supabase-secret", "developer platform token", "sb" + "_secret_", _random("dd", 32, _URLSAFE), ""),
+    (
+        "grafana-service-account",
+        "developer platform token",
+        "gl" + "sa_",
+        _random("de", 32) + "_" + _random("df", 8, _HEX),
+        "",
+    ),
+    ("grafana-cloud", "developer platform token", "gl" + "c_", _random("dg", 80, _BASE64), ""),
+    ("sentry", "developer platform token", "sn" + "trys_", _random("dh", 60, _BASE64), ""),
+    ("vault", "developer platform token", "h" + "vs.", _random("di", 90, _URLSAFE), ""),
+    (
+        "terraform-cloud",
+        "developer platform token",
+        _random("dj", 14) + ".atl" + "asv1.",
+        _random("dk", 67, _URLSAFE),
+        "",
+    ),
+    (
+        "slack-webhook",
+        "webhook URL",
+        "https://hooks." + "slack.com/services/T0123ABCD/B0123ABCD/",
+        _random("wh1", 24),
+        "",
+    ),
+    (
+        "discord-webhook",
+        "webhook URL",
+        "https://discord" + ".com/api/webhooks/123456789012345678/",
+        _random("wh2", 68, _URLSAFE),
+        "",
+    ),
+    (
+        "teams-webhook",
+        "webhook URL",
+        "https://contoso.webhook" + ".office.com/webhookb2/",
+        _random("wh3", 64, _HEX),
+        "",
+    ),
+    (
+        "outlook-webhook",
+        "webhook URL",
+        "https://outlook" + ".office.com/webhook/",
+        _random("wh4", 40, _HEX),
+        "",
+    ),
+    (
+        "zapier-hook",
+        "webhook URL",
+        "https://hooks" + ".zapier.com/hooks/catch/1234567/",
+        _random("wh5", 12),
+        "/",
+    ),
+    (
+        "zapier-mcp",
+        "webhook URL",
+        "https://mcp" + ".zapier.com/api/mcp/s/",
+        _random("wh6", 64, _URLSAFE),
+        "/mcp",
+    ),
+    ("zapier-actions", "webhook URL", "https://actions" + ".zapier.com/mcp/", _random("wh7", 48), "/sse"),
+    ("make-webhook", "webhook URL", "https://hook.eu1" + ".make.com/", _random("wh8", 32, _HEX), ""),
+    (
+        "ifttt-webhook",
+        "webhook URL",
+        "https://maker" + ".ifttt.com/trigger/deploy/with/key/",
+        _random("wh9", 22, _URLSAFE),
+        "",
+    ),
+    (
+        "telegram-bot",
+        "webhook URL",
+        "https://api.telegram" + ".org/bot123456789:",
+        _random("wh10", 35, _URLSAFE),
+        "/sendMessage",
+    ),
     (
         "jwt",
         "JSON Web Token",
@@ -93,6 +239,7 @@ _PLANTED = [
         _random("u1", 20),
         "@db.internal:5432/app",
     ),
+    ("url-password-without-user", "password in a URL", "redis" + "://:", _random("u2", 24), "@cache:6379/0"),
 ]
 
 
@@ -111,6 +258,10 @@ def test_planted_credential_is_reported_without_its_value(
 ) -> None:
     text = f"# config\nvalue = {before}{sample}{after}\n"
     assert [(line, kind) for line, kind, _ in findings(text)] == [(2, family)]
+    # No approvals: the repository's manifest would re-read every approved file for each case.
+    manifest = tmp_path / "allowlist.json"
+    manifest.write_text('{"version": 1, "entries": []}', encoding="utf-8")
+    monkeypatch.setattr(check_secrets, "ALLOWLIST_PATH", manifest)
     monkeypatch.chdir(tmp_path)
     Path("sample.txt").write_text(text, encoding="utf-8")
     assert main(["sample.txt"]) == 1
@@ -138,10 +289,50 @@ def test_planted_credential_is_reported_without_its_value(
         pytest.param("ssh://git@example.net:22/org/repo", id="ssh-user-without-password"),
         pytest.param("-----BEGIN " + "PUBLIC KEY-----\n-----BEGIN CERTIFICATE-----", id="public-material"),
         pytest.param("signature: eyJhbGciOi", id="short-jwt-prefix"),
+        pytest.param("redis" + "://:@cache:6379/0", id="url-without-password"),
+        pytest.param("https://hooks." + "slack.com/services/...", id="webhook-placeholder"),
+        pytest.param("npm_config_cache=/tmp/npm", id="npm-setting"),
+        pytest.param("MIIB+" + "AB" + "SK" + _random("w3", 80, _BASE64), id="bedrock-prefix-inside-base64"),
+        pytest.param("f" + "c-" + _random("w4", 48, _HEX), id="hex-run-longer-than-a-firecrawl-key"),
     ],
 )
 def test_lookalikes_that_have_no_credential_shape_are_not_reported(text: str) -> None:
     assert list(findings(text)) == []
+
+
+# Formats the scanner withholds that the gate leaves out: neither has a prefix or host of its
+# own, so ordinary names and routes match them.
+_NOT_GATED = {
+    "app-[A-Za-z0-9]{24}": "a common word prefix",
+    ".+": "any host, since n8n is self-hosted: every '/webhook/' route matches",
+}
+
+
+def test_every_format_the_scanner_withholds_is_a_planted_family() -> None:
+    # The scanner's backstop withholds these formats from every report, so a committed token
+    # or webhook URL in one of them must fail the gate as well. Each '|' outside a group
+    # separates two token formats: the next parenthesis after it opens a group, if any.
+    texts = [f"{before}{sample}{after}" for _, _, before, sample, after in _PLANTED]
+    formats = [
+        alternative
+        for pattern in (redaction_formats._SPECIFIC_TOKEN, redaction_formats._GENERIC_TOKEN)
+        for alternative in re.split(r"\|(?![^()]*\))", pattern)
+    ]
+    urls = [urlsplit(url) for text in texts for url in re.findall(r"https://\S+", text)]
+    hosts = [(host.pattern, prefix) for host, prefix in redaction_formats._PATH_SECRET_RULES]
+    assert set(_NOT_GATED) <= set(formats) | {host for host, _ in hosts}
+    assert [
+        alternative
+        for alternative in formats
+        if alternative not in _NOT_GATED
+        and not any(re.search(rf"\b(?:{alternative})\b", text, re.ASCII) for text in texts)
+    ] == []
+    assert [
+        host
+        for host, prefix in hosts
+        if host not in _NOT_GATED
+        and not any(re.fullmatch(host, url.hostname or "") and prefix.match(url.path) for url in urls)
+    ] == []
 
 
 def test_exit_codes_and_all_directories_are_checked(
@@ -332,11 +523,16 @@ def test_patterns_stay_linear_on_hostile_input() -> None:
         "ICAg" * 70_000,
         ".ICAg" * 56_000,
         "ICAg" * 50_000 + "ewoi" + "A" * 100_000 + ".",
+        "x://" + ":" * 200_000,
+        "fw_" + "a" * 200_000,
+        "hook." * 40_000,
     ]
     started = time.perf_counter()
     for text in hostile:
         list(findings(text))
-    assert time.perf_counter() - started < 2
+    # Linear scans of every pattern take about a second and a half here; a quadratic one
+    # would take minutes. The bound leaves room for a loaded test runner.
+    assert time.perf_counter() - started < 3
 
 
 def test_reported_file_names_cannot_forge_a_report_line_or_a_workflow_command(tmp_path, capsys):

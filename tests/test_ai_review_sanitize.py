@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from tools.ai_review.sanitize import redact
+from tools.ai_review.sanitize import _PATTERNS, redact
 from tools.check_secrets import PATTERNS, findings
 
 
@@ -131,8 +131,13 @@ def test_every_check_secrets_family_is_redacted() -> None:
         "GitLab token": "glpat-" + "x1-" * 8,
         "Slack token": "xoxb-" + "1234-" + "abcDEF0123-xyz",
         "Google API key": "AIza" + "qQ1-" * 8 + "_x1",
+        "Google OAuth credential": "ya" + "29." + "Ab1_" * 10,
         "Hugging Face token": "hf_" + "zZ9" * 12,
-        "Stripe live key": "sk_live_" + "4eC39HqLyjWDarjtT1zdp7dc",
+        "Stripe key": "sk_live_" + "4eC39HqLyjWDarjtT1zdp7dc",
+        "AI service API key": "gs" + "k_" + "aA1" * 18,
+        "package registry token": "np" + "m_" + "aA1" * 12,
+        "developer platform token": "da" + "pi" + "0a1b" * 8,
+        "webhook URL": "https://hooks." + "slack.com/services/T0/B0/" + "aA1" * 8,
         "JSON Web Token": "eyJ" + "h" * 12 + ".eyJ" + "p" * 12 + "." + "s" * 12,
         "private key": "-----BEGIN " + "PRIVATE KEY-----",
         "Azure account or shared access key": "AccountKey=" + "QWxhZGRpbjEyMzQ1" * 3 + "==",
@@ -148,6 +153,20 @@ def test_every_check_secrets_family_is_redacted() -> None:
         assert sample not in out, f"{family} survived redact()"
         assert "[redacted]" in out
         assert out.startswith("prefix ") and out.endswith(" suffix")
+
+
+def test_every_check_secrets_pattern_but_the_key_header_is_matched_unchanged() -> None:
+    # Only the private key rule differs: the sanitizer withholds the whole block, the file
+    # gate reports its header. Every other format is the gate's own pattern.
+    assert {pattern.pattern for family, pattern in PATTERNS if family != "private key"} <= {
+        pattern.pattern for pattern in _PATTERNS
+    }
+
+
+def test_a_url_password_without_a_user_name_is_redacted() -> None:
+    password = "Hq7Zr2" + "Lm9Xw4"
+    out = redact("REDIS_URL=redis" + "://:" + password + "@cache:6379/0")
+    assert password not in out and out.startswith("REDIS_URL=[redacted]")
 
 
 @pytest.mark.parametrize("token", ["sk-" + "A" * 8171, "glpat-" + "B" * 8200, "hf_" + "C" * 8300])

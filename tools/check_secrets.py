@@ -46,7 +46,8 @@ _WHITESPACE_JWT_HEADER = (
 PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("OpenAI API key", re.compile(r"(?<![\w-])sk-[A-Za-z0-9]{20,}")),
     ("OpenAI project key", re.compile(r"(?<![\w-])sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{32,}")),
-    ("Anthropic API key", re.compile(r"(?<![\w-])sk-ant-(?:api|admin)\d{2}-[A-Za-z0-9_-]{20,}")),
+    # API, Admin API and OAuth access and refresh keys.
+    ("Anthropic API key", re.compile(r"(?<![\w-])sk-ant-(?:api|admin|oat|ort)\d{2}-[A-Za-z0-9_-]{20,}")),
     ("AWS access key ID", re.compile(r"(?<![A-Za-z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Za-z0-9])")),
     (
         "AWS secret access key",
@@ -56,11 +57,81 @@ PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     ("GitHub token", re.compile(r"(?<![\w])gh[pousr]_[A-Za-z0-9]{36,251}" + _END)),
     ("GitHub fine-grained token", re.compile(r"(?<![\w])github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59}" + _END)),
-    ("GitLab token", re.compile(r"(?<![\w-])glpat-[A-Za-z0-9_-]{20,}")),
-    ("Slack token", re.compile(r"(?<![A-Za-z0-9])xox[abeoprs]-\d+-[0-9A-Za-z-]{10,}")),
+    (
+        "GitLab token",
+        # Personal, runner, trigger, deploy, feed, SCIM, CI, mail, OAuth, agent and feature-flag
+        # tokens, and runner registration tokens.
+        re.compile(
+            r"(?<![\w-])(?:gl(?:pat|rt|ptt|dt|ft|soat|cbt|imt|oas|agent|ffct)-[A-Za-z0-9_-]{20,}"
+            r"|GR1348941[A-Za-z0-9_-]{20,})"
+        ),
+    ),
+    ("Slack token", re.compile(r"(?<![A-Za-z0-9])(?:xox[abeoprs]|xapp)-\d+-[0-9A-Za-z-]{10,}")),
     ("Google API key", re.compile(r"(?<![\w-])AIza[0-9A-Za-z_-]{35}(?![\w-])")),
+    (
+        "Google OAuth credential",
+        # OAuth access and refresh tokens and OAuth client secrets.
+        re.compile(
+            r"(?<![\w-])(?:ya29\.[A-Za-z0-9_-]{20,}|1//0[A-Za-z0-9_-]{30,}|GOCSPX-[A-Za-z0-9_-]{20,})" + _END
+        ),
+    ),
     ("Hugging Face token", re.compile(r"(?<![\w])hf_[A-Za-z0-9]{34,}" + _END)),
-    ("Stripe live key", re.compile(r"(?<![\w])[rs]k_live_[0-9A-Za-z]{20,}" + _END)),
+    (
+        "Stripe key",
+        # Live, test-mode and restricted keys, and webhook signing secrets.
+        re.compile(r"(?<![\w])(?:[rs]k_(?:live|test)_[0-9A-Za-z]{20,}|whsec_[A-Za-z0-9]{24,})" + _END),
+    ),
+    # The vendor formats the scanner withholds (shadowscan/utils/redaction_formats.py), with
+    # the same or longer bodies. Each ends at a token boundary, so a longer run than a fixed
+    # length format allows is not read as one.
+    (
+        "AI service API key",
+        re.compile(
+            # OpenRouter, Langfuse, LiteLLM and the scanner's other 'sk-<name>-' keys, then Groq,
+            # Pinecone, E2B, Together and LangSmith.
+            r"(?<![\w-])(?:sk-(?:or-v1|lf|litellm|live)-[A-Za-z0-9_-]{20,}"
+            r"|gsk_[A-Za-z0-9]{40,}|pcsk_[A-Za-z0-9_]{20,}|e2b_[a-f0-9]{40}|tgp_v1_[A-Za-z0-9_-]{30,}"
+            r"|lsv2_(?:pt|sk)_[a-f0-9]{32}_[a-f0-9]{10}"
+            # Tavily, xAI, Perplexity, Cerebras, NVIDIA, Replicate, Firecrawl, ElevenLabs, Fireworks.
+            r"|tvly-(?:dev-|prod-)?[A-Za-z0-9_-]{20,}|xai-[A-Za-z0-9]{60,}|pplx-[A-Za-z0-9]{40,}"
+            r"|csk-[A-Za-z0-9]{30,}|nvapi-[A-Za-z0-9_-]{60,}|r8_[A-Za-z0-9]{30,}|fc-[a-f0-9]{32}"
+            r"|sk_[a-f0-9]{40,}|fw_(?=[A-Za-z]*\d)[A-Za-z0-9]{24,}"
+            # Amazon Bedrock long-term and short-term keys; a long-term key is not a base64 run's tail.
+            r"|(?<![+/])ABSK[A-Za-z0-9+/]{60,}={0,2}|bedrock-api-key-[A-Za-z0-9+/_-]{40,}={0,2})" + _END
+        ),
+    ),
+    (
+        "package registry token",
+        re.compile(r"(?<![\w-])(?:npm_[A-Za-z0-9]{30,}|pypi-AgE[A-Za-z0-9_-]{40,})" + _END),
+    ),
+    (
+        "developer platform token",
+        re.compile(
+            # DigitalOcean, SendGrid, Databricks, Shopify, Atlassian, Linear, Notion and Postman.
+            r"(?<![\w-])(?:do[opr]_v1_[a-f0-9]{64}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|dapi[a-f0-9]{32}"
+            r"|shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}|ATATT3[A-Za-z0-9_=-]{40,}|lin_api_[A-Za-z0-9]{32,}"
+            r"|ntn_[A-Za-z0-9]{40,}|PMAK-[a-f0-9]{24}-[a-f0-9]{34}"
+            # Doppler, Supabase, Grafana, Sentry, Vault and Terraform Cloud.
+            r"|dp\.(?:pt|st|sa|ct|scim|audit)\.[A-Za-z0-9]{40,}|sbp_[a-f0-9]{40}|sb_secret_[A-Za-z0-9_-]{20,}"
+            r"|glsa_[A-Za-z0-9]{32}_[a-f0-9]{8}|glc_[A-Za-z0-9+/]{32,}={0,2}|sntry[su]_[A-Za-z0-9+/=_-]{30,}"
+            r"|hv[sbr]\.[A-Za-z0-9_-]{24,}|[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_-]{60,})" + _END
+        ),
+    ),
+    (
+        "webhook URL",
+        # Endpoints whose path is the credential, with at least 20 path characters after the
+        # fixed prefix: Slack, Discord, Teams, Zapier (hooks and MCP), Make, IFTTT, Telegram.
+        # A Teams host may carry a tenant label before 'webhook.office.com'.
+        re.compile(
+            r"(?<![\w-])(?:hooks\.slack(?:-gov)?\.com/(?:services|workflows|triggers|actions|commands)/"
+            r"|(?:(?:ptb|canary)\.)?discord(?:app)?\.com/api(?:/v\d+)?/webhooks/"
+            r"|webhook\.office\.com/webhook(?:b2)?/|outlook\.office(?:365)?\.com/webhook(?:b2)?/"
+            r"|hooks\.zapier\.com/hooks/|mcp\.zapier\.com/api/mcp/s/|actions\.zapier\.com/mcp/"
+            r"|hook\.(?:[a-z0-9-]+\.)?(?:make|integromat)\.com/"
+            r"|maker\.ifttt\.com/trigger/[A-Za-z0-9_-]+/(?:json/)?with/key/"
+            r"|api\.telegram\.org/(?:file/)?bot)[A-Za-z0-9_@:/-]{20,}"
+        ),
+    ),
     (
         "JSON Web Token",
         re.compile(r"(?<![\w-])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
@@ -81,7 +152,8 @@ PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "password in a URL",
         re.compile(
             r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*://"
-            r"(?P<user>[^\s/:@'\"<>]+):(?P<password>[^\s/@'\"<>]+)@[^\s/'\"<>]"
+            # A password needs no user name ('redis://:<password>@host').
+            r"(?P<user>[^\s/:@'\"<>]*):(?P<password>[^\s/@'\"<>]+)@[^\s/'\"<>]"
         ),
     ),
 )
