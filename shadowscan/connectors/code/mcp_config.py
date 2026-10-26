@@ -4,7 +4,8 @@ Parses MCP server declarations from client configuration documents
 (JSON/JSONC, TOML, YAML and MCP configuration embedded in workflow step
 inputs) into redacted server records. Entries keep structure (name,
 transport, command, args, url) while credential values are sanitized before
-any record leaves this module.
+any record leaves this module. It also names the MCP configuration a client
+reads inside a directory the walk otherwise excludes (``.vs/mcp.json``).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import re
 import sys
 import tomllib
 from collections.abc import Callable
+from collections.abc import Set as AbstractSet
 from typing import Any, NamedTuple
 
 import yaml
@@ -56,6 +58,27 @@ def _mcp_client_for(rel: str) -> str:
     if "smithery" in r or r.endswith("server.json"):
         return "MCP server manifest"
     return "generic"
+
+
+# MCP configuration a client reads inside a directory the code walk excludes by
+# default: Visual Studio loads `<solution>/.vs/mcp.json`, and the rest of `.vs`
+# is IDE state. Unless `exclude` names the directory too, the walk enters it for
+# these files alone (``beside_entered_mcp_config``).
+DEFAULT_EXCLUDED_MCP_CONFIGS: dict[str, frozenset[str]] = {".vs": frozenset({"mcp.json"})}
+
+
+def beside_entered_mcp_config(rel: str, exclude_names: AbstractSet[str]) -> bool:
+    """Whether ``rel`` sits in a directory the walk enters only for its MCP configuration, and is not it.
+
+    ``exclude_names`` are the directory names the walk prunes: a directory of
+    ``DEFAULT_EXCLUDED_MCP_CONFIGS`` absent from them is entered for that
+    configuration. The file name matches in any letter case, as on the
+    case-insensitive filesystems Visual Studio runs on.
+    """
+    parent, _, name = rel.rpartition("/")
+    holder = parent.rpartition("/")[2]
+    kept = DEFAULT_EXCLUDED_MCP_CONFIGS.get(holder)
+    return kept is not None and holder not in exclude_names and name.lower() not in kept
 
 
 _SECRETISH = re.compile(r"(?i)(key|token|secret|password|passwd|credential|auth)")
