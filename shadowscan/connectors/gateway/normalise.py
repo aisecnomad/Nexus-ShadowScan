@@ -23,6 +23,7 @@ from datetime import datetime
 from typing import Any
 
 from shadowscan.connectors.base import ConnectorError
+from shadowscan.connectors.offline import offline_pagination_issue
 from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.text import get_path, host_of, parse_timestamp
 
@@ -1099,3 +1100,24 @@ def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
             raise ConnectorError("gateway.logs: normalized method must be a string")
         event.method = method.upper() if method else None
     return event
+
+
+# Export envelopes that gateway.logs expands itself.
+_ENVELOPE_CONTEXT_KEYS = ("timestamp", "receiveTimestamp", "resource", "labels", "project_id", "logName")
+
+
+def envelope_context(rec: dict[str, Any]) -> dict[str, Any]:
+    """Keep source timestamps and scope when an export wraps an event."""
+    return {key: rec[key] for key in _ENVELOPE_CONTEXT_KEYS if key in rec}
+
+
+def expands_nested_collection(data: dict[str, Any]) -> bool:
+    """Whether gateway.logs expands ``data``, a collection inside a record array, itself.
+
+    A CloudWatch subscription batch gives each log event the batch context, and a
+    usage bucket's results need a valid interval and a request count; both fail
+    closed when malformed. Neither paginates, so a record carrying a continuation
+    stays with the shared record-array check.
+    """
+    shaped = "logEvents" in data or ("results" in data and "start_time" in data and "end_time" in data)
+    return shaped and offline_pagination_issue(data) is None

@@ -36,6 +36,17 @@ through a narrow collection-handling hook; their existing reader still checks
 shape, continuation metadata and object limits. Generic exports cannot opt in.
 List classification is consistent across document, array and JSONL inputs;
 conflicting collection fields remain invalid regardless of resource-like labels.
+`gateway.logs` opts in for the two nested collections it expands itself, which
+the record-array check otherwise dropped: a JSON array of CloudWatch
+subscription batches (Bedrock invocation logs scanned complete with a finding
+on `main` and as `unparsed-input` with none) and an array of OpenAI usage
+buckets without `"object": "bucket"` (the same). The full suite did not
+exercise either shape; new tests do, for an array and an envelope, and fail
+with the opt-in removed. The opt-in declines a batch or bucket that carries a
+continuation, which `main` ignored, so it is now `unscanned-input`. The
+predicate and the envelope-context helper move into `gateway/normalise.py`, so
+`gateway/logs.py` shrinks (2,112 to 2,102 lines) and the complexity baseline
+is lowered rather than raised.
 
 CI test annotations now sanitize node IDs, file attributes and exception types
 as well as failure messages at the output boundary. Sanitization precedes title

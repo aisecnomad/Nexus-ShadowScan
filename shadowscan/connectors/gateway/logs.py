@@ -71,6 +71,8 @@ from shadowscan.connectors.gateway.normalise import (  # noqa: F401
     _i,
     _normalise,
     detect_schema,
+    envelope_context,
+    expands_nested_collection,
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import Match, MatchTimeoutError, SignatureIndex
@@ -1222,21 +1224,9 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             self.ctx.warn(f"gateway.logs: unrecognized text record at {location}")
         return rec
 
-    @staticmethod
-    def _envelope_context(rec: dict[str, Any]) -> dict[str, Any]:
-        """Keep source timestamps and scope when an export wraps an event."""
-        return {
-            key: rec[key]
-            for key in (
-                "timestamp",
-                "receiveTimestamp",
-                "resource",
-                "labels",
-                "project_id",
-                "logName",
-            )
-            if key in rec
-        }
+    # Export envelopes this connector expands itself, defined with the schemas.
+    _envelope_context = staticmethod(envelope_context)
+    _handles_nested_offline_collection = staticmethod(expands_nested_collection)
 
     def _expand_usage_bucket(self, rec: dict[str, Any]) -> Iterator[dict[str, Any]]:
         """Usage results are aggregate intervals, not individual transactions."""

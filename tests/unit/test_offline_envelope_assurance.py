@@ -87,14 +87,16 @@ def test_collection_data_and_nested_error_page_are_not_native_records() -> None:
 _APP = {"_kind": "approved_app", "app": {"id": "A1", "name": "Claude"}, "scopes": []}
 
 
-def _cli_scan(tmp_path, connector: str, body: object):
+def _cli_scan(tmp_path, connector: str, body: object, settings: tuple[str, ...] = ()):
     source = tmp_path / "export.json"
     report = tmp_path / "report.json"
     source.write_text(json.dumps(body), encoding="utf-8")
+    if connector == "saas.slack":
+        settings = ("team_id=T1", *settings)
     outcome = CliRunner().invoke(
         main,
         ["run", connector, "--input", str(source), "--format", "json", "-o", str(report), "--fail-on", "high"]
-        + (["--set", "team_id=T1"] if connector == "saas.slack" else []),
+        + [argument for setting in settings for argument in ("--set", setting)],
     )
     return outcome, json.loads(report.read_text(encoding="utf-8"))
 
@@ -278,3 +280,68 @@ def test_native_record_in_array_keeps_nested_collection_fields():
 
     assert list(BaseConnector._unwrap([native], errors.append)) == [native]
     assert errors == []
+
+
+# gateway.logs expands two nested collections itself, so an array of them stays
+# complete; the record-array check must not drop them as misplaced pages.
+def _cloudwatch_batch(number: int) -> dict[str, object]:
+    invocation = {
+        "schemaType": "ModelInvocationLog",
+        "timestamp": "2026-10-26T12:00:00Z",
+        "accountId": "111122223333",
+        "region": "us-east-1",
+        "requestId": f"synthetic-request-{number}",
+        "operation": "Converse",
+        "modelId": "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        "identity": {"arn": "arn:aws:sts::111122223333:assumed-role/agent-runner/session"},
+    }
+    return {
+        "messageType": "DATA_MESSAGE",
+        "owner": "111122223333",
+        "logGroup": "/aws/bedrock/modelinvocations",
+        "logStream": f"stream-{number}",
+        "subscriptionFilters": ["synthetic"],
+        "logEvents": [{"id": str(number), "timestamp": 1761480000000, "message": json.dumps(invocation)}],
+    }
+
+
+def _usage_bucket(start: int) -> dict[str, object]:
+    result = {
+        "object": "organization.usage.completions.result",
+        "input_tokens": 1200,
+        "output_tokens": 300,
+        "num_model_requests": 4,
+        "project_id": "proj_synthetic",
+        "api_key_id": "key_synthetic",
+        "model": "gpt-4o-2024-08-06",
+    }
+    return {"start_time": start, "end_time": start + 86400, "results": [result]}
+
+
+@pytest.mark.parametrize("container", ["array", "envelope"])
+@pytest.mark.parametrize(
+    "records,settings",
+    [
+        ([_cloudwatch_batch(1), _cloudwatch_batch(2)], ("format=bedrock",)),
+        ([_usage_bucket(1761436800), _usage_bucket(1761523200)], ("format=openai-usage",)),
+    ],
+    ids=["cloudwatch-batches", "usage-buckets"],
+)
+def test_gateway_nested_collections_in_a_record_array_stay_complete(tmp_path, records, settings, container):
+    body = records if container == "array" else {"data": records}
+    outcome, report = _cli_scan(tmp_path, "gateway.logs", body, settings)
+
+    assert outcome.exit_code != 3, outcome.output
+    assert report["summary"]["complete"] is True
+    assert report["stats"][0]["incomplete_reasons"] == {}
+    assert report["findings"]
+
+
+def test_gateway_nested_batch_with_a_continuation_is_still_incomplete(tmp_path):
+    batch = {**_cloudwatch_batch(1), "nextToken": "synthetic-uncollected-page"}
+    outcome, report = _cli_scan(tmp_path, "gateway.logs", [batch], ("format=bedrock",))
+
+    assert outcome.exit_code == 3, outcome.output
+    assert report["summary"]["complete"] is False
+    assert report["stats"][0]["incomplete_reasons"] == {"unscanned-input": 1}
+    assert "synthetic-uncollected-page" not in json.dumps(report)

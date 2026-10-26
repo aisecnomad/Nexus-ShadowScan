@@ -11,7 +11,9 @@ explain operator migrations. Earlier per-change entries are preserved in the
 - Refresh the build and development dependency locks with the reviewed dependency
   updates, including the fixed setuptools release, and update pinned CI Actions.
   Offline record arrays reject misplaced collection envelopes as incomplete;
-  valid neighboring records remain available.
+  valid neighboring records remain available. Kubernetes and OpenShift List
+  records and `gateway.logs` CloudWatch batches and usage buckets, which those
+  connectors expand themselves, are kept.
 
 - Redact every text field in CI test-failure annotations before truncation and
   workflow-command escaping, including parameterized test names and filenames.
