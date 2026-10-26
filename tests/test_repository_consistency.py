@@ -618,6 +618,32 @@ def test_every_documentation_page_is_reachable_from_the_site_navigation() -> Non
     assert not listed - pages, f"mkdocs nav entries without a page: {sorted(listed - pages)}"
 
 
+def test_docs_site_loads_no_script_or_font_from_another_origin() -> None:
+    """The site runs only what the hash-locked toolchain ships.
+
+    Material loads Roboto from Google Fonts unless ``theme.font`` is false, and for a block the
+    ``mermaid`` custom fence renders it loads mermaid.js from unpkg at a floating major version
+    with no integrity check.
+    """
+    config = yaml.load(_read(ROOT / "mkdocs.yml"), Loader=_MkDocsLoader)  # a SafeLoader subclass
+    assert config["theme"].get("font") is False, (
+        "set theme.font: false; Material loads Google Fonts otherwise"
+    )
+    fences = [
+        fence
+        for extension in config["markdown_extensions"]
+        if isinstance(extension, dict)
+        for fence in (extension.get("pymdownx.superfences") or {}).get("custom_fences", [])
+    ]
+    assert all(fence.get("class") != "mermaid" for fence in fences), (
+        "a mermaid fence loads mermaid.js from unpkg"
+    )
+    for key in ("extra_javascript", "extra_css"):
+        for entry in config.get(key, []):
+            path = entry if isinstance(entry, str) else entry["path"]
+            assert "//" not in path, f"{key} loads {path} from another origin"
+
+
 # --- Community profile ---------------------------------------------------------
 
 

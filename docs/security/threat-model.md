@@ -127,7 +127,9 @@ by full commit SHA with `persist-credentials: false` on checkouts that do not
 push; the container is digest-pinned, installs under hash-locked requirements,
 strips SUID/SGID bits and runs as a non-root user. Releases carry build
 provenance and a CycloneDX SBOM attestation. See
-[publishing](../operations/publishing.md).
+[publishing](../operations/publishing.md). The documentation site loads no
+script or font from another origin, so diagrams such as the one above render on
+GitHub and appear as their source on the site.
 
 ## Residual risks
 
