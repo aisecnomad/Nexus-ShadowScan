@@ -114,6 +114,14 @@ _PATH_SECRET_RULES: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
     # n8n (commonly self-hosted, so any host): /webhook/<id> and /webhook-test/<id>.
     (re.compile(r".+"), re.compile(r"(?:/[^/]+)*?/webhook(?:-test|-waiting)?/")),
 )
+# Query fields that a host's API defines to carry credentials under a name that
+# names none. Smithery's hosted MCP servers take the server's own configuration,
+# its API keys and tokens included, as base64 (or percent-encoded) JSON in
+# ``config``, beside the Smithery ``api_key``; the encoding hides the token's
+# format and the names inside it from every other rule.
+_QUERY_SECRET_RULES: tuple[tuple[re.Pattern[str], frozenset[str]], ...] = (
+    (re.compile(r"(?:[a-z0-9-]+\.)*smithery\.ai"), frozenset({"config"})),
+)
 # A JWT starts at an 'eyJ' that follows the boundary rule above and has at least three
 # dotted segments. Each attempt starts at a run of base64url characters and reads the
 # characters before the first such 'eyJ' as 'lead', which is kept: an attempt from every
@@ -634,8 +642,9 @@ def _sanitize_url(match: re.Match[str]) -> str:
     authority, tail = rest[:authority_end], rest[authority_end:]
     if "@" in authority:
         authority = REDACTED + "@" + authority.rsplit("@", 1)[1]
+    host = _url_host(authority)
     path_end = min((pos for c in "?#" if (pos := tail.find(c)) >= 0), default=len(tail))
-    tail = _redact_path_secret(_url_host(authority), tail[:path_end]) + tail[path_end:]
+    tail = _redact_path_secret(host, tail[:path_end]) + tail[path_end:]
     url = scheme + "://" + authority + tail
 
     # Consume each field once. A regex that retries an unbounded key after every
@@ -648,10 +657,10 @@ def _sanitize_url(match: re.Match[str]) -> str:
     parts = [url[: start + 1]]
     cursor = start + 1
     for separator in _QUERY_SEPARATOR.finditer(url, cursor):
-        parts.append(_query_value(url[cursor : separator.start()]))
+        parts.append(_query_value(url[cursor : separator.start()], host=host))
         parts.append(separator.group(0))
         cursor = separator.end()
-    parts.append(_query_value(url[cursor:]))
+    parts.append(_query_value(url[cursor:], host=host))
     return "".join(parts)
 
 
@@ -683,12 +692,14 @@ def _redact_nested_urls(text: str) -> str:
     return _URL.sub(nested, text) if "://" in text else text
 
 
-def _query_value(field: str, *, bare: bool = False) -> str:
+def _query_value(field: str, *, bare: bool = False, host: str = "") -> str:
     """Withhold a credential-named query field; bare query text uses explicit names.
 
     Generic key/code parameters need a full URL context. Signature and
     credential-specific names also identify a secret in a relative URL or
     copied query string, without guessing whether arbitrary prose is a URL.
+    A URL's ``host`` also withholds the fields its API defines to carry
+    credentials (``_QUERY_SECRET_RULES``).
     """
     key, equals, value = field.partition("=")
     if not equals:
@@ -705,7 +716,11 @@ def _query_value(field: str, *, bare: bool = False) -> str:
         "pat",
     }
     if not bare:
-        sensitive = sensitive or decoded in {"key", "code"}
+        sensitive = (
+            sensitive
+            or decoded in {"key", "code"}
+            or any(decoded in names and rule.fullmatch(host) for rule, names in _QUERY_SECRET_RULES)
+        )
     return key + equals + (REDACTED if sensitive else value)
 
 

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 
@@ -369,6 +371,34 @@ def test_zapier_mcp_urls_withhold_their_path_credential(url: str, kept: str) -> 
     out = sanitize_text(f"url: {url}")
     assert SECRET not in out and kept + REDACTED in out
     assert sanitize({"servers": [{"url": url}]})["servers"][0]["url"] == kept + REDACTED
+
+
+def _smithery_config(encoding: str) -> str:
+    """A Smithery ``config`` value holding a server's own credentials, encoded as clients write it."""
+    document = json.dumps({"githubPersonalAccessToken": "ghp_" + SECRET, "braveApiKey": SECRET}).encode()
+    if encoding == "base64":
+        return quote(base64.b64encode(document).decode(), safe="")
+    if encoding == "base64url":
+        return base64.urlsafe_b64encode(document).decode().rstrip("=")
+    return quote(document.decode(), safe="")
+
+
+@pytest.mark.parametrize("encoding", ["base64", "base64url", "percent"])
+def test_smithery_mcp_urls_withhold_their_config_field(encoding: str) -> None:
+    # The encoding hides the token format and the credential names inside it.
+    base = "https://server.smithery.ai/@acme/github/mcp"
+    url = f"{base}?config={_smithery_config(encoding)}&api_key={SECRET}"
+    expected = f"{base}?config={REDACTED}&api_key={REDACTED}"
+    assert sanitize_text(f"url: {url}") == f"url: {expected}"
+    assert sanitize({"servers": [{"url": url}]})["servers"][0]["url"] == expected
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["https://mcp.example/mcp?config=default", "https://server.smithery.ai.example/mcp?config=default"],
+)
+def test_config_fields_elsewhere_keep_their_values(url: str) -> None:
+    assert sanitize_text(url) == url
 
 
 @pytest.mark.parametrize(

@@ -1077,7 +1077,10 @@ repeats such a reference; both stay redacted. A GitHub Actions workflow is not
 itself an MCP document: servers passed as a JSON object in a step input (for
 example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
 reported from that workflow, and an embedded object that cannot be parsed
-makes the scan incomplete.
+makes the scan incomplete. A Smithery server URL's `config` query field holds
+the server's own configuration, its keys and tokens included, as base64 or
+percent-encoded JSON: it is withheld like the URL's `api_key`, and the server
+is listed with `secret_locations: ["url"]`.
 
 A server URL gets `mcp-insecure-transport` when it is `http://` or `ws://` to
 a host not known to be loopback, read as WHATWG URL parsers (Node and browser
