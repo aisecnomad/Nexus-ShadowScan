@@ -2235,6 +2235,34 @@ def test_kubernetes_nested_collection_exceptions_still_reject_invalid_shapes(
 
 @pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
 @pytest.mark.parametrize("layout", ["single", "array", "jsonl"])
+@pytest.mark.parametrize("kind", [None, "List", "PodList"])
+@pytest.mark.parametrize("label", [{"type": "app"}, {"_kind": "app"}, {"arn": "synthetic-resource"}])
+@pytest.mark.parametrize("ambiguous", [False, True], ids=["one-collection", "two-collections"])
+def test_kubernetes_list_labels_cannot_hide_ambiguous_collection_keys(
+    tmp_path, connector_type, layout, kind, label, ambiguous
+):
+    envelope = json.loads((FIXTURES / "kubernetes/chunked_list.json").read_text())
+    envelope["metadata"] = {"resourceVersion": "1"}
+    envelope.update(label)
+    if kind is None:
+        envelope.pop("kind")
+    else:
+        envelope["kind"] = kind
+    if ambiguous:
+        envelope["records"] = envelope["items"]
+        envelope["items"] = []
+    source = _write_kubernetes_layout(tmp_path, layout, envelope)
+
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+
+    assert ctx.stats is not None and ctx.stats.incomplete is ambiguous
+    assert [finding.resource for finding in findings] == (
+        [] if ambiguous else ["k8s:synthetic/ai/Pod/local-model"]
+    )
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+@pytest.mark.parametrize("layout", ["single", "array", "jsonl"])
 @pytest.mark.parametrize(
     "metadata,complete",
     [({"resourceVersion": "42"}, True), ({"resourceVersion": "42", "continue": "next-chunk"}, False)],

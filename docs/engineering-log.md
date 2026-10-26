@@ -34,6 +34,8 @@ affected exports, not the detection signatures or confidence policy.
 Kubernetes and OpenShift keep their provider-supported List records in arrays
 through a narrow collection-handling hook; their existing reader still checks
 shape, continuation metadata and object limits. Generic exports cannot opt in.
+List classification is consistent across document, array and JSONL inputs;
+conflicting collection fields remain invalid regardless of resource-like labels.
 
 CI test annotations now sanitize node IDs, file attributes and exception types
 as well as failure messages at the output boundary. Sanitization precedes title

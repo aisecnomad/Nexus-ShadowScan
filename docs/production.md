@@ -52,6 +52,8 @@ pagination metadata or an otherwise misplaced envelope is `unparsed-input`.
 Native records with supported nested collection fields retain those fields.
 Kubernetes and OpenShift also retain their supported List records inside arrays;
 their provider-specific reader validates shape, continuation and object limits.
+Conflicting collections in a List are rejected for document, array and JSONL
+inputs, including Lists carrying additional resource labels.
 Rescan affected exports before using an earlier complete report for assurance.
 
 CI failure annotations now redact test names, filenames, exception types and

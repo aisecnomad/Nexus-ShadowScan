@@ -403,6 +403,13 @@ class KubernetesConnector(BaseConnector):
         )
 
     @classmethod
+    def _is_native_offline_record(cls, data: dict[str, Any]) -> bool:
+        # A supported Kubernetes collection remains an envelope even when it
+        # carries resource-like labels. Both top-level and nested readers must
+        # validate all of its collection keys before handing items to analysis.
+        return not cls._handles_nested_offline_collection(data) and super()._is_native_offline_record(data)
+
+    @classmethod
     def _unwrap(cls, data: Any, on_error: Callable[[str], None] | None = None) -> Iterator[dict[str, Any]]:
         # The shared loader unwraps a top-level List, so its kind must reach the items first.
         return super()._unwrap(_with_list_item_kinds(data), on_error)
