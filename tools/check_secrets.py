@@ -7,7 +7,9 @@ Exits 1 when a file contains a string shaped like a known credential, or when
 a named file cannot be read, and 2 when no file is named: a pipeline whose file
 listing failed must not pass without checking anything. Each report names the file, line and credential
 family, the first four characters and the length of the match, never the
-value itself. Every supplied file is checked, including tests and corpora.
+value itself. Every supplied file is checked, including tests and corpora. A
+file that opens with a UTF-16 or UTF-32 byte-order mark is read in that
+encoding, as the scanner reads it, and any other file as UTF-8.
 Reviewed synthetic values and documentation placeholders are approved only
 by exact repository path, credential family and SHA-256 in secret_allowlist.json.
 Private-key markers also bind the whole file, since a header alone cannot
@@ -160,6 +162,16 @@ PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
+# Marks of the UTF-16 and UTF-32 text the scanner decodes (shadowscan/utils/text.py),
+# longest first: the UTF-32LE mark begins with the UTF-16LE one. Read as UTF-8,
+# such a file's characters are split by NUL bytes and no pattern matches; Windows
+# PowerShell 5.1 writes redirected output that way.
+_BOM_CODECS: tuple[tuple[bytes, str], ...] = (
+    (b"\xff\xfe\x00\x00", "utf-32"),
+    (b"\x00\x00\xfe\xff", "utf-32"),
+    (b"\xff\xfe", "utf-16"),
+    (b"\xfe\xff", "utf-16"),
+)
 
 
 @dataclass(frozen=True)
@@ -177,6 +189,12 @@ class Approval:
 
 def digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _decode(contents: bytes) -> str:
+    """File contents as text, in the encoding a byte-order mark names (``_BOM_CODECS``) or UTF-8."""
+    codec = next((codec for bom, codec in _BOM_CODECS if contents.startswith(bom)), "utf-8")
+    return contents.decode(codec, errors="ignore")
 
 
 def _repository_path(path: str) -> str | None:
@@ -243,7 +261,7 @@ def _load_approvals() -> dict[tuple[str, str, str], str | None]:
             if source.is_symlink() or not source.is_file():
                 raise ValueError(f"{label}: approved fixture is missing or is not a regular file")
             contents = source.read_bytes()
-            text = contents.decode("utf-8", errors="ignore")
+            text = _decode(contents)
             source_digests[approval.path] = hashlib.sha256(contents).hexdigest()
             source_matches[approval.path] = {(family, digest(value)) for _, family, value in findings(text)}
         if (approval.family, approval.sha256) not in source_matches[approval.path]:
@@ -288,7 +306,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             continue
         try:
             contents = Path(path).read_bytes()
-            text = contents.decode("utf-8", errors="ignore")
+            text = _decode(contents)
         except OSError as exc:
             print(f"{display(path)}: cannot read: {exc.strerror}", file=sys.stderr)
             failed = True

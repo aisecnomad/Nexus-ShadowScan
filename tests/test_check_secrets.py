@@ -433,6 +433,34 @@ def test_exact_synthetic_approval_does_not_exempt_new_values_or_another_file(
     assert "possible hardcoded GitHub token" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    "mark,codec",
+    [
+        pytest.param(b"\xff\xfe", "utf-16-le", id="utf-16-le"),
+        pytest.param(b"\xfe\xff", "utf-16-be", id="utf-16-be"),
+        pytest.param(b"\xff\xfe\x00\x00", "utf-32-le", id="utf-32-le"),
+        pytest.param(b"\x00\x00\xfe\xff", "utf-32-be", id="utf-32-be"),
+    ],
+)
+def test_file_with_a_utf16_or_utf32_byte_order_mark_is_checked_in_that_encoding(
+    tmp_path, monkeypatch, capsys, mark, codec
+):
+    # Windows PowerShell 5.1 redirects output to UTF-16LE with a mark, and the scanner
+    # decodes such a file; read as UTF-8, NUL bytes split every credential in it.
+    synthetic = "gh" + "p_" + _random("bom-approved", 36)
+    _approve(tmp_path, monkeypatch, "tests/fixture.env", synthetic)
+    fixture = tmp_path / "tests/fixture.env"
+    fixture.write_bytes(mark + synthetic.encode(codec))
+    # The approval reads the fixture as the check does, so it is neither stale nor bypassed.
+    assert main(["tests/fixture.env"]) == 0
+    unexpected = "gh" + "p_" + _random("bom-unexpected", 36)
+    fixture.write_bytes(mark + f"{synthetic}\r\nGITHUB_TOKEN={unexpected}\r\n".encode(codec))
+    assert main(["tests/fixture.env"]) == 1
+    assert capsys.readouterr().out == (
+        f"tests/fixture.env:2: possible hardcoded GitHub token: {unexpected[:4]}... (40 characters)\n"
+    )
+
+
 def test_stale_approvals_fail_even_during_a_partial_hook_run(tmp_path, monkeypatch, capsys):
     _approve(tmp_path, monkeypatch, "tests/fixture.txt", "gh" + "p_" + _random("stale", 36))
     (tmp_path / "tests/fixture.txt").write_text("removed fixture", encoding="utf-8")
