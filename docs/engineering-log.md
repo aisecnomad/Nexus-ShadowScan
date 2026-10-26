@@ -13,6 +13,66 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Dependabot #323-#325 carried; setuptools advisory and base image refresh (October 26)
+
+The scheduled CI run of October 26 on `d2ac5048` failed in two places with no
+change on `main`, so every open pull request's `CI gate` was red:
+
+- **`pip-audit`, every test leg.** GHSA-xmj3-9gf7-h52w (fixed in setuptools
+  84.1.0) was published after `main`'s last audit and covers setuptools 84.0.0,
+  which `requirements-build.lock` and `requirements-ci.lock` pin. The advisory
+  is a path traversal in setuptools' legacy wheel-to-egg installation on
+  Windows (`namespace_packages.txt` from a wheel can place an `__init__.py`
+  outside the egg directory). ShadowScan builds on Linux and never takes that
+  path, but the strict audit gate is right to refuse it, so no ignore is added.
+- **`container-security`.** Trivy reported `wolfi:libbrotlicommon1`,
+  `libbrotlidec1` and `libbrotlienc1` 1.2.0-r6, fixed in 1.2.0-r7. The apk
+  database of the pinned index `sha256:81211e15…` (amd64 manifest
+  `sha256:76811b69…`, created 2026-10-20) lists exactly 1.2.0-r6.
+
+Dependabot raised the reviewed inputs but, as before, cannot refresh the hash
+locks, so #323 (ruff) and #324 (eight pins, setuptools among them) fail CI on
+their own, and #325 (actions) is red only through `main`'s audit failure. This
+change carries all three and supersedes them:
+
+- `pyproject.toml`: the `[build-system]` pin moves to setuptools 84.2.1 (the
+  release #324 proposes; 84.1.0 is the first fixed one) and the `[dev]` floor
+  to `>=84.2.1`, so an unlocked development install cannot resolve the
+  advisory's range either.
+- `requirements-build.lock`: setuptools 84.2.1 with both artifact hashes from
+  the PyPI JSON API (`ca140b45…` wheel, `3ff8b3b5…` sdist), neither yanked.
+- `requirements-ci-constraints.txt`: #323 and #324 as proposed (coverage
+  7.17.0, filelock 4.2.4, hypothesis 6.170.8, pip 26.2.2, platformdirs 4.13.5,
+  python-discovery 1.6.4, ruff 0.17.2, virtualenv 21.14.13).
+- `requirements-ci.lock`: regenerated with uv 0.11.32 and the command in
+  `docs/production.md`. The diff is those nine versions and their hashes and
+  nothing else; no package is added or removed.
+- `requirements-docs.lock`: platformdirs follows the CI pin to 4.13.5 so the
+  combined `make install` set stays resolvable.
+- `.pre-commit-config.yaml`: the ruff hook moves to `f368fb36…`, which
+  `git ls-remote` resolves for ruff-pre-commit `v0.17.2`.
+- Workflows and `examples/`: the 25 pins of #325. `git ls-remote` resolves
+  setup-python `v7.1.0` to `6d4fd22b…` and the annotated tags codeql-action
+  `v4.39.1` and gh-action-pypi-publish `v1.14.3` to `9b325408…` and
+  `7245906f…`, the commits pinned.
+- `Dockerfile`: both `FROM` lines move to the `chainguard/wolfi-base:latest`
+  index `sha256:360896efb0753a5701c48f860e17130c205eae5a264797aa3e7ea126ee2923a7`
+  (created 2026-10-23), served identically by Docker Hub and `mirror.gcr.io`.
+  Its amd64 manifest (`sha256:8e250f5e…`) lists libbrotli 1.2.1-r1, glibc 2.44-r9
+  and wolfi-keys 1-r14, read from the registry layers, each verified against its
+  digest, without running the image. No Trivy ignore, severity or exit-code
+  change; the python-3.12 3.12.15-r0 pins stay, as their comment requires.
+
+Verification: all four development locks install together under
+`--require-hashes --only-binary=:all:` on CPython 3.12 and `pip check` is clean;
+`pip-audit --require-hashes --strict` reports no known vulnerabilities in any of
+the five locks, nor in the installed environment; `make policy` passes;
+`mkdocs build --strict` passes on the updated docs lock; and `python -m build
+--no-isolation` with the new backend writes a wheel that installs against the
+runtime lock alone and passes both validators outside the checkout. The image
+was not built here (the session cannot reach the Wolfi package repository):
+this change's own `container-security` job is the check that matters.
+
 ### Precision follow-ups to the #320 head review (October 23)
 
 The five findings of the adversarial review of #320's head `8c106d0b`, all

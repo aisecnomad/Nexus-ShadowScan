@@ -42,7 +42,7 @@
 # Anonymous Docker Hub pulls are rate limited. CI pulls this digest through the
 # mirror.gcr.io pull-through cache; a digest pull is content-verified, so any
 # builder can do the same (docs/production.md).
-FROM chainguard/wolfi-base:latest@sha256:81211e15a86ea1d5357f284482af45730c51de45eaf10ad9ce205d6bfc2df323 AS build
+FROM chainguard/wolfi-base:latest@sha256:360896efb0753a5701c48f860e17130c205eae5a264797aa3e7ea126ee2923a7 AS build
 
 # apk packages are deliberately not version-pinned: Wolfi is a rolling
 # distribution, and a pinned package stops receiving security fixes. The base
@@ -84,7 +84,7 @@ RUN python3.12 -m venv --without-pip /opt/venv \
         /opt/wheel/nexusshadowscan-*.whl \
     && python3.12 -m pip --python /opt/venv/bin/python check
 
-FROM chainguard/wolfi-base:latest@sha256:81211e15a86ea1d5357f284482af45730c51de45eaf10ad9ce205d6bfc2df323
+FROM chainguard/wolfi-base:latest@sha256:360896efb0753a5701c48f860e17130c205eae5a264797aa3e7ea126ee2923a7
 
 LABEL org.opencontainers.image.source="https://github.com/aisecnomad/Nexus-ShadowScan" \
       org.opencontainers.image.description="ShadowScan disposable scan worker" \
