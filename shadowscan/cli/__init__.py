@@ -686,7 +686,11 @@ def _with_placement_hint(error: click.UsageError) -> click.UsageError:
 
 
 class _MainGroup(click.Group):
-    """Root group: usage errors of every command, raised while parsing or running, exit 1."""
+    """Root group: usage errors of every command, raised while parsing or running, exit 1.
+
+    Other command errors leave with terminal controls rendered visibly: a message can
+    name an inventory card or report file whose name came from a scanned tree.
+    """
 
     def make_context(
         self,
@@ -706,6 +710,10 @@ class _MainGroup(click.Group):
             return super().invoke(ctx)
         except click.UsageError as exc:
             raise _UsageError(_with_placement_hint(exc)) from None
+        except click.ClickException as exc:
+            # Click quotes the values in its own usage errors, not in these messages,
+            # and every ClickException that is not a usage error exits 1.
+            raise click.ClickException(terminal_text(exc.format_message())) from None
 
 
 @click.group(cls=_MainGroup, context_settings={"help_option_names": ["-h", "--help"]})
