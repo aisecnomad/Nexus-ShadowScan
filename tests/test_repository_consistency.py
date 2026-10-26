@@ -2766,6 +2766,62 @@ def test_documented_pip_downloads_fetch_wheels_only() -> None:
     assert not problems, "pip download would build a fetched sdist:\n" + "\n".join(problems)
 
 
+def _leaf_commands(command: Any, path: tuple[str, ...] = ()) -> Iterator[tuple[tuple[str, ...], Any]]:
+    """Yield ``(path, command)`` for every visible command below ``command`` that is not a group."""
+    import click
+
+    if not isinstance(command, click.Group):
+        yield path, command
+        return
+    for name, subcommand in sorted(command.commands.items()):
+        if not subcommand.hidden:
+            yield from _leaf_commands(subcommand, (*path, name))
+
+
+def test_command_reference_documents_every_command_and_option() -> None:
+    """The command reference names every shipped command and option, as it claims to.
+
+    The compatibility contract says the command reference defines the supported
+    commands, so a command or option it leaves out (``triage`` and the ``code
+    --quick`` mode the shipped pre-commit hook runs were) sits outside that contract
+    unnoticed. Each command needs a ``### `shadowscan ...` `` section (a group's own
+    section covers its subcommands), and each option is named in that section or
+    under Shared options. The product guide's command table names every top-level
+    command too.
+    """
+    import click
+
+    from shadowscan.cli import main
+
+    reference = _read(ROOT / "docs" / "reference" / "cli.md")
+    sections = {
+        " ".join(itertools.takewhile(re.compile(r"[a-z][a-z-]*").fullmatch, heading.split())): body
+        for heading, body in re.findall(r"^### `shadowscan ([^`]+)`\n(.*?)(?=^##)", reference, re.M | re.S)
+    }
+    shared = _readme_section(reference, "## Shared options")
+    problems = []
+    for path, command in _leaf_commands(main):
+        name = " ".join(path)
+        owner = next((key for n in range(len(path), 0, -1) if (key := " ".join(path[:n])) in sections), None)
+        if owner is None:
+            problems.append(f"shadowscan {name}: no section")
+            continue
+        for option in command.params:
+            if not isinstance(option, click.Option) or option.hidden:
+                continue
+            spellings = option.opts + option.secondary_opts
+            if not any(
+                re.search(rf"(?<![\w-]){re.escape(spelling)}(?![\w-])", sections[owner] + shared)
+                for spelling in spellings
+            ):
+                problems.append(f"shadowscan {name}: {'/'.join(spellings)}")
+    assert not problems, "docs/reference/cli.md omits:\n" + "\n".join(problems)
+    guide = _readme_section(_read(ROOT / "docs" / "reference" / "product-guide.md"), "## Command reference")
+    listed = set(re.findall(r"^\| `shadowscan ([a-z][a-z-]*)", guide, re.M))
+    visible = {name for name, command in main.commands.items() if not command.hidden}
+    assert visible <= listed, f"the product guide's command table omits {sorted(visible - listed)}"
+
+
 # `python -m MODULE`, also through a path, a versioned interpreter or interpreter
 # options: flags (`-I`, `-OO`, `-Xdev`) and `-W`/`-X` with a separate argument
 # (`-X dev`). A name a table elides (`python -m vllm.entrypoints…`) is checked

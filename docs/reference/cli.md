@@ -18,6 +18,8 @@ MCP configurations, coding-agent settings, IaC provisioning, and hard-coded cred
 shadowscan code .                                          # scan current directory
 shadowscan code ./repo1 ./repo2                            # scan multiple paths
 shadowscan code . --diff-base origin/main                  # PR-scoped diff (Git 2.45+)
+shadowscan code --quick --fail-on high                     # staged Git blobs only (Git 2.45+)
+shadowscan code . --preflight                              # readiness checks, no scan
 shadowscan code --github-org acme                          # scan all repos in a GitHub org
 shadowscan code --github-repo acme/api --mode clone        # scan specific remote repo
 shadowscan code . --inventory ./inventory --fail-on high   # with inventory reconciliation
@@ -34,10 +36,12 @@ shadowscan code . --inventory ./inventory --fail-on high   # with inventory reco
 | `--exclude PATTERN` | Extra directory names or globs to skip (repeatable) |
 | `--no-default-excludes` | Also scan default-excluded dirs (`node_modules`, `.git`, `vendor`, etc.) |
 | `--no-secrets` | Skip credential detection |
+| `--quick` | Scan only the changed blobs staged in the Git index (default `PATHS`: `.`): no unstaged edits and no whole-repository claim; conflicts with remote options, `--diff-base` and `--triage` (see [staged-file checks](../operations/code-precommit.md)) |
+| `--preflight` | Check local root access and, with `--quick`, the staged snapshot without running a scan; local `PATHS` only, table or JSON output (see [what preflight checks](../operations/code-precommit.md#what-preflight-checks)) |
 | `--strict-coverage` | Strict accounting: every coverage gap is an error and marks the scan incomplete, none is discounted as test code or declared (see [strict accounting](../scanning.md#coverage-budget-and-strict-accounting)) |
 | `--include-tests` | Let test/fixture code establish agents at full weight |
 | `--profile ci` | Declare unread links, non-regular entries, unparsed content, analysis limits and, with credential detection off, oversize files under test, fixture, documentation, example and generated paths (below the file's project root) as counted omissions instead of gaps; every other gap is judged by the coverage budget as usual, and agent configuration and credential limits are never declared (conflicts with `--strict-coverage` and `--max-coverage-gap 0`) |
-| `--triage` | Fast subset scan (manifests, MCP/agent configs, flows, IaC only) |
+| `--triage` | Fast subset scan (manifests, MCP/agent configs, flows, IaC only); always exits incomplete (exit 3) |
 
 ### `shadowscan scan -c CONFIG`
 
@@ -71,7 +75,7 @@ shadowscan run saas.slack --input slack-export.json          # offline re-analys
 | Option | Description |
 |---|---|
 | `CONNECTOR` | Connector name (e.g. `identity.entra`, `cloud.aws`) |
-| `--input FILE` | Offline export file instead of live API |
+| `--input PATH` | Offline export file or directory instead of live API |
 | `-S, --set KEY=VAL` | Connector configuration key-value pairs (repeatable; lists as `a,b,c`) |
 
 ### `shadowscan endpoint`
@@ -207,6 +211,27 @@ shadowscan controls report.json --framework eu-ai-act-2024
 | `-o, --output FILE` | Output file |
 | `--framework NAME` | Filter by control catalog prefix or framework (repeatable) |
 
+### `shadowscan triage REPORT`
+
+Browse a JSON report in the terminal.
+
+Pages through an existing JSON report offline, without network calls or changing findings.
+Filtering does not change completeness, and quitting an incomplete report exits 3. See
+[terminal triage](../operations/terminal-triage.md).
+
+```bash
+shadowscan triage scan.json                               # interactive browser
+shadowscan triage scan.json --level high --search agent   # filter by risk level and text
+shadowscan triage scan.json --list                        # print the first page and exit
+```
+
+| Option | Description |
+|---|---|
+| `REPORT` | ShadowScan JSON report |
+| `--level LEVEL` | Show only `critical`, `high`, `medium`, `low` or `info` findings |
+| `--search TEXT` | Filter titles and resources by literal text |
+| `--list` | Print the first page without prompting (also the behaviour when input is redirected) |
+
 ## Inventory & registry commands
 
 ### `shadowscan inventory check PATHS...`
@@ -250,7 +275,7 @@ shadowscan mcp-registry snapshot --url https://registry.example.com -o snap.json
 |---|---|
 | `--url URL` | Registry base URL (HTTPS only; default: `https://registry.modelcontextprotocol.io`) |
 | `-o, --output FILE` | **(required)** Snapshot file to write (mode 0600) |
-| `--max-pages N` | Maximum pages to fetch |
+| `--max-pages N` | Exit 3 without writing a snapshot when the listing has more than N pages of 100 server versions (default and maximum: 5000) |
 | `--ca-bundle FILE` | PEM CA bundle for private PKI |
 | `--allow-private-origin` | Permit non-public IP addresses |
 
