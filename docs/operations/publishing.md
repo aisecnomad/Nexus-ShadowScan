@@ -154,10 +154,14 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
    immutable release final. Existing mutable releases are also supported.
 6. **Verify what was published.** Both files must be on the index, and each
    must match an attestation from `release.yml` on `main` at the tagged commit;
-   `--repo` alone would accept any workflow or branch of the repository.
-   Download them into an environment that holds the tag's hash-locked build
-   backend, so that preparing the sdist's metadata uses that backend rather
-   than one resolved from the index:
+   `--repo` alone would accept any workflow or branch of the repository. Fetch
+   the sdist as a plain file, not with `pip download`: pip prepares an sdist's
+   metadata as it downloads it, which runs the sdist's own build code (its
+   `setup.py`, or an in-tree backend named by `backend-path`) even with
+   `--no-build-isolation`, so a substituted file would run on your machine
+   before the attestation and `SHA256SUMS` checks could reject it. Build or
+   install nothing from these files until both pass. The `rebuild` environment
+   holds the tag's hash-locked build backend for the wheel rebuild below:
 
    ```bash
    version=0.1.4
@@ -167,8 +171,9 @@ with `publish: pypi`; evidence-only and TestPyPI runs cannot attach assets.
      --require-hashes --only-binary=:all: -r "${TMPDIR:-/tmp}/build.lock"
    "${TMPDIR:-/tmp}/rebuild/bin/python" -m pip download --no-deps --only-binary=:all: \
      --dest dists "NexusShadowScan==$version"
-   "${TMPDIR:-/tmp}/rebuild/bin/python" -m pip download --no-deps --no-binary=:all: --no-build-isolation \
-     --dest dists "NexusShadowScan==$version"
+   curl -fsS "https://pypi.org/pypi/NexusShadowScan/$version/json" | python -c \
+     'import json, sys; print(*(f["url"] for f in json.load(sys.stdin)["urls"] if f["packagetype"] == "sdist"))' \
+     | xargs curl -fsSL --proto '=https' -o "dists/nexusshadowscan-$version.tar.gz"
    for file in "dists/nexusshadowscan-$version-py3-none-any.whl" "dists/nexusshadowscan-$version.tar.gz"; do
      gh attestation verify "$file" --repo aisecnomad/Nexus-ShadowScan \
        --signer-workflow aisecnomad/Nexus-ShadowScan/.github/workflows/release.yml \

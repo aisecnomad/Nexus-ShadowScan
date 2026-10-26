@@ -2733,6 +2733,39 @@ def test_documented_commands_name_real_subcommands() -> None:
     assert not problems, "documented commands with no such subcommand:\n" + "\n".join(problems)
 
 
+def _shell_commands(text: str) -> Iterator[tuple[int, str]]:
+    """``_shell_lines`` with each backslash-continued command joined onto its first line."""
+    first, parts = 0, []
+    for number, line in _shell_lines(text):
+        first, line = first or number, line.rstrip()
+        parts.append(line.removesuffix("\\").rstrip())
+        if not line.endswith("\\"):
+            yield first, " ".join(parts)
+            first, parts = 0, []
+    if parts:
+        yield first, " ".join(parts)
+
+
+_PIP_DOWNLOAD = re.compile(r"\bpip3?\s+download\b([^&|;]*)")
+_WHEELS_ONLY = re.compile(r"(?<!\S)--only-binary(?:=|\s+):all:(?!\S)")
+
+
+def test_documented_pip_downloads_fetch_wheels_only() -> None:
+    """Regression: the publishing runbook fetched the published sdist with `pip download` before
+    checking its attestation. pip prepares an sdist's metadata as it downloads it, which runs the
+    sdist's own build code (its setup.py, or an in-tree backend named by backend-path) even with
+    --no-build-isolation, so a substituted file ran on the maintainer's machine before the check
+    meant to catch it. A documented `pip download` takes wheels only; an sdist is fetched as a file."""
+    problems = [
+        f"{_relative(path)}:{number}: {command}"
+        for path in _markdown_files()
+        for number, command in _shell_commands(_read(path))
+        for match in _PIP_DOWNLOAD.finditer(command)
+        if not _WHEELS_ONLY.search(match.group(1))
+    ]
+    assert not problems, "pip download would build a fetched sdist:\n" + "\n".join(problems)
+
+
 # `python -m MODULE`, also through a path, a versioned interpreter or interpreter
 # options: flags (`-I`, `-OO`, `-Xdev`) and `-W`/`-X` with a separate argument
 # (`-X dev`). A name a table elides (`python -m vllm.entrypoints…`) is checked
