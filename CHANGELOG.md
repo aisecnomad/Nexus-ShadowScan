@@ -8,6 +8,21 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## Unreleased
 
+- Refresh the build and development dependency locks with the reviewed dependency
+  updates, including the fixed setuptools release, and update pinned CI Actions.
+  Offline record arrays reject misplaced collection envelopes as incomplete;
+  valid neighboring records remain available.
+
+- Redact every text field in CI test-failure annotations before truncation and
+  workflow-command escaping, including parameterized test names and filenames.
+
+- Real ownership tests detect unavailable foreign-UID changes in restricted
+  environments; the mocked ownership checks still run.
+
+- Refresh the pinned container base and reset inherited package-version
+  constraints before upgrading, so fixed OS packages can be selected. Keep
+  the explicit Python compatibility pins and blocking vulnerability scan.
+
 - The 0.1.4 publication is recorded (tag `v0.1.4` on `94fda063`, the PyPI
   upload and the GitHub release of 2026-10-23).
 

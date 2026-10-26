@@ -853,6 +853,23 @@ def offline_pagination_issue(data: dict[str, Any]) -> str | None:
     return None
 
 
+def _nested_collection_issue(
+    cls: type[BaseConnector], item: dict[str, Any], wrappers: AbstractSet[str]
+) -> str | None:
+    """A record array cannot silently turn a collection page into a native record.
+
+    Ordinary array members are records, not pages to unwrap recursively. Native
+    records may legitimately contain nested collections; the same class hook as
+    the document-level reader distinguishes those. A rejected page's continuation
+    is still classified as unscanned input without exposing its opaque cursor.
+    """
+    if wrappers.isdisjoint(item) or cls._is_native_offline_record(item):
+        return None
+    return cls._offline_pagination_issue(item) or (
+        "export record contains a collection envelope; expected a native record"
+    )
+
+
 def unwrap(cls: type[BaseConnector], data: Any, failed: Report) -> Iterator[dict[str, Any]]:
     """Accept records or a common envelope, rejecting invalid shapes explicitly.
 
@@ -901,5 +918,9 @@ def unwrap(cls: type[BaseConnector], data: Any, failed: Report) -> Iterator[dict
                 yield from cls._unwrap(item, failed)
             else:
                 failed(f"{PROVIDER_ERROR_RESPONSE} offline export; coverage is incomplete")
+            continue
+        issue = _nested_collection_issue(cls, item, wrappers)
+        if issue:
+            failed(issue)
             continue
         yield {**item, "_kind": record_kind} if record_kind else item

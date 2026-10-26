@@ -18,8 +18,7 @@
 # Base image: Chainguard's Wolfi base (glibc, rolling security fixes), pinned in
 # both stages to the multi-arch image index digest of chainguard/wolfi-base:latest
 # (the Docker-Content-Digest of the tag's OCI index, which covers the
-# linux/amd64 manifest), resolved from Docker Hub; the commit that last changed
-# the FROM lines records when. Python 3.12,
+# linux/amd64 manifest), resolved from Docker Hub on 2026-10-26. Python 3.12,
 # Git and every native library they load are Wolfi packages, so the CI image
 # scan inventories the interpreter as well; a Python built outside the package
 # manager, as in the official python images, is invisible to it. util-linux,
@@ -42,13 +41,16 @@
 # Anonymous Docker Hub pulls are rate limited. CI pulls this digest through the
 # mirror.gcr.io pull-through cache; a digest pull is content-verified, so any
 # builder can do the same (docs/production.md).
-FROM chainguard/wolfi-base:latest@sha256:81211e15a86ea1d5357f284482af45730c51de45eaf10ad9ce205d6bfc2df323 AS build
+FROM chainguard/wolfi-base:latest@sha256:360896efb0753a5701c48f860e17130c205eae5a264797aa3e7ea126ee2923a7 AS build
 
-# apk packages are deliberately not version-pinned: Wolfi is a rolling
-# distribution, and a pinned package stops receiving security fixes. The base
-# image digest fixes the package set the build starts from; apk still reads the
-# live Wolfi repository and checks its signatures against the keys in the base
-# image, so the image is not byte-for-byte reproducible from this file alone.
+# The base image pins inherited packages in /etc/apk/world. Plain `apk upgrade`
+# preserves those exact constraints, including vulnerable inherited versions.
+# --available resets those constraints against the same signed repositories
+# before this Dockerfile installs its explicit Python compatibility pins below.
+# It can replace or downgrade packages when the configured repository requires
+# it; the resulting image must still pass the blocking vulnerability scan. See
+# https://github.com/alpinelinux/apk-tools/blob/v2.14.10/doc/apk-upgrade.8.scd
+# Live package resolution means this image is not byte-for-byte reproducible.
 #
 # Temporary exception: python-3.12 3.12.15-r1, published on 2026-10-02, has no
 # SHA-224 or SHA3-224 (no builtin _sha2 module, and its OpenSSL refuses both),
@@ -57,7 +59,7 @@ FROM chainguard/wolfi-base:latest@sha256:81211e15a86ea1d5357f284482af45730c51de4
 # runtime copies a virtual environment bound to its interpreter). Drop both pins
 # once a newer revision passes `python3.12 -c "import hashlib; hashlib.sha224(b'')"`.
 # hadolint ignore=DL3018
-RUN apk upgrade --no-cache \
+RUN apk upgrade --no-cache --available \
     && apk add --no-cache python-3.12=3.12.15-r0 python-3.12-base=3.12.15-r0 py3.12-pip
 
 WORKDIR /opt/shadowscan
@@ -84,7 +86,7 @@ RUN python3.12 -m venv --without-pip /opt/venv \
         /opt/wheel/nexusshadowscan-*.whl \
     && python3.12 -m pip --python /opt/venv/bin/python check
 
-FROM chainguard/wolfi-base:latest@sha256:81211e15a86ea1d5357f284482af45730c51de45eaf10ad9ce205d6bfc2df323
+FROM chainguard/wolfi-base:latest@sha256:360896efb0753a5701c48f860e17130c205eae5a264797aa3e7ea126ee2923a7
 
 LABEL org.opencontainers.image.source="https://github.com/aisecnomad/Nexus-ShadowScan" \
       org.opencontainers.image.description="ShadowScan disposable scan worker" \
@@ -96,7 +98,7 @@ LABEL org.opencontainers.image.source="https://github.com/aisecnomad/Nexus-Shado
 # remains. The base image provides the nonroot account (65532).
 # python-3.12 is pinned with the build stage (see there).
 # hadolint ignore=DL3018
-RUN apk upgrade --no-cache \
+RUN apk upgrade --no-cache --available \
     && apk add --no-cache python-3.12=3.12.15-r0 python-3.12-base=3.12.15-r0 git \
     && find / -xdev -type f -perm /6000 -exec chmod a-s {} + \
     && test -z "$(find / -xdev -type f -perm /6000 -print -quit)" \

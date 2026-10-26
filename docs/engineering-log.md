@@ -13,6 +13,52 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Dependency maintenance and offline completeness (October 26)
+
+The October 26 scheduled CI run exposed setuptools 84.0.0 advisory
+GHSA-xmj3-9gf7-h52w in the build and development environment. Refresh the
+setuptools backend and hash locks alongside the pending development dependency
+updates. Keep shared pins consistent across the build, CI and documentation
+locks, and advance the Ruff pre-commit revision with the CLI version. Carry the
+pending setup-python, CodeQL and PyPI publish Action updates as verified full
+commit pins; their least-privilege permissions and checkout settings stay intact.
+
+The shared offline reader now enforces the record-array format at each array
+member, using the same native-record classification as the document-level reader.
+Unsupported nested collection envelopes mark coverage incomplete and are not
+analyzed as resource records. Continuation metadata has the existing explicit
+incomplete categories; valid neighboring records and supported native nested
+fields are retained. Regression tests cover completion status, exit codes,
+reason counts and bounded diagnostics. This changes assurance behavior for
+affected exports, not the detection signatures or confidence policy.
+
+CI test annotations now sanitize node IDs, file attributes and exception types
+as well as failure messages at the output boundary. Sanitization precedes title
+and message truncation and GitHub workflow-command escaping. Tests cover each
+text field and a credential-shaped synthetic parameter crossing the title cap.
+Existing workflow logs and JUnit artifacts are not retroactively sanitized.
+
+Real link-ownership tests probe the exact requested UID change. Root inside a
+user namespace may lack permission to assign that UID; only known capability
+errors skip the real-ownership variant, while the mocked variants continue to
+exercise the refusal logic and unexpected operating-system errors still fail.
+
+The scheduled container scan also blocked vulnerable Brotli libraries. The
+old base image's `/etc/apk/world` pinned them to 1.2.0-r6, so an ordinary
+`apk upgrade` retained them even after the configured signed repository offered
+fixed versions. Refresh both base-image digests and use `apk upgrade --available`
+in both stages to reset inherited version constraints before applying the
+existing explicit Python compatibility pins. This intentionally follows the
+configured repository's available package set, which can include replacements
+or downgrades; repository keys and the blocking vulnerability gate are unchanged.
+The Docker policy regression checks this order in both stages. A successful
+container rebuild and vulnerability scan remain required before merge.
+
+These changes are AI-assisted maintenance, not independent human review or live
+tenant acceptance. The pull request records validation and current CI evidence;
+no release tag, package publication or branch-protection change is part of this
+maintenance.
+
 ### Precision follow-ups to the #320 head review (October 23)
 
 The five findings of the adversarial review of #320's head `8c106d0b`, all

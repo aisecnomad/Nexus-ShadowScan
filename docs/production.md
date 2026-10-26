@@ -43,6 +43,26 @@ release is created by this change.
 
 ## Migration notes and change history
 
+Unreleased: the shared offline reader rejects collection envelopes embedded in a
+record array. Export one collection envelope or an array of native records;
+do not concatenate API page envelopes into the record array. A rejected page
+makes coverage incomplete (exit 3), while valid neighboring records remain
+available. Uncollected continuation metadata is `unscanned-input`; invalid
+pagination metadata or an otherwise misplaced envelope is `unparsed-input`.
+Native records with supported nested collection fields retain those fields.
+Rescan affected exports before using an earlier complete report for assurance.
+
+CI failure annotations now redact test names, filenames, exception types and
+messages before truncation and workflow-command escaping. This applies to new
+annotations only; it does not rewrite retained workflow logs or JUnit files.
+
+Container builds reset version constraints inherited from the pinned base before
+upgrading OS packages from its configured signed repository. This allows fixed
+packages to replace vulnerable versions retained by the base's package manifest;
+the explicit Python compatibility pins are applied afterward. The repository's
+available set can include replacements or downgrades. Require a passing image
+vulnerability scan and retain the resulting immutable image digest for rollout.
+
 GCP list-shape defects, page-budget exhaustion, malformed Okta grants and
 conflicting Entra permission labels now use explicit incomplete categories.
 Existing reports retain their recorded categories; rescan to obtain corrected

@@ -53,6 +53,13 @@ tenant or account); see the [pipeline](architecture.md#scan-pipeline).
 
 ### Offline input limits
 
+The shared offline reader accepts a collection envelope or an array of native
+records. A collection envelope embedded inside that record array is rejected
+as incomplete coverage, with valid neighboring records retained. Native records
+may still carry supported nested fields; the reader does not recursively flatten
+arbitrary arrays. See [migration notes](production.md#migration-notes-and-change-history)
+for the incomplete categories and export correction.
+
 Offline file and directory inputs use shared safety limits: 10,000 files,
 32 MiB per file and 256 MiB total per connector by default. JSONL, CSV and gateway
 text logs stream line by line, with a 4 MiB line cap; gzip gateway logs are bounded

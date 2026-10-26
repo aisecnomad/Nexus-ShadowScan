@@ -76,8 +76,11 @@ def test_collection_data_and_nested_error_page_are_not_native_records() -> None:
         "error": {"message": "denied"},
         "data": [{"timestamp": "2026-01-01", "items": [item]}],
     }
-    assert list(BaseConnector._unwrap(page, errors.append)) == [page["data"][0]]
-    assert errors == ["provider error response in offline export; coverage is incomplete"]
+    assert list(BaseConnector._unwrap(page, errors.append)) == []
+    assert errors == [
+        "provider error response in offline export; coverage is incomplete",
+        "export record contains a collection envelope; expected a native record",
+    ]
 
 
 # Page identities and malformed successful responses must not hide collection gaps.
@@ -240,3 +243,38 @@ def test_failed_nested_page_keeps_observed_items_but_marks_incomplete(tmp_path):
     assert outcome.exit_code == 3, outcome.output
     assert report["summary"]["complete"] is False
     assert len(report["findings"]) == 2
+
+
+@pytest.mark.parametrize(
+    "pagination,reason",
+    [
+        ({"nextToken": "synthetic-uncollected-page"}, "unscanned-input"),
+        ({"nextToken": False}, "unparsed-input"),
+        ({}, "unparsed-input"),
+    ],
+)
+@pytest.mark.parametrize("container", ["array", "envelope"])
+def test_nested_collection_cannot_attest_complete_inventory(tmp_path, pagination, reason, container):
+    page = {"name": "ordinary inventory", "items": [], **pagination}
+    records = [{"id": "app-1", "name": "Claude"}, page]
+    body = records if container == "array" else {"items": records}
+    outcome, report = _cli_scan(tmp_path, "saas.generic", body)
+
+    assert outcome.exit_code == 3, outcome.output
+    assert report["summary"]["complete"] is False
+    assert report["stats"][0]["incomplete_reasons"] == {reason: 1}
+    assert len(report["findings"]) == 1
+    assert "synthetic-uncollected-page" not in json.dumps(report)
+
+
+def test_native_record_in_array_keeps_nested_collection_fields():
+    native = {
+        "id": "app-1",
+        "name": "Native",
+        "type": "app",
+        "items": [{"id": "child"}],
+    }
+    errors: list[str] = []
+
+    assert list(BaseConnector._unwrap([native], errors.append)) == [native]
+    assert errors == []
