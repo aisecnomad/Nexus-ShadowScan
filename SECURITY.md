@@ -636,11 +636,24 @@ and [connector permissions](https://github.com/aisecnomad/Nexus-ShadowScan/blob/
 
 ## Supported versions
 
-Version `0.1.4` is the latest published release, an alpha version. Fixes land
-on `main`; there is no
-released-version backport commitment. Report the installed release version
-and artifact identity, or the full commit SHA for a source installation.
-Publication does not establish production acceptance for your environment.
+Only the latest published release receives security fixes. Fixes land on
+`main` and ship in the next release; there is no released-version backport
+commitment. The project is an alpha (`Development Status :: 3 - Alpha`).
+
+| Version | Supported | Notes |
+|---|---|---|
+| 0.1.4 | Yes | Latest published release (tag `v0.1.4`, PyPI, 2026-10-23). Report vulnerabilities against it. |
+| 0.1.3 | No | Superseded by 0.1.4 on 2026-10-23; upgrade. |
+| 0.1.2 | No | Superseded; upgrade. |
+| 0.1.1 | No | Superseded; upgrade. |
+| `main` (unreleased) | Fixes land here | Not a release. Pin a reviewed full commit SHA; a version number in the source is not evidence of publication. |
+
+A version is published when it appears in the
+[PyPI release history](https://pypi.org/project/NexusShadowScan/#history) and as a
+[release tag](https://github.com/aisecnomad/Nexus-ShadowScan/tags). Report the
+installed release version and artifact identity, or the full commit SHA for a
+source installation. Publication does not establish production acceptance for
+your environment.
 
 ## Reporting
 

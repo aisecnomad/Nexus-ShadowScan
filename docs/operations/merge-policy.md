@@ -63,6 +63,22 @@ actors. It also blocks branch deletion and force pushes. Review the complete
 JSON before applying it; preserve any stronger rules subsequently introduced by
 the maintainers. A passing automated check is not an independent human review.
 
+## October 26 readback
+
+On 2026-10-26, administrator readbacks of all three rulesets again showed them
+active with `bypass_actors: []`. `python -m tools.governance.rulesets verify`
+reports that both `main` rulesets match the committed `.update.json` payloads,
+and `python -m tools.governance_check` passes the review/CI ruleset; for
+`Protect main` it reports `status_checks_required`, as on October 18, because
+that ruleset carries no status-check rule. GitHub reports no change to any of
+the three rulesets since 2026-10-11 (06:45 UTC). The complete
+[October 26 responses](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/.github/rulesets/observed/2026-10-26)
+are retained beside the October 18 set; their settings are identical, and only
+the API's timestamp formatting differs. No settings were changed for this
+readback. Like every readback, it is a point-in-time observation: it is not
+evidence of continuous enforcement, of an independent approval of any pull
+request, or of release or deployment acceptance.
+
 ## Apply with repository administration access
 
 From the reviewed checkout, use an administrator-authenticated GitHub CLI.

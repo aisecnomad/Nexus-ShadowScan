@@ -3304,15 +3304,29 @@ def test_openssf_page_answers_every_passing_criterion_once_with_a_known_status()
     )
 
 
+_BADGE_PROJECT = re.compile(r"bestpractices\.dev/projects/(?P<id>\d+)")
+_BADGE_HELD = re.compile(
+    r"\*\*This repository holds the OpenSSF Best Practices badge at the (?P<level>in progress|passing|silver|gold) level\*\*"
+)
+
+
 def test_openssf_page_stays_honest_about_the_badge() -> None:
     page = OPENSSF_PAGE.read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    # The page says the repository claims no badge. If the README gains one, that sentence is false and the
-    # page must be updated with the level and date, which is the moment to re-read this test.
-    assert "bestpractices.dev/projects/" not in readme, (
-        "update the page's status when the README shows a badge"
-    )
-    assert "This repository claims no badge." in page
+    # The README and the page must agree. Until the maintainer registers the project, the README shows no
+    # badge and the page says so. Once the README carries the badge, the page must name the same project
+    # number and the level it holds, so neither document can claim more than the other.
+    badge = _BADGE_PROJECT.search(readme)
+    if badge is None:
+        assert "This repository claims no badge." in page
+    else:
+        assert "This repository claims no badge." not in page, (
+            "the README shows a badge; update the page's status"
+        )
+        held = _BADGE_HELD.search(page)
+        assert held is not None, "the page must say which level the badge holds"
+        assert f"bestpractices.dev/projects/{badge['id']}" in page, "the page must name the README's project"
+        assert set(_BADGE_PROJECT.findall(readme)) == {badge["id"]}, "one project number in the README"
     assert "not independent" in page
     # A MUST criterion that only the maintainer can answer, or that has a gap, is never marked as plainly met.
     must_rows = {row["id"]: row["status"] for row in _openssf_rows() if row["level"] == "MUST"}
@@ -3320,6 +3334,16 @@ def test_openssf_page_stays_honest_about_the_badge() -> None:
         assert must_rows[identifier] == "Attest"
     for identifier in ("report_responses", "vulnerability_report_response", "tests_are_added", "maintained"):
         assert must_rows[identifier] == "Confirm", f"{identifier} depends on the tracker, not on the files"
+    # The page's only Gap on a MUST criterion was crypto_keylength; it is closed because the JWKS verifier bounds
+    # the RSA modulus before any signature check. The page may say Met only while the code still does.
+    assert must_rows["crypto_keylength"] == "Met"
+    jwks = (ROOT / "shadowscan" / "utils" / "jwks.py").read_text(encoding="utf-8")
+    assert "2048 <= key.key_size <= 8192" in jwks, (
+        "the page cites an RSA modulus bound that jwks.py no longer has"
+    )
+    assert "def test_rsa_keys_below_2048_bits_are_rejected" in (
+        ROOT / "tests" / "unit" / "test_jwt_security.py"
+    ).read_text(encoding="utf-8")
 
 
 def _identifier_values(tree: ast.AST) -> list[tuple[int, str]]:

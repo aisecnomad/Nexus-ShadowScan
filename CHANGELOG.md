@@ -8,6 +8,16 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## Unreleased
 
+- The OpenSSF Best Practices evidence page is re-checked on 2026-10-26: its one
+  MUST gap (`crypto_keylength`) is closed by the JWKS verifier's existing
+  RSA modulus bound, now covered by a regression test, and the page carries
+  the registration steps the maintainer must follow before the badge can
+  appear in the README. `SECURITY.md` states supported versions as a table.
+  A 2026-10-26 administrator readback of all three rulesets is recorded
+  (active, no bypass actors, matching the committed policy), the roadmap no
+  longer calls the bypass-actor removal outstanding, and the `performance`
+  label is added to `.github/labels.yml`.
+
 - The 0.1.4 publication is recorded (tag `v0.1.4` on `94fda063`, the PyPI
   upload and the GitHub release of 2026-10-23).
 

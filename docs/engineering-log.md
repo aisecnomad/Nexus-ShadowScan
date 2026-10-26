@@ -13,6 +13,58 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### OpenSSF Best Practices evidence refresh, supported-versions table and October 26 ruleset readback (October 26)
+
+The [OpenSSF Best Practices evidence](operations/openssf-best-practices.md)
+page, written on 2026-10-17, recorded one Gap on a MUST criterion,
+`crypto_keylength`, because the JWT verifier set no minimum RSA modulus of
+its own. `_select_key` in `shadowscan/utils/jwks.py` already refuses RSA keys
+outside 2048 to 8192 bits before any signature check (and `_signature_candidate`
+bounds the encoded modulus and exponent before the backend constructs the
+key), but no test exercised the lower bound. `tests/unit/test_jwt_security.py`
+gains `test_rsa_keys_below_2048_bits_are_rejected`, which signs a token with
+a 1024-bit key for RS256 and PS256 and shows that verification against a
+JWKS carrying that key raises before any signature is checked (PyJWT's own
+`InsecureKeyLengthWarning` on signing is expected by the test, since the
+verifier refuses rather than warns). The page's row moves to Met, its summary
+reads 51 Met, 11 Confirm, 2 Attest and 3 N/A with no Gap, the `maintained`
+row names the current `main` commit date, and a new section gives the
+registration steps in order. Registration needs the maintainer's own sign-in
+on the badge site, so the README still shows no badge and the page still says
+so; `test_openssf_page_stays_honest_about_the_badge` now accepts either
+state and, once the README carries the badge, requires the page to name the
+same project number and the level held. The same test ties the Met status to
+the code: it fails if the modulus bound or the regression test disappears.
+The [security alert triage](operations/security-alert-triage.md) row for
+Scorecard #50 records the closed gap with its date.
+
+`SECURITY.md` now states supported versions as a table: 0.1.4 supported,
+0.1.1 to 0.1.3 superseded, and `main` as where fixes land but not a release.
+The surrounding sentences about publication evidence and what to report are
+kept, and the `supported-versions` anchor the repository tests require is
+unchanged.
+
+A 2026-10-26 administrator readback of all three rulesets is retained under
+`.github/rulesets/observed/2026-10-26/`: active, `bypass_actors: []`, both
+`main` rulesets matching the committed payloads under
+`python -m tools.governance.rulesets verify`, and no change reported by GitHub
+since 2026-10-11. The settings are identical to the October 18 responses;
+only the API's timestamp formatting differs. The
+[merge policy](operations/merge-policy.md#october-26-readback) records it,
+and the roadmap, which still said the bypass-actor removal was outstanding,
+now cites the October 18 and October 26 readbacks with the usual caveat that
+a readback is not evidence of continuous enforcement.
+
+The `performance` label existed in the repository but not in
+`.github/labels.yml`, so the Labels workflow did not own its wording; it is
+added under the Type group with the live color.
+
+Not carried: the badge itself (the site needs the maintainer's sign-in and is
+not reachable from the session that prepared this change), and the deletion
+of 32 remote branches that are fully merged into `main` with no unique
+commits, which the maintainer should do by hand after reviewing the list in
+the pull request.
+
 ### Precision follow-ups to the #320 head review (October 23)
 
 The five findings of the adversarial review of #320's head `8c106d0b`, all
