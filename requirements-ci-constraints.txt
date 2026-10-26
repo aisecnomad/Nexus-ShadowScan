@@ -49,7 +49,7 @@ python-discovery==1.6.3
 referencing==0.37.0
 responses==0.26.3
 rpds-py==2026.9.1
-ruff==0.17.1
+ruff==0.17.2
 sortedcontainers==2.4.0
 tomli==2.5.0
 tomli_w==1.2.0
