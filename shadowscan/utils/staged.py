@@ -158,6 +158,9 @@ def staged_snapshot(root: Path, ctx: ConnectorContext) -> Iterator[StagedSnapsho
                 "--no-renames",
                 "--no-ext-diff",
                 "--no-textconv",
+                # Otherwise "ignore = all" in .gitmodules (tracked or worktree-only) or
+                # diff.ignoreSubmodules drops a staged gitlink before _selection refuses it.
+                "--ignore-submodules=none",
                 "-z",
                 "--",
             ],

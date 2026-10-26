@@ -121,6 +121,33 @@ def test_unsupported_or_over_budget_index_content_is_incomplete(repository, inde
 
 
 @pytest.mark.requires_git_2_45
+@pytest.mark.parametrize("ignored_by", ["tracked", "worktree-only", "config", "new-submodule"])
+def test_submodule_ignore_settings_cannot_hide_a_staged_gitlink(repository, index, ignored_by):
+    declaration = '[submodule "module"]\n\tpath = module\n\turl = https://example.test/module.git\n'
+    ignore_all = declaration + "\tignore = all\n"
+    (repository / "app.py").write_text("print('ordinary application')\n")
+    (repository / ".gitmodules").write_text(ignore_all if ignored_by == "tracked" else declaration)
+    _git(repository, "add", "app.py", *([] if ignored_by == "new-submodule" else [".gitmodules"]))
+    if ignored_by != "new-submodule":
+        oid = _git(repository, "rev-parse", ":app.py")
+        _git(repository, "update-index", "--add", "--cacheinfo", f"160000,{oid},module")
+    _git(repository, "-c", "commit.gpgSign=false", "commit", "-qm", "synthetic baseline")
+    if ignored_by in {"worktree-only", "new-submodule"}:
+        # Git reads the worktree copy even when it is unstaged or untracked.
+        (repository / ".gitmodules").write_text(ignore_all)
+    elif ignored_by == "config":
+        _git(repository, "config", "diff.ignoreSubmodules", "all")
+    head = _git(repository, "rev-parse", "HEAD")
+    _git(repository, "update-index", "--add", "--cacheinfo", f"160000,{head},module")
+    assert _git(repository, "diff", "--cached", "--name-only", "--ignore-submodules=none") == "module"
+    result = _scan(repository, index)
+    assert not result.complete
+    assert not result.findings
+    assert result.summary()["incomplete_reasons"] == {"unscanned-input": 1}
+    assert any("submodules" in error for stat in result.stats for error in stat.errors)
+
+
+@pytest.mark.requires_git_2_45
 def test_git_filters_hooks_external_diff_and_fsmonitor_do_not_execute(repository, index):
     (repository / "app.py").write_text("from openai import OpenAI\n")
     _git(repository, "add", ".")
