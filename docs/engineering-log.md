@@ -13,6 +13,60 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Documented supply-chain checks and reference truthfulness (October 26)
+
+An audit of the documentation against the code and the published artifacts,
+with each finding reproduced before it was fixed, found seven statements that
+were wrong or unsafe to follow. Each fix carries a consistency test that fails
+on the old text.
+
+- **Attestation identity.** The install guide and publishing step 6 ran
+  `gh attestation verify <file> --repo aisecnomad/Nexus-ShadowScan`. With
+  `--repo` alone, gh accepts an attestation signed by any workflow, branch or
+  runner of the repository, so a workflow pushed to any branch with
+  `id-token: write` could attest a substituted wheel and pass; the rulesets
+  protect only the default branch. Both commands now pin `--signer-workflow`
+  `release.yml`, `--source-ref refs/heads/main`, the tagged commit as
+  `--source-digest` and `--signer-digest`, and `--deny-self-hosted-runners`,
+  the identity `tools/release/assets.py` already enforces. The published
+  attestations satisfy it: all eight for the 0.1.4 wheel and sdist name
+  `release.yml@refs/heads/main`, commit `94fda063` (the `v0.1.4` tag) for both
+  digests and a GitHub-hosted runner, and the 0.1.2 wheel's name
+  Project-Nexus's `release.yml` on `main` at the `v0.1.2` commit, as the 0.1.2
+  note now says. A wrong commit fails the check. Sigstore signature
+  verification itself could not run in the session that checked this (its
+  trust root was unreachable); the identity claims were read from each
+  attestation's certificate.
+- **Fetching the sdist.** Step 6 fetched the sdist with `pip download
+  --no-binary=:all:` before its attestation and `SHA256SUMS` checks. pip
+  prepares an sdist's metadata while downloading it, which runs the sdist's
+  own build code (`setup.py`, or an in-tree backend named by `backend-path`)
+  even with `--no-build-isolation`, so a substituted file would have run on the
+  maintainer's workstation, which holds the administrator and PyPI sessions,
+  before the checks meant to reject it. The step now takes the sdist URL from
+  the PyPI JSON API and downloads it with `curl` over HTTPS; nothing is built
+  until both checks pass. Every documented `pip download` must take wheels only.
+- **Third-party origins on the docs site.** For a mermaid block, the locked
+  mkdocs-material bundle loads `mermaid@11` from unpkg, a floating major with no
+  integrity check, into the docs origin, and with `theme.font` unset every page
+  loads Google Fonts. The mermaid custom fence is removed and `theme.font` is
+  `false`; the built site has no `<script>` or `<link>` to another origin. The
+  two diagrams (the threat model's and `SECURITY.md`'s) still render on GitHub
+  and show as source on the site. Rendering them again means vendoring a
+  reviewed, exact-version `mermaid.min.js`; that is left to the maintainer.
+- **Reference accuracy.** `docs/reference/cli.md`, which
+  `docs/api/compatibility.md` makes the supported-command contract, omitted
+  `shadowscan triage` and `code --quick`/`--profile`; it now lists every
+  command and option the click CLI registers, including that `--triage` always
+  exits incomplete. The `shadowscan endpoint` summaries no longer claim Ollama or
+  extension directories, which only the `endpoint.inventory` connector reads. The
+  pre-commit guide states CPython 3.11 to 3.14 rather than "3.11 or later" (the
+  hook's package refuses 3.15), and the threat model's unbounded-responses row
+  names `DEFAULT_MAX_RESPONSE_BYTES`, not a `MAX_RESPONSE_BYTES` that does not
+  exist.
+
+These are documentation and test changes; no scanner behaviour changes.
+
 ### Dependabot #323-#325 carried; setuptools advisory and base image refresh (October 26)
 
 The scheduled CI run of October 26 on `d2ac5048` failed in two places with no
