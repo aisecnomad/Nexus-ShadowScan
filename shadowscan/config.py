@@ -521,14 +521,23 @@ def _labelled_scan_roots(spec: ConnectorSpec) -> dict[str, str]:
 
     Keyed by that prefix, as ``FilesystemConnector._scan_label`` forms it: a
     scalar root has its label alone and a ``root_ids`` root its label and ID.
-    An unlabelled root or an unnamed labelled ``paths`` root has its own path
-    or the hash of it, which no other root shares.
+    An unlabelled root has its own absolute path, which another entry's
+    explicit label can repeat. An unnamed labelled ``paths`` root has the hash
+    of its path, which no other root shares.
     """
     # The engine passes the entry label unless the connector configuration sets its own.
     label = spec.config.get("label", spec.label)
-    if spec.name != "code.filesystem" or not isinstance(label, str) or not label:
+    if spec.name != "code.filesystem" or (label is not None and not isinstance(label, str)):
         return {}
     paths, root_ids = spec.config.get("paths"), spec.config.get("root_ids")
+    if not label:
+        unlabelled = (
+            paths if isinstance(paths, list) else [spec.config.get("input") or spec.config.get("path")]
+        )
+        located = [
+            os.path.abspath(os.path.expanduser(root)) for root in unlabelled if isinstance(root, str) and root
+        ]
+        return {root: root for root in located}
     if isinstance(paths, list):
         named = root_ids if isinstance(root_ids, list) else []
         roots = [(f"{label}/root-id-{root_id}", path) for root_id, path in zip(named, paths, strict=False)]

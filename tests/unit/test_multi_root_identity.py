@@ -211,6 +211,23 @@ def test_entries_repeating_a_label_for_different_roots_are_refused(tmp_path, ind
         _entries_scan(tmp_path, specs, index=index)
 
 
+@pytest.mark.parametrize("unlabelled", ["path", "paths"])
+def test_explicit_label_repeating_an_unlabelled_root_path_is_refused(tmp_path, index, unlabelled):
+    # An unlabelled root is labelled by its own path, which another entry can name explicitly.
+    first, second = _repositories(tmp_path)
+    plain = ConnectorSpec(
+        "code.filesystem",
+        {"use_git": False, unlabelled: str(first) if unlabelled == "path" else [str(first)]},
+    )
+    specs = [plain, _entry(str(first.resolve()), path=str(second))]
+    with pytest.raises(ConfigValidationError, match="distinct label"):
+        _entries_scan(tmp_path, specs, index=index)
+
+    # Two unlabelled entries for the same root still scan it.
+    again = [plain, ConnectorSpec("code.filesystem", {"use_git": False, "path": f"{first}/."})]
+    assert _entries_scan(tmp_path, again, index=index).complete
+
+
 def test_entries_repeating_a_label_for_one_root_or_unrun_entries_still_scan(tmp_path, index):
     first, second = _repositories(tmp_path)
     shared = "github:acme/shared"
