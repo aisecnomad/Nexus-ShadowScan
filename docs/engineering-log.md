@@ -113,6 +113,10 @@ reading every row, so one such line in an osquery export emptied the run's
 findings (the scan still reported itself incomplete). A digit string longer than
 a 64-bit Unix time (19 digits) is now an unusable time, ordered by input
 position like a missing one, so a removal still uninstalls its row.
+`SECURITY.md` now lists the `*_API_KEYS`/`api_keys` and upper-case `*_PAT` names
+and the Smithery `config` field under what is redacted, and under what can
+remain that those names count in text only (a structured record field so named
+keeps an unshaped value) and that a scheme-less Smithery URL keeps its `config`.
 
 **Left to the maintainer.** Two findings are reproduced but not changed, and two applied fixes leave a trade-off open:
 - The release `build` job runs `python -m build --no-isolation` in an
