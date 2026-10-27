@@ -282,8 +282,11 @@ coverage, even when a response includes an empty collection field.
   end of the text), URL userinfo (including schemes whose name contains an
   underscore, such as SQLAlchemy dialect URLs), credential query keys (including
   `auth`, `pwd` and `pat`) and webhook or MCP-server path segments (Slack,
-  Discord, Teams, Zapier hooks and Zapier MCP server URLs), every cookie in a `Cookie`
-  header, and compact `name:value` headers and passwords (`x-api-key:value`).
+  Discord, Teams, Zapier hooks and Zapier MCP server URLs), the `config` query
+  field of a URL on `smithery.ai` or one of its subdomains (Smithery-hosted MCP
+  servers take their own keys there as base64 or percent-encoded JSON), every
+  cookie in a `Cookie` header, and compact `name:value` headers and passwords
+  (`x-api-key:value`).
   A token or JWT is withheld behind a JSON-escaped line break or tab
   (`\n`, `\t`), a percent escape (`%3D`) or an underscore, and the prefixes no
   ordinary word contains (`sk-proj-`, `ghp_`, `AKIA`, `eyJ` and similar) also
@@ -298,7 +301,10 @@ coverage, even when a response includes an empty collection field.
   `:=`, `||=`, `+=`, `.=`, `?=`); a quoted word or an opaque value compared with a
   sensitive name (`if token == "..."`, `!=`, `===`, `=~`);
   names such as `passphrase`, `db_pass`, `smtp_pwd`, `SECRET_KEY_BASE`, `creds` and
-  npm's `_auth`, and an ODBC connection string's `Pwd=` (a braced value whole,
+  npm's `_auth`; a list of API keys under a `*_API_KEYS` or `api_keys` name,
+  withheld whole (Open WebUI's `OPENAI_API_KEYS="k1;k2"`); an upper-case `*_PAT`
+  name (`AZURE_DEVOPS_EXT_PAT`, `ADO_PAT`), while the lower-case `date_pat`
+  names a pattern and stays; and an ODBC connection string's `Pwd=` (a braced value whole,
   `Pwd={a;b}`); the value after `password`, `passwd` and `account` in a netrc
   entry (`machine h login u password v`, on one line or one token per line,
   with keywords in any case as curl reads them, `default` anywhere on a line,
@@ -602,7 +608,16 @@ coverage, even when a response includes an empty collection field.
   therefore remains (the structural pass still removes it wherever a
   sensitive-named field holds the same value). Keep that in mind for a
   GitHub Actions `secrets:` block or a Kubernetes manifest an operator pastes
-  into an issue.
+  into an issue. In text, a name that ends in `_API_KEYS` (or `api_keys`
+  alone) is the exception: its value is a list of keys and is withheld, while
+  plural `*_TOKENS` and `*_SECRETS` names (`MAX_TOKENS`) keep theirs. That name
+  rule and the upper-case `*_PAT` one apply to text only: a structured record
+  field or name/value record named `api_keys`, `OPENAI_API_KEYS` or `ADO_PAT`
+  keeps a value without a recognized shape, as `secrets` does.
+- **Host-scoped query fields need the URL's host.** A Smithery `config` field
+  is withheld only in a URL that names its scheme and host
+  (`https://server.smithery.ai/...?config=...`); a scheme-less copy or a bare
+  query string keeps it, since `config` alone names no credential.
 
 ### Other implemented controls
 
