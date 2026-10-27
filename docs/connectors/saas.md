@@ -140,6 +140,10 @@ and privileged/data scopes (`keep_all: true` to emit everything). A record witho
 skipped and makes the scan incomplete (fully blank rows are ignored); valid
 neighboring records are still reported. An export where no record maps to a
 name is reported with the accepted column names instead of looking empty.
+JSON arrays must contain app records, not collection-page envelopes. A misplaced
+page marks the scan incomplete (exit 3), while valid neighboring app records
+remain available. Export a single collection envelope or flatten fully collected
+pages into their native app records before scanning.
 Whole-record credential context is applied before selecting, splitting or
 shortening fields for matching and reports. A known credential copied into an
 app name, scope or other display field is withheld even when its original

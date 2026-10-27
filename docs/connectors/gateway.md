@@ -30,6 +30,14 @@ not individual timestamped transaction events. Log fields for environment
 and caller identity are evidence from the supplied export; assess the
 producer and delivery chain before treating them as verified production facts.
 
+CloudWatch subscription batches and usage buckets work as single documents,
+array members, records inside an export envelope, or JSONL records. Conflicting
+collection fields make the export incomplete; pagination is reported once while
+observed records remain available. In automatic mode, a wrapper with `results`,
+`start_time` and `end_time` and no native record identity is validated as a usage
+bucket. Identified native events keep their ordinary nested results; selecting
+`format=openai-usage` explicitly requests usage-bucket interpretation.
+
 Inventory matches on an `operator-asserted` or `unverified` caller are review
 candidates only: they stay shadow, inherit no card owner or declared facts,
 and receive no registration score reduction. Missing or malformed identity

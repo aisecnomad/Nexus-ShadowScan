@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
+
+import pytest
 
 from tools import test_annotations
 
@@ -46,6 +49,42 @@ def test_a_credential_in_a_failure_message_is_withheld(tmp_path, capsys):
     test_annotations.main([str(_report(tmp_path, key))])
     out = capsys.readouterr().out
     assert key not in out and "[REDACTED]" in out
+
+
+@pytest.mark.parametrize("field", ["node_id", "file", "kind", "message"])
+def test_every_annotation_text_field_is_redacted_at_the_output_boundary(field):
+    key = "sk-" + "proj-" + "Qz9" * 16
+    values = {
+        "node_id": "test.py::test_check",
+        "file": "test.py",
+        "line": 1,
+        "kind": "Error",
+        "message": "failed",
+    }
+    values[field] = f"value[{key}]"
+    command = test_annotations.annotation(test_annotations.Failure(**values))
+    assert key not in command
+    assert "[REDACTED]" in command
+
+
+def test_parameter_credential_is_redacted_before_title_truncation():
+    key = "sk-" + "proj-" + "Qz9" * 16
+    prefix = "test.py::test_check[" + "x" * (test_annotations.MAX_TITLE - 35) + " "
+    failure = test_annotations.Failure(prefix + key + "]", "test.py", 1, "Error", "")
+    command = test_annotations.annotation(failure)
+    assert "sk-proj-" not in command
+    assert "[REDACTED]" in command
+
+
+def test_xml_exception_type_is_redacted_before_namespace_removal(tmp_path, capsys):
+    segments = [b'{"alg":"HS256"}', b'{"sub":"synthetic-test"}', b"synthetic-signature-material-12345"]
+    token = ".".join(base64.urlsafe_b64encode(segment).decode().rstrip("=") for segment in segments)
+    report = _report(tmp_path)
+    report.write_text(report.read_text().replace('type="AssertionError"', f'type="{token}"'))
+    assert test_annotations.main([str(report)]) == 0
+    output = capsys.readouterr().out
+    assert token.rsplit(".", 1)[-1] not in output
+    assert "::[REDACTED]:" in output
 
 
 def test_annotations_are_bounded_and_missing_reports_are_ignored(tmp_path, capsys, monkeypatch):
