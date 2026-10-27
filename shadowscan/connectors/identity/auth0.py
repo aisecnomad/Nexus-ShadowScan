@@ -21,7 +21,7 @@ from shadowscan.connectors.identity.common import (
     identity_kind_for,
     summarize_scopes,
 )
-from shadowscan.connectors.offline import UNCOLLECTED_NEXT_PAGE
+from shadowscan.connectors.offline import _WRAPPERS, UNCOLLECTED_NEXT_PAGE
 from shadowscan.models import Evidence, Finding, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
@@ -126,8 +126,9 @@ class Auth0Connector(BaseConnector):
             total, start = data["total"], data.get("start", 0)
             if type(total) is not int or type(start) is not int or total < 0 or start < 0:
                 return "offline export has invalid pagination metadata"
-            clients = data.get("clients")
-            if isinstance(clients, list) and start + len(clients) < total:
+            # The page's records may sit under any accepted envelope key, not only `clients`.
+            pages = [value for key, value in data.items() if key in _WRAPPERS and isinstance(value, list)]
+            if any(start + len(page) < total for page in pages):
                 return UNCOLLECTED_NEXT_PAGE
         return UNCOLLECTED_NEXT_PAGE if token else None
 

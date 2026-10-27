@@ -145,6 +145,12 @@ _PARTIAL_PROVIDER_PAGES = [
         id="auth0-include-totals",
     ),
     pytest.param(
+        Auth0Connector,
+        {"start": 0, "total": 200, "records": [_CLIENT]},
+        {},
+        id="auth0-include-totals-records-wrapper",
+    ),
+    pytest.param(
         Auth0Connector, {"clients": [_CLIENT], "next": "opaque-page-secret"}, {}, id="auth0-checkpoint"
     ),
     pytest.param(
@@ -157,7 +163,7 @@ _PARTIAL_PROVIDER_PAGES = [
 
 
 def _collection(page):
-    return next(value for key, value in page.items() if key in {"data", "clients", "logs"})
+    return next(value for key, value in page.items() if key in {"data", "clients", "logs", "records"})
 
 
 @pytest.mark.parametrize(("connector", "page", "options"), _PARTIAL_PROVIDER_PAGES)
