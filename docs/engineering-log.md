@@ -179,6 +179,58 @@ on the old text.
 
 These are documentation and test changes; no scanner behaviour changes.
 
+### OpenSSF Best Practices evidence refresh, supported-versions table and October 26 ruleset readback (October 26)
+
+The [OpenSSF Best Practices evidence](operations/openssf-best-practices.md)
+page, written on 2026-10-17, recorded one Gap on a MUST criterion,
+`crypto_keylength`, because the JWT verifier set no minimum RSA modulus of
+its own. `_select_key` in `shadowscan/utils/jwks.py` already refuses RSA keys
+outside 2048 to 8192 bits before any signature check (and `_signature_candidate`
+bounds the encoded modulus and exponent before the backend constructs the
+key), but no test exercised the lower bound. `tests/unit/test_jwt_security.py`
+gains `test_rsa_keys_below_2048_bits_are_rejected`, which signs a token with
+a 1024-bit key for RS256 and PS256 and shows that verification against a
+JWKS carrying that key raises before any signature is checked (PyJWT's own
+`InsecureKeyLengthWarning` on signing is expected by the test, since the
+verifier refuses rather than warns). The page's row moves to Met, its summary
+reads 51 Met, 11 Confirm, 2 Attest and 3 N/A with no Gap, the `maintained`
+row names the current `main` commit date, and a new section gives the
+registration steps in order. Registration needs the maintainer's own sign-in
+on the badge site, so the README still shows no badge and the page still says
+so; `test_openssf_page_stays_honest_about_the_badge` now accepts either
+state and, once the README carries the badge, requires the page to name the
+same project number and the level held. The same test ties the Met status to
+the code: it fails if the modulus bound or the regression test disappears.
+The [security alert triage](operations/security-alert-triage.md) row for
+Scorecard #50 records the closed gap with its date.
+
+`SECURITY.md` now states supported versions as a table: 0.1.4 supported,
+0.1.1 to 0.1.3 superseded, and `main` as where fixes land but not a release.
+The surrounding sentences about publication evidence and what to report are
+kept, and the `supported-versions` anchor the repository tests require is
+unchanged.
+
+A 2026-10-26 administrator readback of all three rulesets is retained under
+`.github/rulesets/observed/2026-10-26/`: active, `bypass_actors: []`, both
+`main` rulesets matching the committed payloads under
+`python -m tools.governance.rulesets verify`, and no change reported by GitHub
+since 2026-10-11. The settings are identical to the October 18 responses;
+only the API's timestamp formatting differs. The
+[merge policy](operations/merge-policy.md#october-26-readback) records it,
+and the roadmap, which still said the bypass-actor removal was outstanding,
+now cites the October 18 and October 26 readbacks with the usual caveat that
+a readback is not evidence of continuous enforcement.
+
+The `performance` label existed in the repository but not in
+`.github/labels.yml`, so the Labels workflow did not own its wording; it is
+added under the Type group with the live color.
+
+Not carried: the badge itself (the site needs the maintainer's sign-in and is
+not reachable from the session that prepared this change), and the deletion
+of 32 remote branches that are fully merged into `main` with no unique
+commits, which the maintainer should do by hand after reviewing the list in
+the pull request.
+
 ### Dependabot #323-#325 carried; setuptools advisory and base image refresh (October 26)
 
 The scheduled CI run of October 26 on `d2ac5048` failed in two places with no
@@ -262,6 +314,58 @@ was not built here (the session cannot reach the Wolfi package repository).
 On the first head of #328 (`0a3f51a3`, digest change only) CI's
 `container-security` job built the image and passed the HIGH/CRITICAL scan,
 and the `test (3.12)` and `test (3.14)` legs passed `pip-audit`.
+
+### Offline completeness, annotation redaction and ownership tests (October 26)
+
+The shared offline reader now enforces the record-array format at each array
+member, using the same native-record classification as the document-level reader.
+Unsupported nested collection envelopes mark coverage incomplete and are not
+analyzed as resource records. Continuation metadata has the existing explicit
+incomplete categories; valid neighboring records and supported native nested
+fields are retained. Regression tests cover completion status, exit codes,
+reason counts and bounded diagnostics. This changes assurance behavior for
+affected exports, not the detection signatures or confidence policy.
+Kubernetes and OpenShift keep their provider-supported List records in arrays
+through a narrow collection-handling hook; their existing reader still checks
+shape, continuation metadata and object limits. Generic exports cannot opt in.
+List classification is consistent across document, array and JSONL inputs;
+conflicting collection fields remain invalid regardless of resource-like labels.
+`gateway.logs` opts in for the two nested collections it expands itself, which
+the record-array check otherwise dropped: a JSON array of CloudWatch
+subscription batches (Bedrock invocation logs scanned complete with a finding
+on `main` and as `unparsed-input` with none) and an array of OpenAI usage
+buckets without `"object": "bucket"` (the same). The full suite did not
+exercise either shape; new tests do, for an array and an envelope, and fail
+with the opt-in removed. A common provider expansion boundary validates
+collection ambiguity and pagination across document, array, envelope and JSONL
+inputs. A continuation marks coverage incomplete while preserving observed
+records; resource-like labels cannot hide conflicting collections. Anonymous
+interval/results wrappers are validated as usage buckets in automatic mode,
+while identified native events retain ordinary nested results. The predicate,
+validation and envelope-context helpers live in `gateway/normalise.py`, so
+`gateway/logs.py` shrinks (2,112 to 2,099 lines) and the complexity baseline
+is lowered rather than raised. Pipeline tests cover those boundaries and check
+that diagnostics are counted once and do not expose continuation values.
+
+CI test annotations now sanitize node IDs, file attributes and exception types
+as well as failure messages at the output boundary. Sanitization precedes title
+and message truncation and GitHub workflow-command escaping. Tests cover each
+text field and a credential-shaped synthetic parameter crossing the title cap.
+Existing workflow logs and JUnit artifacts are not retroactively sanitized.
+
+Real link-ownership tests probe the exact requested UID change. Root inside a
+user namespace may lack permission to assign that UID; only known capability
+errors skip the real-ownership variant, while the mocked variants continue to
+exercise the refusal logic and unexpected operating-system errors still fail.
+
+The dependency, Action and base-image changes this pull request first carried,
+including the `apk upgrade --available` reset, are consolidated with the
+changes proposed in #328 in this pull request and recorded in its entry above.
+
+These changes are AI-assisted maintenance, not independent human review or live
+tenant acceptance. The pull request records validation and current CI evidence;
+no release tag, package publication or branch-protection change is part of this
+maintenance.
 
 ### Precision follow-ups to the #320 head review (October 23)
 

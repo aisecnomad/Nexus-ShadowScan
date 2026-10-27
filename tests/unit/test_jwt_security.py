@@ -148,6 +148,18 @@ def test_jwks_key_count_limit():
         verify_against_jwks("a.b.c", JWKS_URL, {"alg": "RS256"})
 
 
+@pytest.mark.parametrize("algorithm", ["RS256", "PS256"])
+def test_rsa_keys_below_2048_bits_are_rejected(algorithm):
+    # A JWKS the operator trusts can still publish a weak key; the verifier bounds
+    # the modulus (2048-8192 bits) before any signature check, so a token signed
+    # with a 1024-bit key never verifies even though it is otherwise well formed.
+    weak = rsa.generate_private_key(public_exponent=65537, key_size=1024)
+    with pytest.warns(jwt.InsecureKeyLengthWarning):  # PyJWT warns on signing; we refuse.
+        token, jwk, header = signed(weak, algorithm=algorithm)
+    with pytest.raises(ValueError, match="between 2048 and 8192 bits"):
+        check(token, jwk, header)
+
+
 def test_metadata_jwks_url_is_rejected():
     with pytest.raises(ValueError, match="Refusing"):
         verify_against_jwks("a.b.c", "https://169.254.169.254/jwks", {"alg": "RS256"})

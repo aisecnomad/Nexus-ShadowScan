@@ -892,6 +892,15 @@ class BaseConnector(ABC):
         return _offline.is_native_offline_record(data)
 
     @staticmethod
+    def _handles_nested_offline_collection(data: dict[str, Any]) -> bool:
+        """Whether this provider validates collection records inside a record array.
+
+        Opt in only when analysis validates the collection's pagination and shape
+        and consumes its observed items; accepting a page as a resource is not enough.
+        """
+        return False
+
+    @staticmethod
     def _is_error_record(data: dict[str, Any]) -> bool:
         return _offline.is_error_record(data)
 

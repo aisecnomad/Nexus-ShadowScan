@@ -76,16 +76,45 @@ Unreleased: what an operator sees change after the October 26 audit fixes.
   attributed to client `Visual Studio`; a directory of that name is skipped like
   the rest of `.vs`. `endpoint.inventory` no longer reports extensions an osquery
   `removed` event uninstalled, including a removal whose `unixTime` is missing,
-  a numeric string or spelled `unix_time` (it is ordered by input position); `saas.slack` no longer reports the bot users of uninstalled apps;
-  `network.logs` merges IPv4-mapped IPv6 clients with their dotted form and reads
+  a numeric string or spelled `unix_time` (it is ordered by input position);
+  `saas.slack` no longer reports the bot users of uninstalled apps; `network.logs` merges IPv4-mapped IPv6 clients with their dotted form and reads
   VPC Flow Logs' `vpc-id` as network context, so duplicate contacts disappear and
   flows can attribute to Route 53 answers. `lowcode.power-platform` and
   `cloud.gcp` keep findings already collected when a later environment, token or
   audit page fails, including a token response without an `access_token` (the
-  scan stays incomplete). CycloneDX BOMs keep the sanitized
-  endpoint of an MCP server whose URL carried inline credentials.
+  scan stays incomplete). CycloneDX BOMs keep the sanitized endpoint of an MCP
+  server whose URL carried inline credentials.
 - **Deadlines.** With `--incremental` and several roots, the automatic deadline
   extension is applied once per job, capped at 1,800 s, not once per root.
+
+Unreleased: the shared offline reader rejects collection envelopes embedded in a
+record array. Export one collection envelope or an array of native records;
+do not concatenate API page envelopes into the record array. A rejected page
+makes coverage incomplete (exit 3), while valid neighboring records remain
+available. Uncollected continuation metadata is `unscanned-input`; invalid
+pagination metadata or an otherwise misplaced envelope is `unparsed-input`.
+Native records with supported nested collection fields retain those fields.
+Kubernetes and OpenShift also retain their supported List records inside arrays;
+their provider-specific reader validates shape, continuation and object limits.
+Conflicting collections in a List are rejected for document, array and JSONL
+inputs, including Lists carrying additional resource labels.
+`gateway.logs` likewise keeps the CloudWatch subscription batches and usage
+buckets it expands itself. Its expansion boundary rejects conflicting
+collections and marks pagination incomplete while retaining observed records.
+Automatic format detection now validates interval/results wrappers without a
+native record identity as usage buckets; identified events keep nested fields.
+Rescan affected exports before using an earlier complete report for assurance.
+
+CI failure annotations now redact test names, filenames, exception types and
+messages before truncation and workflow-command escaping. This applies to new
+annotations only; it does not rewrite retained workflow logs or JUnit files.
+
+Container builds reset version constraints inherited from the pinned base before
+upgrading OS packages from its configured signed repository. This allows fixed
+packages to replace vulnerable versions retained by the base's package manifest;
+the explicit Python compatibility pins are applied afterward. The repository's
+available set can include replacements or downgrades. Require a passing image
+vulnerability scan and retain the resulting immutable image digest for rollout.
 
 GCP list-shape defects, page-budget exhaustion, malformed Okta grants and
 conflicting Entra permission labels now use explicit incomplete categories.

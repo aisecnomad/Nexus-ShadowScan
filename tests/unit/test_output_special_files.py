@@ -272,6 +272,18 @@ def test_a_long_legal_output_name_is_written(tmp_path):
 _FOREIGN_UID = 4242
 
 
+def _lchown_or_skip(link: Path, uid: int) -> None:
+    """Require real ownership changes, including in root user namespaces."""
+    try:
+        os.lchown(link, uid, -1)
+    except OSError as exc:
+        # UID 0 need not have CAP_CHOWN, and a namespace can leave this exact
+        # UID unmapped. The lstat variants still exercise the policy everywhere.
+        if exc.errno in {errno.EPERM, errno.EACCES, errno.EINVAL, errno.ENOTSUP}:
+            pytest.skip(f"symbolic-link ownership changes to UID {uid} are unavailable (errno {exc.errno})")
+        raise
+
+
 @pytest.fixture(params=["lchown", "lstat"])
 def give_away(request, monkeypatch):
     """Make a link another user's: really, with lchown (root only), or as lstat reports it.
@@ -282,7 +294,7 @@ def give_away(request, monkeypatch):
     if request.param == "lchown":
         if not hasattr(os, "lchown") or not hasattr(os, "geteuid") or os.geteuid() != 0:
             pytest.skip("giving a symbolic link to another user needs root and lchown")
-        return lambda link: os.lchown(link, _FOREIGN_UID, -1)
+        return lambda link: _lchown_or_skip(link, _FOREIGN_UID)
     foreign: set[str] = set()
     real_lstat = os.lstat
 
@@ -362,8 +374,8 @@ def test_report_through_the_operators_own_and_root_owned_links_lands_in_the_targ
     operator = _FOREIGN_UID + 1
     real = tmp_path / "private" / "reports"
     real.mkdir(parents=True)
-    os.lchown(_directory_link(tmp_path / "system", Path("private")), 0, -1)
-    os.lchown(_directory_link(tmp_path / "mine", tmp_path / "system" / "reports"), operator, -1)
+    _lchown_or_skip(_directory_link(tmp_path / "system", Path("private")), 0)
+    _lchown_or_skip(_directory_link(tmp_path / "mine", tmp_path / "system" / "reports"), operator)
     monkeypatch.setattr(output.os, "geteuid", lambda: operator)
     write_private_text(tmp_path / "mine" / "report.json", "report body")
     monkeypatch.undo()

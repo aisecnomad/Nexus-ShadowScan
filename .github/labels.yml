@@ -35,6 +35,10 @@
   color: "fbca04"
   description: False positive, false negative, misattribution, or scoring report.
 
+- name: performance
+  color: "1d76db"
+  description: Speed or resource usage improvement.
+
 - name: question
   color: "d876e3"
   description: Usage question about installation, configuration, or results.

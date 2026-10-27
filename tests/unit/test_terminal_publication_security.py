@@ -138,15 +138,19 @@ def test_table_neutralizes_controls_in_findings_and_connector_diagnostics():
     assert finding.title == PAYLOAD and finding.resource == PAYLOAD
 
 
-def test_table_banner_neutralizes_controls_in_incomplete_reason_keys():
+@pytest.mark.parametrize("width", [80, 600])
+def test_table_banner_neutralizes_controls_in_incomplete_reason_keys(width):
     # The banner names the reason categories; a result built from untrusted stats
     # must not let a key carry terminal controls into it.
     stats = ScanStats(
         connector="engine.fleet", started_at="now", incomplete=True, incomplete_reasons={PAYLOAD: 1}
     )
     output = io.StringIO()
-    print_table(ScanResult(stats=[stats]), console=Console(file=output, force_terminal=True, width=600))
-    assert "INCOMPLETE SCAN (hostile\\u001b]52" in Text.from_ansi(output.getvalue()).plain
+    print_table(ScanResult(stats=[stats]), console=Console(file=output, force_terminal=True, width=width))
+    plain = Text.from_ansi(output.getvalue()).plain
+    # Rich may wrap between the banner and its reason on a narrow terminal.
+    assert "INCOMPLETE SCAN" in plain
+    assert "(hostile\\u001b]52" in plain
     _assert_no_payload_controls(output.getvalue())
 
 
