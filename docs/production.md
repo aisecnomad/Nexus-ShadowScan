@@ -47,7 +47,8 @@ Unreleased: what an operator sees change after the October 26 audit fixes.
 
 - **Exit 3 where 0 was reported.** An offline replay of a single saved
   `lowcode.zapier` `/v2/zaps` page with `links.next`, an `identity.auth0`
-  `clients` page short of its `total` or carrying a checkpoint `next`, or a
+  page short of its `total` (under `clients` or any other accepted envelope key)
+  or carrying a checkpoint `next`, or a
   `saas.slack` `team.integrationLogs` page below `paging.pages` is
   `unscanned-input` (malformed continuation metadata `unparsed-input`); observed
   records are kept. `shadowscan code --quick` and the pre-commit hook exit 3 for
@@ -62,21 +63,26 @@ Unreleased: what an operator sees change after the October 26 audit fixes.
   entries produced identical finding IDs, and one repository's findings were
   merged into the other's. Give each entry a distinct `label`. Entries that point
   at the same root are still accepted, and no accepted configuration's finding
-  IDs change.
+  IDs change. An entry without a label takes its root's absolute path as its
+  label, so another entry that names that path as its label for a different
+  root is refused too.
 - **Credential policy.** Values after `*_API_KEYS`/`api_keys` names (Open WebUI's
   `OPENAI_API_KEYS`) and upper-case `*_PAT` names, and the `config` query field of
   a Smithery-hosted MCP URL (base64 or percent-encoded server configuration with
   its keys), are withheld. Reports and `--dump-records` exports from earlier
   builds may hold such values: treat them as sensitive and rescan before sharing.
 - **Findings that change.** `.vs/mcp.json` is read despite the default `.vs`
-  exclusion, so Visual Studio solutions can report new MCP configuration.
-  `endpoint.inventory` no longer reports extensions an osquery `removed` event
-  uninstalled; `saas.slack` no longer reports the bot users of uninstalled apps;
+  exclusion, so Visual Studio solutions can report new MCP configuration,
+  attributed to client `Visual Studio`; a directory of that name is skipped like
+  the rest of `.vs`. `endpoint.inventory` no longer reports extensions an osquery
+  `removed` event uninstalled, including a removal whose `unixTime` is missing,
+  a numeric string or spelled `unix_time` (it is ordered by input position); `saas.slack` no longer reports the bot users of uninstalled apps;
   `network.logs` merges IPv4-mapped IPv6 clients with their dotted form and reads
   VPC Flow Logs' `vpc-id` as network context, so duplicate contacts disappear and
   flows can attribute to Route 53 answers. `lowcode.power-platform` and
   `cloud.gcp` keep findings already collected when a later environment, token or
-  audit page fails (the scan stays incomplete). CycloneDX BOMs keep the sanitized
+  audit page fails, including a token response without an `access_token` (the
+  scan stays incomplete). CycloneDX BOMs keep the sanitized
   endpoint of an MCP server whose URL carried inline credentials.
 - **Deadlines.** With `--incremental` and several roots, the automatic deadline
   extension is applied once per job, capped at 1,800 s, not once per root.

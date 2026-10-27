@@ -720,7 +720,8 @@ state that never hold a project's own source, and are skipped without comment:
 `.next`, `.nuxt`, `.svelte-kit`, `.turbo`, `.parcel-cache`, `.idea` and `.vs`.
 One file inside `.vs` is read all the same: Visual Studio loads MCP servers
 from `.vs/mcp.json` (in any letter case), so it is scanned as an MCP
-configuration while the rest of `.vs` is skipped, and a `.vs` that is a symbolic
+configuration (client `Visual Studio`) while the rest of `.vs`, including a
+directory of that name, is skipped, and a `.vs` that is a symbolic
 link is a coverage gap like any other unfollowed directory link. Listing `.vs`
 in `exclude` skips the file too.
 The remaining names are build output or vendored code by convention, but

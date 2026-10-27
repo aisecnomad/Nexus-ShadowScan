@@ -82,6 +82,30 @@ workflow policy rejects `|| echo`, `|| printf`, `set +e`, `set +o errexit` or
 `pipefail`, and non-default `shell:` lines. The `[tool.pytest.ini_options]` table
 is pinned so a configuration change cannot deselect the slow sweeps in CI.
 
+**Head review follow-ups.** A review of the PR head found seven gaps in these
+fixes, each now closed with a regression test that fails with its fix reverted:
+- A *directory* named `.vs/mcp.json` matched the kept file name, so the walk
+  descended and scanned the planted subtree, and the incremental fingerprint
+  listed it as the file, raised on it as a special file and fell back to an
+  uncached scan on every run. Every directory in an entered `.vs` is now pruned
+  and only non-directory entries are fingerprinted as the configuration.
+- The Auth0 `include_totals` shortfall was tested only under `clients`, so a
+  partial page saved under `records` or another accepted wrapper passed as
+  complete; every accepted envelope key is now checked.
+- An osquery event whose `unixTime` was missing, a digit string or spelled
+  `unix_time` ordered as time 0, so an untimed removal lost to an earlier timed
+  add. Both spellings and digit strings are read, and an untimed event is
+  ordered after the row's latest event by input position.
+- A Power Platform token response without a usable `access_token` raised
+  `KeyError`/`TypeError` past the per-audience handlers and discarded every
+  collected agent; the token reader raises `ValueError`, which they contain.
+- An unlabelled `code.filesystem` root is labelled by its absolute path, which
+  the distinct-label check skipped, so an explicit label naming that path for
+  another root still merged findings; unlabelled roots now join the check.
+- `.vs/mcp.json` findings are attributed to `Visual Studio`, not `generic`.
+- CLI errors go through `terminal_lines`, so a multi-line message keeps its
+  line breaks instead of printing a literal `\u000a`.
+
 **Left to the maintainer.** Two findings are reproduced but not changed, and two applied fixes leave a trade-off open:
 - The release `build` job runs `python -m build --no-isolation` in an
   interpreter holding 92 packages outside the build lock, any of which can

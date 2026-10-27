@@ -19,6 +19,10 @@ explain operator migrations. Earlier per-change entries are preserved in the
   reports osquery-removed extensions or deleted Slack bot users as installed or
   splits IPv4-mapped IPv6 hosts. The secrets gate learns 20+ credential formats
   and UTF-16/32 files, and the CI policy catches more failure suppressions.
+  Follow-ups from the head review close seven gaps in these fixes (a `.vs/mcp.json`
+  directory, Auth0 pages under other envelope keys, untimed osquery removals,
+  a malformed Power Platform token, unlabelled roots in the label check,
+  Visual Studio attribution and multi-line CLI errors).
 
 - Documented supply-chain checks are tightened: `gh attestation verify` in the
   install guide and publishing step 6 pins `release.yml` on `main` at the
