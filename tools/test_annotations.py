@@ -9,10 +9,11 @@ workflow command per failing or erroring test case, at most
 is read.
 
 An annotation carries the test's node id, its file and line, the exception type
-and the first line of the failure message. The message is passed through the
-scanner's own redaction first and cut to :data:`MAX_MESSAGE` characters: test
-inputs are synthetic, but some are shaped like credentials, and a workflow log
-is no place for one.
+and the first line of the failure message. Every text field is passed through
+the scanner's own redaction before truncation and workflow-command escaping:
+pytest parameter IDs and exception types can carry values too. Messages are
+cut to :data:`MAX_MESSAGE` characters. Test inputs are synthetic, but some are
+shaped like credentials, and a workflow log is no place for one.
 
     python -m tools.test_annotations "$RUNNER_TEMP"/junit-*.xml
 """
@@ -82,6 +83,8 @@ def _node_id(case: ElementTree.Element) -> tuple[str, str]:
 
 def failures(reports: Iterable[Path]) -> Iterator[Failure]:
     """Every failing or erroring test case in ``reports``, in report order."""
+    from shadowscan.utils.redaction import sanitize_text
+
     for report in reports:
         # Only this job's own pytest report is parsed, never a scanned input.
         tree = ElementTree.parse(report)
@@ -98,20 +101,29 @@ def failures(reports: Iterable[Path]) -> Iterator[Failure]:
                 file=case.get("file") or file,
                 # JUnit lines are 0-based; annotations count from 1.
                 line=int(line) + 1 if line and line.isdigit() else None,
-                kind=(problem.get("type") or problem.tag).rsplit(".", 1)[-1],
+                # Redact before dropping a qualified type's namespace: a JWT's
+                # final segment alone is no longer recognizable as a token.
+                kind=sanitize_text(problem.get("type") or problem.tag).rsplit(".", 1)[-1],
                 message=_redact(problem.get("message") or ""),
             )
 
 
 def annotation(failure: Failure) -> str:
     """The ``::error`` workflow command for ``failure``."""
-    title = failure.node_id if len(failure.node_id) <= MAX_TITLE else failure.node_id[: MAX_TITLE - 3] + "..."
+    from shadowscan.utils.redaction import sanitize_text
+
+    # Redact at the output boundary, including callers that construct Failure
+    # directly. Redact the complete value first: truncating a credential before
+    # the redactor sees it can hide its recognizable prefix or required length.
+    title = sanitize_text(failure.node_id)
+    title = title if len(title) <= MAX_TITLE else title[: MAX_TITLE - 3] + "..."
     properties = [f"title={_escape_property(title)}"]
     if failure.file:
-        properties.insert(0, f"file={_escape_property(failure.file)}")
+        properties.insert(0, f"file={_escape_property(sanitize_text(failure.file))}")
         if failure.line is not None:
             properties.insert(1, f"line={failure.line}")
-    text = failure.kind + (f": {failure.message}" if failure.message else "")
+    message = sanitize_text(failure.message)[:MAX_MESSAGE]
+    text = sanitize_text(failure.kind) + (f": {message}" if message else "")
     return f"::error {','.join(properties)}::{_escape_data(text)}"
 
 

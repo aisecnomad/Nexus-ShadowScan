@@ -70,7 +70,12 @@ from shadowscan.connectors.gateway.normalise import (  # noqa: F401
     _has_tools,
     _i,
     _normalise,
+    collection_kind,
     detect_schema,
+    envelope_context,
+    expands_nested_collection,
+    native_gateway_record,
+    validate_collection,
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import Match, MatchTimeoutError, SignatureIndex
@@ -1222,21 +1227,10 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             self.ctx.warn(f"gateway.logs: unrecognized text record at {location}")
         return rec
 
-    @staticmethod
-    def _envelope_context(rec: dict[str, Any]) -> dict[str, Any]:
-        """Keep source timestamps and scope when an export wraps an event."""
-        return {
-            key: rec[key]
-            for key in (
-                "timestamp",
-                "receiveTimestamp",
-                "resource",
-                "labels",
-                "project_id",
-                "logName",
-            )
-            if key in rec
-        }
+    # Export envelopes this connector expands itself, defined with the schemas.
+    _envelope_context = staticmethod(envelope_context)
+    _handles_nested_offline_collection = staticmethod(expands_nested_collection)
+    _is_native_offline_record = staticmethod(native_gateway_record)
 
     def _expand_usage_bucket(self, rec: dict[str, Any]) -> Iterator[dict[str, Any]]:
         """Usage results are aggregate intervals, not individual transactions."""
@@ -1279,11 +1273,11 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         if depth >= 16:
             self.ctx.warn("gateway.logs: export wrapper nesting limit exceeded")
             return
-        if rec.get("object") == "bucket" or (self.format == "openai-usage" and "results" in rec):
-            yield from self._expand_usage_bucket(rec)
-            return
-        if "logEvents" in rec:
-            yield from self._expand_log_events(rec, depth)
+        if (kind := collection_kind(rec, self.format)) is not None:
+            if validate_collection(rec, self._record_export_diagnostic):
+                yield from (
+                    self._expand_usage_bucket(rec) if kind == "usage" else self._expand_log_events(rec, depth)
+                )
             return
         if "jsonPayload" in rec and "protoPayload" not in rec:
             payload = rec["jsonPayload"]
@@ -1407,17 +1401,10 @@ class GatewayLogConnector(BaseConnector, _NoDump):
     def _gateway_records(self, data: Any) -> Iterator[dict[str, Any]]:
         # CloudWatch and usage buckets carry context on the enclosing object.
         # The generic offline list unwrapping would discard its scope or interval.
-        if isinstance(data, dict) and (
-            "logEvents" in data
-            or data.get("object") == "bucket"
-            or (self.format == "openai-usage" and "results" in data)
-        ):
+        if isinstance(data, dict) and collection_kind(data, self.format) is not None:
             if not self._valid_record(data):
                 self.ctx.error("gateway.logs: invalid export record")
                 return
-            pagination_issue = self._offline_pagination_issue(data)
-            if pagination_issue:
-                self._record_export_diagnostic(pagination_issue)
             yield data
         else:
             yield from self._unwrap(data, self._record_export_diagnostic)
