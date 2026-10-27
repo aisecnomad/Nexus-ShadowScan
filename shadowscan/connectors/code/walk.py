@@ -1023,11 +1023,7 @@ class TreeWalker:
 
     def _excluded(self, rel: str, name: str) -> bool:
         """Directory exclusion: configured names, globs and every directory inside an entered ``.vs``."""
-        return (
-            name in self.exclude_names
-            or self._excluded_file(rel)
-            or (self.default_excludes and beside_entered_mcp_config(rel, self.exclude_names, directory=True))
-        )
+        return name in self.exclude_names or self._excluded_file(rel, directory=True)
 
     def included(self, rel: str) -> bool:
         """Whether ``rel`` is one of the configured include paths or sits below one (all, when unset)."""
@@ -1058,12 +1054,12 @@ class TreeWalker:
             return True
         return False
 
-    def _excluded_file(self, rel: str) -> bool:
+    def _excluded_file(self, rel: str, *, directory: bool = False) -> bool:
         """File exclusion: globs (directory names never exclude a file) and all of ``.vs`` but mcp.json."""
         for g in self.exclude_globs:
             if PurePosixPath(rel).match(g) or PurePosixPath(rel).match(g.rstrip("/") + "/*"):
                 return True
-        return self.default_excludes and beside_entered_mcp_config(rel, self.exclude_names)
+        return self.default_excludes and beside_entered_mcp_config(rel, self.exclude_names, directory)
 
     def _analyzed_name(self, rel: str, name: str) -> bool:
         """Whether the scanner would read a regular file called ``name`` for evidence.

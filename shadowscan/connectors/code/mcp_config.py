@@ -69,7 +69,7 @@ def _mcp_client_for(rel: str) -> str:
 DEFAULT_EXCLUDED_MCP_CONFIGS: dict[str, frozenset[str]] = {".vs": frozenset({"mcp.json"})}
 
 
-def beside_entered_mcp_config(rel: str, exclude_names: AbstractSet[str], *, directory: bool = False) -> bool:
+def beside_entered_mcp_config(rel: str, exclude_names: AbstractSet[str], directory: bool = False) -> bool:
     """Whether ``rel`` sits in a directory the walk enters only for its MCP configuration, and is not it.
 
     ``exclude_names`` are the directory names the walk prunes: a directory of
