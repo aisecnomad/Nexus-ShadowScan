@@ -53,6 +53,19 @@ tenant or account); see the [pipeline](architecture.md#scan-pipeline).
 
 ### Offline input limits
 
+The shared offline reader accepts a collection envelope or an array of native
+records. A collection envelope embedded inside that record array is rejected
+as incomplete coverage, with valid neighboring records retained. Native records
+may still carry supported nested fields; the reader does not recursively flatten
+arbitrary arrays. See [migration notes](production.md#migration-notes-and-change-history)
+for the incomplete categories and export correction.
+Kubernetes and OpenShift retain their documented List records inside arrays:
+their provider-specific reader validates each list's shape and pagination and
+processes its observed objects under the object limit. `gateway.logs` keeps the
+CloudWatch subscription batches and usage buckets it expands and validates
+itself; conflicting collections are rejected, and a batch or bucket that
+carries a continuation stays incomplete while retaining observed records.
+
 Offline file and directory inputs use shared safety limits: 10,000 files,
 32 MiB per file and 256 MiB total per connector by default. JSONL, CSV and gateway
 text logs stream line by line, with a 4 MiB line cap; gzip gateway logs are bounded
