@@ -416,6 +416,22 @@ def test_osquery_differential_events_replay_to_current_state(run_connector, tmp_
     assert any("skipped 1 record(s)" in w for w in ctx.stats.warnings)
 
 
+def test_osquery_event_time_too_long_for_an_integer_is_untimed(run_connector, tmp_path):
+    """Regression: one digit-string unixTime past int()'s digit limit discarded every finding."""
+    cline = {"username": "lee", "publisher": "saoudrizwan", "name": "claude-dev", "uuid": "u", "version": "1"}
+    copilot = {**cline, "publisher": "github", "name": "copilot"}
+    lines = [
+        {"hostIdentifier": "mac-12", "unixTime": 100, "action": "added", "columns": copilot},
+        {"hostIdentifier": "mac-12", "unixTime": 100, "action": "added", "columns": cline},
+        # No usable time, so it is ordered after the row's add and still uninstalls Cline.
+        {"hostIdentifier": "mac-12", "unixTime": "1" * 5000, "action": "removed", "columns": cline},
+    ]
+    path = write(tmp_path, "events.jsonl", "".join(json.dumps(line) + "\n" for line in lines))
+    findings, ctx = run_connector("endpoint.inventory", input=str(path), label="fleet")
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    assert [f.title for f in findings] == ["AI editor extension installed: GitHub Copilot on mac-12 (~lee)"]
+
+
 @pytest.mark.parametrize(
     ("line", "shell", "tool"),
     [

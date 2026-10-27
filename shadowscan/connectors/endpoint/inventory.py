@@ -99,6 +99,9 @@ _GATE_INCOMPLETE = "_approval_entries_dropped"
 # Internal marker on a row from an osquery logger line in event format: its action. Never exported.
 _OSQUERY_ACTION = "_osquery_action"
 _OSQUERY_ACTIONS = ("added", "removed", "snapshot")
+# Digits in a 64-bit Unix time. A longer digit string is no usable event time, and int()
+# refuses one past sys.get_int_max_str_digits(), which would end analyze() for every row.
+_EVENT_TIME_DIGITS = 19
 _OWN_STRINGS = (
     "device", "home", "client", "product", "signature", "location", "editor", "extension_id", "version",
     "browser", "profile", "name", "runtime", "provider", "shell", "tool",
@@ -164,7 +167,12 @@ def _event_time(raw: dict[str, Any]) -> int | None:
         value = raw.get(key)
         if isinstance(value, int) and not isinstance(value, bool):
             return value
-        if isinstance(value, str) and value.isascii() and value.isdigit():
+        if (
+            isinstance(value, str)
+            and value.isascii()
+            and value.isdigit()
+            and len(value) <= _EVENT_TIME_DIGITS
+        ):
             return int(value)
     return None
 

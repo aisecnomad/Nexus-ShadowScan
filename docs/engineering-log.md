@@ -106,6 +106,14 @@ fixes, each now closed with a regression test that fails with its fix reverted:
 - CLI errors go through `terminal_lines`, so a multi-line message keeps its
   line breaks instead of printing a literal `\u000a`.
 
+**Merge review follow-up.** A digit-string `unixTime` longer than
+`sys.get_int_max_str_digits()` (4,300 digits by default) made `int()` raise
+inside `endpoint.inventory`'s `analyze()`, which builds every finding only after
+reading every row, so one such line in an osquery export emptied the run's
+findings (the scan still reported itself incomplete). A digit string longer than
+a 64-bit Unix time (19 digits) is now an unusable time, ordered by input
+position like a missing one, so a removal still uninstalls its row.
+
 **Left to the maintainer.** Two findings are reproduced but not changed, and two applied fixes leave a trade-off open:
 - The release `build` job runs `python -m build --no-isolation` in an
   interpreter holding 92 packages outside the build lock, any of which can
