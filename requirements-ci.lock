@@ -4,7 +4,8 @@
 # requirements.lock and requirements-build.lock. Hashes cover published
 # artifacts so the same lock can be verified on Linux and macOS CI runners.
 # Refresh with the command documented in docs/production.md and review every
-# dependency, marker and hash change.ast-serialize==0.13.1 \
+# dependency, marker and hash change.
+ast-serialize==0.13.1 \
     --hash=sha256:02686b281ec9b8e9614f6f0db27e12e4cac515f336c5d05b678bc9eb73ff2af5 \
     --hash=sha256:032b09d86c785c3984e975378b7861f2a68ac44e22ba7b07b93a536b2524eeb8 \
     --hash=sha256:0d764913374ba21df8cd618045b371ed104ce55c6276de7c59e554a4f5ba26fd \
