@@ -13,58 +13,6 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
-### Offline completeness, annotation redaction and ownership tests (October 26)
-
-The shared offline reader now enforces the record-array format at each array
-member, using the same native-record classification as the document-level reader.
-Unsupported nested collection envelopes mark coverage incomplete and are not
-analyzed as resource records. Continuation metadata has the existing explicit
-incomplete categories; valid neighboring records and supported native nested
-fields are retained. Regression tests cover completion status, exit codes,
-reason counts and bounded diagnostics. This changes assurance behavior for
-affected exports, not the detection signatures or confidence policy.
-Kubernetes and OpenShift keep their provider-supported List records in arrays
-through a narrow collection-handling hook; their existing reader still checks
-shape, continuation metadata and object limits. Generic exports cannot opt in.
-List classification is consistent across document, array and JSONL inputs;
-conflicting collection fields remain invalid regardless of resource-like labels.
-`gateway.logs` opts in for the two nested collections it expands itself, which
-the record-array check otherwise dropped: a JSON array of CloudWatch
-subscription batches (Bedrock invocation logs scanned complete with a finding
-on `main` and as `unparsed-input` with none) and an array of OpenAI usage
-buckets without `"object": "bucket"` (the same). The full suite did not
-exercise either shape; new tests do, for an array and an envelope, and fail
-with the opt-in removed. A common provider expansion boundary validates
-collection ambiguity and pagination across document, array, envelope and JSONL
-inputs. A continuation marks coverage incomplete while preserving observed
-records; resource-like labels cannot hide conflicting collections. Anonymous
-interval/results wrappers are validated as usage buckets in automatic mode,
-while identified native events retain ordinary nested results. The predicate,
-validation and envelope-context helpers live in `gateway/normalise.py`, so
-`gateway/logs.py` shrinks (2,112 to 2,099 lines) and the complexity baseline
-is lowered rather than raised. Pipeline tests cover those boundaries and check
-that diagnostics are counted once and do not expose continuation values.
-
-CI test annotations now sanitize node IDs, file attributes and exception types
-as well as failure messages at the output boundary. Sanitization precedes title
-and message truncation and GitHub workflow-command escaping. Tests cover each
-text field and a credential-shaped synthetic parameter crossing the title cap.
-Existing workflow logs and JUnit artifacts are not retroactively sanitized.
-
-Real link-ownership tests probe the exact requested UID change. Root inside a
-user namespace may lack permission to assign that UID; only known capability
-errors skip the real-ownership variant, while the mocked variants continue to
-exercise the refusal logic and unexpected operating-system errors still fail.
-
-The dependency, Action and base-image changes this pull request first carried,
-including the `apk upgrade --available` reset, are consolidated with the
-changes proposed in #328 in this pull request and recorded in its entry below.
-
-These changes are AI-assisted maintenance, not independent human review or live
-tenant acceptance. The pull request records validation and current CI evidence;
-no release tag, package publication or branch-protection change is part of this
-maintenance.
-
 ### OpenSSF Best Practices evidence refresh, supported-versions table and October 26 ruleset readback (October 26)
 
 The [OpenSSF Best Practices evidence](operations/openssf-best-practices.md)
@@ -200,6 +148,58 @@ was not built here (the session cannot reach the Wolfi package repository).
 On the first head of #328 (`0a3f51a3`, digest change only) CI's
 `container-security` job built the image and passed the HIGH/CRITICAL scan,
 and the `test (3.12)` and `test (3.14)` legs passed `pip-audit`.
+
+### Offline completeness, annotation redaction and ownership tests (October 26)
+
+The shared offline reader now enforces the record-array format at each array
+member, using the same native-record classification as the document-level reader.
+Unsupported nested collection envelopes mark coverage incomplete and are not
+analyzed as resource records. Continuation metadata has the existing explicit
+incomplete categories; valid neighboring records and supported native nested
+fields are retained. Regression tests cover completion status, exit codes,
+reason counts and bounded diagnostics. This changes assurance behavior for
+affected exports, not the detection signatures or confidence policy.
+Kubernetes and OpenShift keep their provider-supported List records in arrays
+through a narrow collection-handling hook; their existing reader still checks
+shape, continuation metadata and object limits. Generic exports cannot opt in.
+List classification is consistent across document, array and JSONL inputs;
+conflicting collection fields remain invalid regardless of resource-like labels.
+`gateway.logs` opts in for the two nested collections it expands itself, which
+the record-array check otherwise dropped: a JSON array of CloudWatch
+subscription batches (Bedrock invocation logs scanned complete with a finding
+on `main` and as `unparsed-input` with none) and an array of OpenAI usage
+buckets without `"object": "bucket"` (the same). The full suite did not
+exercise either shape; new tests do, for an array and an envelope, and fail
+with the opt-in removed. A common provider expansion boundary validates
+collection ambiguity and pagination across document, array, envelope and JSONL
+inputs. A continuation marks coverage incomplete while preserving observed
+records; resource-like labels cannot hide conflicting collections. Anonymous
+interval/results wrappers are validated as usage buckets in automatic mode,
+while identified native events retain ordinary nested results. The predicate,
+validation and envelope-context helpers live in `gateway/normalise.py`, so
+`gateway/logs.py` shrinks (2,112 to 2,099 lines) and the complexity baseline
+is lowered rather than raised. Pipeline tests cover those boundaries and check
+that diagnostics are counted once and do not expose continuation values.
+
+CI test annotations now sanitize node IDs, file attributes and exception types
+as well as failure messages at the output boundary. Sanitization precedes title
+and message truncation and GitHub workflow-command escaping. Tests cover each
+text field and a credential-shaped synthetic parameter crossing the title cap.
+Existing workflow logs and JUnit artifacts are not retroactively sanitized.
+
+Real link-ownership tests probe the exact requested UID change. Root inside a
+user namespace may lack permission to assign that UID; only known capability
+errors skip the real-ownership variant, while the mocked variants continue to
+exercise the refusal logic and unexpected operating-system errors still fail.
+
+The dependency, Action and base-image changes this pull request first carried,
+including the `apk upgrade --available` reset, are consolidated with the
+changes proposed in #328 in this pull request and recorded in its entry above.
+
+These changes are AI-assisted maintenance, not independent human review or live
+tenant acceptance. The pull request records validation and current CI evidence;
+no release tag, package publication or branch-protection change is part of this
+maintenance.
 
 ### Precision follow-ups to the #320 head review (October 23)
 
