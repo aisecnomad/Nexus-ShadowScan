@@ -25,9 +25,14 @@ fail-closed trust model.
   on `main` and exercise the manual release-evidence workflow after the
   candidate is reviewed and merged. The 2026-10-10 readback showed `CI gate`,
   the GitHub Actions binding on every required check, last-push approval and
-  review-thread resolution live-required. Both rulesets still list four
-  `always` bypass actors; removing them and a clean readback with
-  `bypass_actors: []` remain outstanding.
+  review-thread resolution live-required, but also four `always` bypass
+  actors on both rulesets. The
+  [2026-10-18](docs/operations/merge-policy.md#october-18-readback) and
+  [2026-10-26](docs/operations/merge-policy.md#october-26-readback) readbacks
+  show `bypass_actors: []` on both `main` rulesets and on the release-tag
+  ruleset, with settings matching the committed payloads. A readback is a
+  point-in-time observation, not evidence of continuous enforcement; repeat it
+  before each release candidate.
 
 ## Next
 
