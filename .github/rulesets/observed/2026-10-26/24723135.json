@@ -1,0 +1,37 @@
+{
+  "id": 24723135,
+  "name": "Immutable release tags",
+  "target": "tag",
+  "source_type": "Repository",
+  "source": "aisecnomad/Nexus-ShadowScan",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": [
+        "refs/tags/v*"
+      ]
+    }
+  },
+  "rules": [
+    {
+      "type": "update"
+    },
+    {
+      "type": "deletion"
+    }
+  ],
+  "node_id": "RRS_lACqUmVwb3NpdG9yec5GB8jAzgF5Pr8",
+  "created_at": "2026-10-08T12:42:12.049Z",
+  "updated_at": "2026-10-11T06:45:44.195Z",
+  "bypass_actors": [],
+  "current_user_can_bypass": "never",
+  "_links": {
+    "self": {
+      "href": "https://api.github.com/repos/aisecnomad/Nexus-ShadowScan/rulesets/24723135"
+    },
+    "html": {
+      "href": "https://github.com/aisecnomad/Nexus-ShadowScan/rules/24723135"
+    }
+  }
+}

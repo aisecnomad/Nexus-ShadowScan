@@ -2,7 +2,7 @@
 
 The [OpenSSF Best Practices badge](https://www.bestpractices.dev/) is a self-certification. The maintainer signs in, answers a questionnaire about the project, and the site records the answers; it fills in some itself, but every answer stays the maintainer's. This page maps the 67 criteria of the **passing** level to what this repository shows, so that an application can cite files instead of memory.
 
-**This repository claims no badge.** The README shows none and nothing in the repository records an application. This page is preparation, not an application and not a claim. It was written from the criteria as the site published them on 2026-10-17; they change, so read them again when you apply.
+**This repository claims no badge.** The README shows none and nothing in the repository records an application. This page is preparation, not an application and not a claim. It was written from the criteria as the site published them on 2026-10-17 and re-checked against the repository on 2026-10-26; the criteria change, so read them again when you apply.
 
 ## What the statuses mean
 
@@ -14,12 +14,12 @@ The [OpenSSF Best Practices badge](https://www.bestpractices.dev/) is a self-cer
 | **N/A** | The criterion does not apply, for the reason given. |
 | **Gap** | Not met today. The row says what would meet it. |
 
-Of the 67 criteria (43 MUST, 10 SHOULD, 14 SUGGESTED): 50 Met, 11 Confirm, 2 Attest, 3 N/A, 1 Gap.
-The Gap on a MUST criterion (`crypto_keylength`) has to be resolved, or answered with a reasoned reading of the criterion, before the passing level can be reached. An honest *Unmet* on a SHOULD or SUGGESTED criterion does not block it.
+Of the 67 criteria (43 MUST, 10 SHOULD, 14 SUGGESTED): 51 Met, 11 Confirm, 2 Attest, 3 N/A.
+No MUST criterion is a Gap: the `crypto_keylength` gap recorded on 2026-10-17 is closed by the RSA modulus bound that `shadowscan/utils/jwks.py` enforces before any signature check and by its regression test (see the row). An honest *Unmet* on a SHOULD or SUGGESTED criterion does not block the passing level.
 
 ## Before you apply
 
-1. Sign in at [bestpractices.dev](https://www.bestpractices.dev/) with the GitHub account that administers the repository and add the project from its repository URL.
+1. Register the project as [Apply, then add the badge](#apply-then-add-the-badge) describes; only the maintainer's own sign-in can.
 2. Answer each criterion from the tables below. The site pre-fills some answers from public data; compare them with the tables.
 3. For every **Confirm** row, check the current state that day. For every **Attest** row, answer for yourself; nothing in the repository can.
 4. Do not answer Met for a criterion the evidence only partly supports. Say what is missing in the justification field; the form has one for that.
@@ -61,7 +61,7 @@ Passing the CI checks, the CodeQL analysis or the OpenSSF Scorecard is not indep
 | `sites_https` | MUST | **Met** | The repository, its issues, the PyPI project and the Pages URL are all `https:` addresses ([project URLs](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/pyproject.toml)). |
 | `discussion` | MUST | **Met** | GitHub issues and pull-request discussions are public, searchable, addressable by URL and open to anyone with a GitHub account; they need no proprietary client. |
 | `english` | SHOULD | **Met** | Documentation, issue forms, commit messages and code comments are in English, and reports in English are accepted. |
-| `maintained` | MUST | **Confirm** | The latest commit on `main` was made on 2026-10-16 (observed 2026-10-17), and Dependabot opens update pull requests weekly ([`.github/dependabot.yml`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/.github/dependabot.yml)). The criterion asks that significant reports get a response; the two response rows below show whether they do. |
+| `maintained` | MUST | **Confirm** | The latest commit on `main` was made on 2026-10-23 (observed 2026-10-26), and Dependabot opens update pull requests weekly ([`.github/dependabot.yml`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/.github/dependabot.yml)). The criterion asks that significant reports get a response; the two response rows below show whether they do. |
 
 ### Change Control
 
@@ -160,7 +160,7 @@ Passing the CI checks, the CodeQL analysis or the OpenSSF Scorecard is not indep
 | `crypto_published` | MUST | **Met** | The package uses SHA-256 and HMAC-SHA-256 from the standard library, JWT signature algorithms RS256, PS256, ES256 and EdDSA through PyJWT with `cryptography`, and TLS through `requests`, `urllib3` and OpenSSL. SHA-1 appears once; see `crypto_weaknesses`. |
 | `crypto_call` | SHOULD | **Met** | It calls `hashlib`, `hmac`, `secrets`, PyJWT, `cryptography` and OpenSSL and implements no primitive of its own. |
 | `crypto_floss` | MUST | **Met** | Every library above is free software. |
-| `crypto_keylength` | MUST | **Gap** | ShadowScan's own keys are 256 bits: `secrets.token_bytes(32)`, or an operator key that [`shadowscan/utils/credential_identity.py`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/shadowscan/utils/credential_identity.py) rejects below 32 bytes. It generates no asymmetric keys. When it verifies a JWT against an issuer's JWKS it uses the issuer's key and sets no minimum RSA modulus size of its own. Either add one, or answer with that explanation if you read the criterion as covering keys the software generates. |
+| `crypto_keylength` | MUST | **Met** | ShadowScan's own keys are 256 bits: `secrets.token_bytes(32)`, or an operator key that [`shadowscan/utils/credential_identity.py`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/shadowscan/utils/credential_identity.py) rejects below 32 bytes. It generates no asymmetric keys. When it verifies a JWT or a detached JWS against an operator-trusted JWKS, `_select_key` in [`shadowscan/utils/jwks.py`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/shadowscan/utils/jwks.py) refuses RSA keys outside 2048 to 8192 bits before any signature check, accepts only the P-256 curve for ES256 and Ed25519 or Ed448 for EdDSA, and rejects private, non-signing and ambiguous keys. `test_rsa_keys_below_2048_bits_are_rejected` in [`tests/unit/test_jwt_security.py`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tests/unit/test_jwt_security.py) shows a token signed with a 1024-bit key never verifies. |
 | `crypto_working` | MUST | **Met** | The package uses no MD4, MD5, DES, RC4 or ECB mode. Its one SHA-1 use is described under `crypto_weaknesses`. |
 | `crypto_weaknesses` | SHOULD | **Confirm** | [`shadowscan/connectors/code/remote.py`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/shadowscan/connectors/code/remote.py) recomputes a git object id with SHA-1 when a remote repository names objects that way (`usedforsecurity=False`). That is git's own format, not a ShadowScan mechanism; everything ShadowScan keys or identifies itself uses SHA-256. This is a SHOULD, so your reading of it decides the answer. |
 | `crypto_pfs` | SHOULD | **N/A** | ShadowScan implements no key-agreement protocol. OpenSSL negotiates TLS to providers through `requests` and `urllib3`. |
@@ -224,13 +224,20 @@ The higher levels ask for more than one person and for processes this project do
 | Gold | `build_reproducible` (MUST) | **Gap** | The wheel rebuilds to the same digest from the tagged commit, but the sdist does not ([publishing a release](publishing.md#per-release), step 6). |
 | Gold | `test_statement_coverage90` (MUST) | **Gap** | The CI floor is 80% with branches counted; nothing here shows 90% statement coverage. |
 
-## After the badge is awarded
+## Apply, then add the badge
 
-Add the badge to the README only then, with the project number the site assigned, and record the date and level in [the roadmap](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/ROADMAP.md) instead of describing the project as secure:
+Registration needs the maintainer's own GitHub sign-in on the badge site; nothing in this repository can do it. The steps, in order:
 
-```markdown
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/PROJECT_ID/badge)](https://www.bestpractices.dev/projects/PROJECT_ID)
-```
+1. Sign in at [bestpractices.dev](https://www.bestpractices.dev/) with the account that administers the repository, choose *Add a project*, and enter `https://github.com/aisecnomad/Nexus-ShadowScan` as both the project and repository URL. The site assigns a project number (`PROJECT_ID` below) at once and shows an *in progress* badge from that moment.
+2. Answer the questionnaire from the tables above, Confirm and Attest rows included, and paste each row's links into the justification fields. The site reports the passing level as soon as every MUST criterion is Met or N/A and every SHOULD criterion is Met, N/A or Unmet with a justification.
+3. Add the badge to the README beside the Scorecard badge, with the project number the site assigned:
+
+    ```markdown
+    <a href="https://www.bestpractices.dev/projects/PROJECT_ID"><img src="https://www.bestpractices.dev/projects/PROJECT_ID/badge" alt="OpenSSF Best Practices"></a>
+    ```
+
+4. In this page, replace the bold status sentence at the top (the one that says no badge is claimed) with **This repository holds the OpenSSF Best Practices badge at the passing level** (project `PROJECT_ID`, awarded on the date the site shows), using *in progress* instead of *passing* while the questionnaire is incomplete. `tests/test_repository_policy.py` requires the README badge and this sentence to agree and to name the same project number; `make policy` checks it.
+5. Record the date and level in [the roadmap](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/ROADMAP.md) instead of describing the project as secure, and open one pull request for steps 3 to 5.
 
 The OpenSSF Scorecard `CII-Best-Practices` check reads the badge level on its next run: [2 for in progress, 5 for passing, 7 for silver and 10 for gold](https://github.com/ossf/scorecard/blob/main/docs/checks.md#cii-best-practices). Scorecard's `Fuzzing` check is separate and does not recognize this project's fuzzers; [Fuzzing](fuzzing.md#what-it-does-not-show) says why.
 
