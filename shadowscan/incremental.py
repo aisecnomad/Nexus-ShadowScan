@@ -316,12 +316,16 @@ def _entered_mcp_configs(
     if kept is None or directory.name in excluded_dir_names:
         return b"", []
     names: list[str] = []
+    configs: list[str] = []
     with os.scandir(directory) as entries:
         for entry in entries:
             budget.check(entries=1)
             names.append(entry.name)
+            # A directory of that name is pruned by the walk, not read.
+            if entry.name.lower() in kept and not entry.is_dir(follow_symlinks=False):
+                configs.append(entry.name)
     record = _json(["entered-directory", directory.relative_to(root).as_posix(), len(names)])
-    return record, [f"{directory.name}/{name}" for name in sorted(names) if name.lower() in kept]
+    return record, [f"{directory.name}/{name}" for name in sorted(configs)]
 
 
 def _tree_digest(

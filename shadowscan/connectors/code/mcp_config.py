@@ -39,6 +39,8 @@ def _mcp_client_for(rel: str) -> str:
         return "Cursor"
     if ".vscode/" in r:
         return "VS Code / Copilot"
+    if r.startswith(".vs/") or "/.vs/" in r:
+        return "Visual Studio"
     if ".windsurf" in r or "codeium" in r:
         return "Windsurf"
     if "cline" in r:
@@ -67,18 +69,20 @@ def _mcp_client_for(rel: str) -> str:
 DEFAULT_EXCLUDED_MCP_CONFIGS: dict[str, frozenset[str]] = {".vs": frozenset({"mcp.json"})}
 
 
-def beside_entered_mcp_config(rel: str, exclude_names: AbstractSet[str]) -> bool:
+def beside_entered_mcp_config(rel: str, exclude_names: AbstractSet[str], *, directory: bool = False) -> bool:
     """Whether ``rel`` sits in a directory the walk enters only for its MCP configuration, and is not it.
 
     ``exclude_names`` are the directory names the walk prunes: a directory of
     ``DEFAULT_EXCLUDED_MCP_CONFIGS`` absent from them is entered for that
     configuration. The file name matches in any letter case, as on the
-    case-insensitive filesystems Visual Studio runs on.
+    case-insensitive filesystems Visual Studio runs on. A ``directory`` there is
+    never the configuration, whatever its name (``.vs/mcp.json/`` is IDE state
+    to prune, not a file to read).
     """
     parent, _, name = rel.rpartition("/")
     holder = parent.rpartition("/")[2]
     kept = DEFAULT_EXCLUDED_MCP_CONFIGS.get(holder)
-    return kept is not None and holder not in exclude_names and name.lower() not in kept
+    return kept is not None and holder not in exclude_names and (directory or name.lower() not in kept)
 
 
 _SECRETISH = re.compile(r"(?i)(key|token|secret|password|passwd|credential|auth)")

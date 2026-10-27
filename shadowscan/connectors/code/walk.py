@@ -1022,8 +1022,12 @@ class TreeWalker:
         self.skipped_oversize_test_fixtures = 0
 
     def _excluded(self, rel: str, name: str) -> bool:
-        """Directory exclusion: configured names and globs."""
-        return name in self.exclude_names or self._excluded_file(rel)
+        """Directory exclusion: configured names, globs and every directory inside an entered ``.vs``."""
+        return (
+            name in self.exclude_names
+            or self._excluded_file(rel)
+            or (self.default_excludes and beside_entered_mcp_config(rel, self.exclude_names, directory=True))
+        )
 
     def included(self, rel: str) -> bool:
         """Whether ``rel`` is one of the configured include paths or sits below one (all, when unset)."""

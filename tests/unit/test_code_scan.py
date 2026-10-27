@@ -482,6 +482,24 @@ def test_visual_studio_mcp_configuration_is_read_from_the_default_excluded_vs_di
     assert not findings and not ctx.stats.incomplete and not ctx.stats.warnings
 
 
+def test_directory_named_like_the_vs_mcp_configuration_stays_skipped(tmp_path, run_connector):
+    # Only the file is read; a directory called .vs/mcp.json is IDE state like the rest of .vs.
+    planted = tmp_path / ".vs" / "mcp.json" / "nested"
+    planted.mkdir(parents=True)
+    (planted / "agent.py").write_text("from crewai import Agent\n")
+    (planted / "mcp.json").write_text(json.dumps({"servers": {"helper": {"command": "npx"}}}))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not findings
+    assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+
+
+def test_visual_studio_mcp_configuration_is_attributed_to_visual_studio(tmp_path, run_connector):
+    (tmp_path / ".vs").mkdir()
+    (tmp_path / ".vs" / "mcp.json").write_text(json.dumps({"servers": {"helper": {"command": "npx"}}}))
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert [f.metadata.get("client") for f in findings if f.kind == Kind.MCP_SERVER] == ["Visual Studio"]
+
+
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unavailable")
 def test_symlinked_vs_directory_is_a_coverage_gap_rather_than_skipped(tmp_path, run_connector):
     # Visual Studio reads .vs/mcp.json through the link; the walk never follows it.
