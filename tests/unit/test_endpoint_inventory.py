@@ -391,6 +391,24 @@ def test_osquery_differential_events_replay_to_current_state(run_connector, tmp_
     ]
     assert by_title["AI editor extension installed: Cline on mac-12 (~lee)"].metadata["versions"] == ["2"]
 
+    # A removal whose time is missing, stringified or spelled unix_time still uninstalls the row.
+    untimed = [
+        event("added", 100, **vscode("github.copilot", "1")),
+        {**event("removed", 0, **vscode("github.copilot", "1")), "unixTime": None},
+        event("added", 100, **vscode("saoudrizwan.claude-dev", "1")),
+        event("removed", "200", **vscode("saoudrizwan.claude-dev", "1")),
+        event("added", 100, **vscode("continue.continue", "1")),
+        {
+            "hostIdentifier": "mac-12",
+            "unix_time": 200,
+            "action": "removed",
+            "columns": vscode("continue.continue", "1"),
+        },
+    ]
+    write(tmp_path, "events.jsonl", "".join(json.dumps(line) + "\n" for line in untimed))
+    findings, ctx = run_connector("endpoint.inventory", input=str(path), label="fleet")
+    assert not findings and not ctx.stats.incomplete
+
     # An event this connector cannot interpret is skipped, and the scan is incomplete.
     write(tmp_path, "events.jsonl", json.dumps(event("deleted", 600, **chrome)) + "\n")
     findings, ctx = run_connector("endpoint.inventory", input=str(path), label="fleet")

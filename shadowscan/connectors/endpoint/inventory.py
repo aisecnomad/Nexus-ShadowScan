@@ -146,14 +146,27 @@ class _Events:
     def add(self, rec: dict[str, Any], raw: dict[str, Any], seq: int, *, removed: bool) -> None:
         # osquery diffs whole rows, so a removal repeats exactly the row an earlier event added.
         row = json.dumps([rec["device"], raw["columns"]], sort_keys=True, default=str)
-        unix_time = raw.get("unixTime")
-        order = (unix_time if isinstance(unix_time, int) and not isinstance(unix_time, bool) else 0, seq)
         held = self.latest.get(row)
+        unix_time = _event_time(raw)
+        # An event without a usable time is ordered by its input position after the row's
+        # latest event, so an untimed removal still uninstalls an earlier timed add.
+        order = (unix_time if unix_time is not None else (held[0][0] if held else 0), seq)
         if held is None or order > held[0]:
             self.latest[row] = (order, None if removed else rec)
 
     def current(self) -> list[dict[str, Any]]:
         return [rec for _, rec in self.latest.values() if rec is not None]
+
+
+def _event_time(raw: dict[str, Any]) -> int | None:
+    """An osquery event's ``unixTime`` (or ``unix_time``) as an integer, or None when unusable."""
+    for key in ("unixTime", "unix_time"):
+        value = raw.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.isascii() and value.isdigit():
+            return int(value)
+    return None
 
 
 # Links a running Chromium browser keeps in its user-data directory (the
