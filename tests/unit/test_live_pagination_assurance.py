@@ -300,3 +300,40 @@ def test_notion_missing_or_nonboolean_has_more_is_incomplete(monkeypatch, run_co
     assert ctx.stats.incomplete
     assert "invalid has_more" in " ".join(ctx.stats.warnings)
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("body", [{}, {"access_token": 5}, {"access_token": ""}, ["access_token"]])
+def test_power_platform_malformed_token_response_keeps_collected_agents(monkeypatch, run_connector, body):
+    # A 200 token response without a usable access_token used to raise KeyError or
+    # TypeError out of collect() and discard the Copilot Studio agent from env-1.
+    dataverse_env = _env("env-1")
+    dataverse_env["properties"]["linkedEnvironmentMetadata"] = {"instanceUrl": DATAVERSE + "/"}
+
+    def respond(base, path, params):
+        if base == BAP:
+            return {"value": [dataverse_env, _env("env-2")]}
+        if base == PAPPS:
+            return {"value": [_app("app-env-1" if "/env-1/" in path else "app-env-2")]}
+        if base == DATAVERSE and path.endswith("/bots"):
+            return {"value": [{"botid": "bot-1", "name": "HR Helper", "schemaname": "hr_helper"}]}
+        return {"value": []}
+
+    real_token = PowerPlatformConnector._token
+    _mock_live_power_api(monkeypatch, respond)
+    monkeypatch.setattr(PowerPlatformConnector, "_token", real_token)
+    monkeypatch.setattr(HttpClient, "post", lambda self, url, **kwargs: kwargs["data"]["scope"])
+
+    def read_json_response(self, scope):
+        return body if scope == "https://service.flow.microsoft.com/.default" else {"access_token": scope}
+
+    monkeypatch.setattr(HttpClient, "read_json_response", read_json_response)
+    findings, ctx = run_connector(
+        "lowcode.power-platform", tenant_id="tenant", client_id="app", client_secret="secret"
+    )
+
+    assert {f.resource for f in findings} == AGENT_AND_FIRST_APP | {"power-platform:app:app-env-2"}
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert (
+        sum(warning.startswith("lowcode.power-platform: flows in env-") for warning in ctx.stats.warnings)
+        == 2
+    )

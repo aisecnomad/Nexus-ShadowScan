@@ -185,7 +185,11 @@ class PowerPlatformConnector(BaseConnector):
                 "scope": scope,
             },
         )
-        tok: str = client.read_json_response(resp)["access_token"]
+        body = client.read_json_response(resp)
+        tok = body.get("access_token") if isinstance(body, dict) else None
+        if not isinstance(tok, str) or not tok:
+            # A malformed 200 is this audience's failure, contained like an HTTP error.
+            raise ValueError("token response has no access token")
         self._tokens[scope] = tok
         return tok
 
