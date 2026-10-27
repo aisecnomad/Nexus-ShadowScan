@@ -67,7 +67,7 @@ Unreleased: what an operator sees change after the October 26 audit fixes.
   label, so another entry that names that path as its label for a different
   root is refused too.
 - **Credential policy.** Values after `*_API_KEYS`/`api_keys` names (Open WebUI's
-  `OPENAI_API_KEYS`) and upper-case `*_PAT` names, and the `config` query field of
+  `OPENAI_API_KEYS`) and upper-case `*_PAT` names in text, and the `config` query field of
   a Smithery-hosted MCP URL (base64 or percent-encoded server configuration with
   its keys), are withheld. Reports and `--dump-records` exports from earlier
   builds may hold such values: treat them as sensitive and rescan before sharing.
