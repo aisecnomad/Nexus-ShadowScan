@@ -121,9 +121,12 @@ repos:
       - id: shadowscan-staged
 ```
 
-Use Python 3.11 or later, Git 2.45 or later and a POSIX host. Install pre-commit
-in your development environment, then run these commands at the consumer
-repository root:
+Use Python 3.11–3.14 (on 3.12, use 3.12.4 or later), Git 2.45 or later and a
+POSIX host. Pre-commit builds the hook's environment with the Python it runs on,
+and pip refuses to install the scanner on a Python outside this range; in that
+case, set `language_version: python3.14` (or another supported version) on the
+hook. Install pre-commit in your development environment, then run these
+commands at the consumer repository root:
 
 ```bash
 pre-commit validate-config

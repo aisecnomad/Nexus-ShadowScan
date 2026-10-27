@@ -16,9 +16,22 @@ The distribution is `NexusShadowScan`; the command and Python imports are
 Releases reach PyPI only through the maintainer-approved
 [publish job](../operations/publishing.md), which uploads the universal wheel
 and the sdist that the release-evidence workflow built and attested. Check a
-downloaded file against this repository with
-`gh attestation verify <file> --repo aisecnomad/Nexus-ShadowScan`.
-The 0.1.2 wheel was attested before the repository was renamed; verify it with `--repo aisecnomad/Project-Nexus`.
+downloaded file against the workflow, branch and commit that built the release:
+
+```bash
+file=nexusshadowscan-0.1.4-py3-none-any.whl     # or nexusshadowscan-0.1.4.tar.gz
+commit=94fda063307c2c0c402a0610f378544b6189f809  # the commit tag v0.1.4 names
+gh attestation verify "$file" --repo aisecnomad/Nexus-ShadowScan \
+  --signer-workflow aisecnomad/Nexus-ShadowScan/.github/workflows/release.yml \
+  --source-ref refs/heads/main --source-digest "$commit" --signer-digest "$commit" \
+  --deny-self-hosted-runners
+```
+
+In a clone, `git rev-parse "v0.1.4^{commit}"` prints that commit. With `--repo`
+alone, `gh` accepts an attestation that any workflow, branch or runner of the
+repository signed.
+The 0.1.2 wheel was attested before the repository was renamed; verify it with `--repo aisecnomad/Project-Nexus`,
+that name in `--signer-workflow`, and the commit of the `v0.1.2` tag.
 
 A plain `pip install` resolves dependencies from the live index. For a
 deployment, prefer the hash-locked install.

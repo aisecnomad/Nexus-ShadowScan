@@ -8,6 +8,16 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## Unreleased
 
+- Documented supply-chain checks are tightened: `gh attestation verify` in the
+  install guide and publishing step 6 pins `release.yml` on `main` at the
+  tagged commit on a GitHub-hosted runner (`--repo` alone accepted any workflow
+  or branch), step 6 fetches the published sdist as a file instead of with
+  `pip download`, which ran its build code before the checks, and the docs site
+  loads no script or font from another origin. The CLI reference lists every
+  command and option, the `shadowscan endpoint` summaries name only clients it
+  reads, the pre-commit guide states the hook's Python range, and the threat
+  model names the response cap that exists. Consistency tests keep each true.
+
 - The OpenSSF Best Practices evidence page is re-checked on 2026-10-26: its one
   MUST gap (`crypto_keylength`) is closed by the JWKS verifier's existing
   RSA modulus bound, now covered by a regression test, and the page carries

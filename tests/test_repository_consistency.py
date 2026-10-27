@@ -8,7 +8,8 @@ CI matrices, `requires-python` and every documented interpreter range match the
 classifiers, the Makefile and pre-commit hooks run what CI runs, every CodeQL
 action step is pinned to the same release, the docs toolchain comes from its lock
 everywhere, and documented counts, the README's demo output, CSV report markers,
-the HTTP read deadline and the plugin execution default match the shipped code.
+the HTTP read deadline, the plugin execution default and the threat model's
+control locations match the shipped code.
 Run both modules with ``make policy``.
 """
 
@@ -47,6 +48,7 @@ from shadowscan.connectors.common import MAX_PAGES
 from shadowscan.connectors.endpoint.catalog import MODEL_STORES
 from shadowscan.connectors.endpoint.runtime import EbpfConnector, HostConnector, OtelConnector
 from shadowscan.coverage import DEFAULT_MAX_GAP_RATIO
+from shadowscan.endpoint import CLIENTS as ENDPOINT_CLIENTS
 from shadowscan.engine import DEFAULT_CONNECTOR_TIMEOUT, Engine
 from shadowscan.models import ScanStats
 from shadowscan.reporters.csv_ import _safe_cell
@@ -368,6 +370,50 @@ def test_former_name_check_flags_unexplained_references() -> None:
         assert _names_former_repository(stale), stale
 
 
+# With `--repo` alone, `gh attestation verify` accepts an attestation that any workflow, branch or
+# runner of the repository signed. A documented check pins what tools/release/assets.py pins:
+# release.yml on main at the released commit, on a GitHub-hosted runner. Dated logs and archived
+# records describe commands rather than prescribe them.
+_ATTESTATION_VERIFY = re.compile(r"gh attestation verify (?=[^\s`-])")
+_RELEASE_IDENTITY = {
+    "--signer-workflow": r"--signer-workflow \S+/\.github/workflows/release\.yml\s",
+    "--source-ref": r"--source-ref refs/heads/main\s",
+    "--source-digest": r"--source-digest \S",
+    "--signer-digest": r"--signer-digest \S",
+    "--deny-self-hosted-runners": r"--deny-self-hosted-runners\s",
+}
+_ATTESTATION_RECORDS = ("archive/", "docs/history/", "CHANGELOG.md", "docs/engineering-log.md")
+
+
+def _attestation_commands(text: str) -> Iterator[tuple[int, str]]:
+    """Yield ``(line_number, command)`` for each ``gh attestation verify`` of a file, continuations joined."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if (match := _ATTESTATION_VERIFY.search(line)) is None:
+            continue
+        command, end = line[match.start() :], index
+        while command.endswith("\\") and end + 1 < len(lines):
+            end += 1
+            command = command[:-1] + " " + lines[end].strip()
+        yield index + 1, command + " "
+
+
+def test_documented_attestation_checks_pin_the_release_identity() -> None:
+    """Regression: the install guide verified a download with `--repo` alone."""
+    found, weak = set(), []
+    for path in _markdown_files():
+        name = _relative(path)
+        if name.startswith(_ATTESTATION_RECORDS):
+            continue
+        for number, command in _attestation_commands(_read(path)):
+            found.add(name)
+            missing = [flag for flag, pattern in _RELEASE_IDENTITY.items() if not re.search(pattern, command)]
+            if missing:
+                weak.append(f"{name}:{number}: missing {' '.join(missing)}")
+    assert {"docs/getting-started/install.md", "docs/operations/publishing.md"} <= found
+    assert not weak, "pin the release identity:\n  " + "\n  ".join(weak)
+
+
 @pytest.mark.parametrize("markdown", _markdown_files(), ids=_relative)
 def test_absolute_repository_links_resolve_in_this_checkout(markdown: Path) -> None:
     """Links that must stay absolute (README on PyPI, the changelog on the docs site) still cannot rot."""
@@ -572,6 +618,32 @@ def test_every_documentation_page_is_reachable_from_the_site_navigation() -> Non
     pages = {path.relative_to(ROOT / "docs").as_posix() for path in (ROOT / "docs").rglob("*.md")}
     assert not pages - listed, f"docs pages missing from the mkdocs nav: {sorted(pages - listed)}"
     assert not listed - pages, f"mkdocs nav entries without a page: {sorted(listed - pages)}"
+
+
+def test_docs_site_loads_no_script_or_font_from_another_origin() -> None:
+    """The site runs only what the hash-locked toolchain ships.
+
+    Material loads Roboto from Google Fonts unless ``theme.font`` is false, and for a block the
+    ``mermaid`` custom fence renders it loads mermaid.js from unpkg at a floating major version
+    with no integrity check.
+    """
+    config = yaml.load(_read(ROOT / "mkdocs.yml"), Loader=_MkDocsLoader)  # a SafeLoader subclass
+    assert config["theme"].get("font") is False, (
+        "set theme.font: false; Material loads Google Fonts otherwise"
+    )
+    fences = [
+        fence
+        for extension in config["markdown_extensions"]
+        if isinstance(extension, dict)
+        for fence in (extension.get("pymdownx.superfences") or {}).get("custom_fences", [])
+    ]
+    assert all(fence.get("class") != "mermaid" for fence in fences), (
+        "a mermaid fence loads mermaid.js from unpkg"
+    )
+    for key in ("extra_javascript", "extra_css"):
+        for entry in config.get(key, []):
+            path = entry if isinstance(entry, str) else entry["path"]
+            assert "//" not in path, f"{key} loads {path} from another origin"
 
 
 # --- Community profile ---------------------------------------------------------
@@ -854,9 +926,9 @@ def _package_strings(path: Path) -> str:
     return "\n\n".join(strings)
 
 
-def _interpreter_claims() -> Iterator[tuple[str, str, bool]]:
-    """``(document, span, about_macos)`` for every interpreter span a current document or package
-    string states."""
+def _interpreter_paragraphs() -> Iterator[tuple[str, str]]:
+    """``(document, paragraph)`` for every whitespace-normalized paragraph of a current document,
+    lock header or package string."""
     texts = [(_relative(path), _current_text(path)) for path in _current_docs()]
     texts += [(name, _comment_header(ROOT / name)) for name in _LOCK_HEADERS]
     texts += [
@@ -864,9 +936,15 @@ def _interpreter_claims() -> Iterator[tuple[str, str, bool]]:
     ]
     for name, text in texts:
         for paragraph in re.split(r"\n[ \t]*\n", text):
-            paragraph = " ".join(paragraph.split())
-            for span, macos in _interpreter_spans(paragraph):
-                yield name, span, macos
+            yield name, " ".join(paragraph.split())
+
+
+def _interpreter_claims() -> Iterator[tuple[str, str, bool]]:
+    """``(document, span, about_macos)`` for every interpreter span a current document or package
+    string states."""
+    for name, paragraph in _interpreter_paragraphs():
+        for span, macos in _interpreter_spans(paragraph):
+            yield name, span, macos
 
 
 def test_documented_interpreter_ranges_match_the_classifiers_and_ci() -> None:
@@ -964,6 +1042,52 @@ def test_interpreter_span_matcher_reads_ordinary_spellings(
 ) -> None:
     """The range check above is only as good as the matcher: each spelling here once passed it."""
     assert [(_span_minors(span), macos) for span, macos in _interpreter_spans(paragraph)] == expected
+
+
+# A minimum with no upper bound ("Python 3.11 or later", "3.11 or newer") states a requirement that
+# every later interpreter meets, but requires-python refuses those past its upper bound. "3.12+" and
+# "3.12 and later" describe behavior from a version on, and a bounded minimum ("3.11 or later
+# (tested through 3.14)") is a span the range check above reads.
+_OPEN_MINIMUM = re.compile(rf"{_MINOR_VERSION},? or (?:later|newer|above)\b")
+
+
+def _open_minimums(paragraph: str) -> list[str]:
+    spans = [match.span() for match in _INTERPRETER_SPAN.finditer(paragraph)]
+    return [
+        match.group(0)
+        for match in _OPEN_MINIMUM.finditer(paragraph)
+        if not any(start <= match.start() < end for start, end in spans)
+    ]
+
+
+def test_documented_interpreter_minimums_state_an_upper_bound() -> None:
+    """The pre-commit guide asked for "Python 3.11 or later"; pre-commit builds the hook's
+    environment with the Python it runs on, and pip refuses to install the hook on 3.15."""
+    open_ended = [
+        f"{name}: {minimum!r}"
+        for name, paragraph in _interpreter_paragraphs()
+        for minimum in _open_minimums(paragraph)
+    ]
+    requires = _pyproject()["project"]["requires-python"]
+    assert not open_ended, f"open-ended minimums admit Pythons {requires} refuses:\n" + "\n".join(open_ended)
+
+
+@pytest.mark.parametrize(
+    ("paragraph", "expected"),
+    [
+        ("Use Python 3.11 or later, Git 2.45 or later and a POSIX host", ["3.11 or later"]),
+        ("Python `3.11` or newer", ["`3.11` or newer"]),
+        ("Python 3.11, or above", ["3.11, or above"]),
+        ("Python 3.11 or later (tested through 3.13)", []),
+        ("Use Python 3.11–3.14 (on 3.12, use 3.12.4 or later)", []),
+        ("Python 3.12+ tokenizers stop at 200 levels and 3.11 has no limit", []),
+        ("on Python 3.12 and later a codec error is a gap", []),
+    ],
+)
+def test_open_interpreter_minimum_matcher_reads_ordinary_spellings(
+    paragraph: str, expected: list[str]
+) -> None:
+    assert _open_minimums(paragraph) == expected
 
 
 def test_distribution_rename_preserves_cli_and_plugin_contract() -> None:
@@ -1815,6 +1939,22 @@ def test_endpoint_guide_names_every_google_ai_service_the_ebpf_host_rule_takes()
     assert "`aiplatform.mtls.googleapis.com`" in text
 
 
+def test_endpoint_command_summaries_name_only_clients_it_reads() -> None:
+    """Regression: the CLI reference and the product guide's command table said `shadowscan
+    endpoint` covers Ollama, but the command reads only the client configuration locations in
+    shadowscan.endpoint.LOCATIONS. Local model stores are the endpoint.inventory connector's, so a
+    model runtime the command has no location for must not be named in its summaries."""
+    absent = {store.product for store in MODEL_STORES if store.runtime not in ENDPOINT_CLIENTS}
+    assert "Ollama" in absent
+    reference = _markdown_section(_read(ROOT / "docs" / "reference" / "cli.md"), "### `shadowscan endpoint`")
+    guide = _read(ROOT / "docs" / "reference" / "product-guide.md")
+    row = next(line for line in guide.splitlines() if line.startswith("| `shadowscan endpoint` |"))
+    for name, text in (("docs/reference/cli.md", reference), ("the product guide's command table", row)):
+        named = sorted(product for product in absent if re.search(rf"\b{re.escape(product)}\b", text))
+        assert not named, f"{name} says `shadowscan endpoint` reads {named}, which it has no location for"
+    assert "`endpoint.inventory`" in reference, "the CLI reference should name the connector that covers them"
+
+
 # --- Migration notes ------------------------------------------------------------
 
 
@@ -2004,6 +2144,69 @@ def test_documented_http_read_deadline_matches_the_client() -> None:
     for path, match in claims:
         claimed = (_READ_DEADLINE_FACTORS.get(match.group(1)), int(match.group(2)))
         assert claimed == expected, f"{_relative(path)} says {match.group(0)!r}; the client uses {expected}"
+
+
+_THREAT_MODEL = ROOT / "docs" / "security" / "threat-model.md"
+_TABLE_CELL_BREAK = re.compile(r"(?<!\\)\|")
+_CODE_SPAN = re.compile(r"`([^`]+)`")
+
+
+def _threat_model_locations() -> list[str]:
+    """The code spans in the Where column of each of the threat model's control tables."""
+    locations: list[str] = []
+    where: int | None = None
+    for line in _read(_THREAT_MODEL).splitlines():
+        cells = [cell.strip() for cell in _TABLE_CELL_BREAK.split(line)[1:-1]] if line.startswith("|") else []
+        if not cells:
+            where = None
+        elif where is None:
+            where = cells.index("Where") if "Where" in cells else None
+        elif not set("".join(cells)) <= set("-:"):
+            locations.extend(_CODE_SPAN.findall(cells[where]))
+    return locations
+
+
+def _bindings(body: list[ast.stmt]) -> Iterator[tuple[str, ast.stmt]]:
+    for node in body:
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield node.name, node
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            yield from ((target.id, node) for target in targets if isinstance(target, ast.Name))
+
+
+def _package_definitions() -> dict[str, set[str]]:
+    """Each name a package module binds at top level, with the names a class of that name binds."""
+    definitions: dict[str, set[str]] = {}
+    for path in sorted((ROOT / "shadowscan").rglob("*.py")):
+        for name, node in _bindings(ast.parse(_read(path)).body):
+            members = definitions.setdefault(name, set())
+            if isinstance(node, ast.ClassDef):
+                members.update(member for member, _ in _bindings(node.body))
+    return definitions
+
+
+def test_threat_model_locates_each_control_in_code_that_exists() -> None:
+    """Every Where entry is a package file or a name the package defines, so a reviewer's search finds it.
+
+    Regression: the unbounded-responses row named ``MAX_RESPONSE_BYTES``; the cap is
+    ``DEFAULT_MAX_RESPONSE_BYTES``, and a search for the documented name found nothing.
+    """
+    locations = _threat_model_locations()
+    assert {location.endswith(".py") for location in locations} == {True, False}, (
+        "the threat model should locate controls by file and by name"
+    )
+    definitions = _package_definitions()
+    missing = []
+    for location in locations:
+        if location.endswith(".py"):
+            found = any((ROOT / "shadowscan").rglob(location))
+        else:
+            name, _, member = location.split("(", 1)[0].partition(".")
+            found = name in definitions and (not member or member in definitions[name])
+        if not found:
+            missing.append(location)
+    assert not missing, f"{_relative(_THREAT_MODEL)} locates controls at {missing}, which the package lacks"
 
 
 def test_documented_automatic_deadline_ceiling_matches_the_probe() -> None:
@@ -2528,6 +2731,95 @@ def test_documented_commands_name_real_subcommands() -> None:
                 if args and args[0] not in _PIP_COMMANDS:
                     problems.append(f"{_relative(path)}:{number}: {line}")
     assert not problems, "documented commands with no such subcommand:\n" + "\n".join(problems)
+
+
+def _shell_commands(text: str) -> Iterator[tuple[int, str]]:
+    """``_shell_lines`` with each backslash-continued command joined onto its first line."""
+    first, parts = 0, []
+    for number, line in _shell_lines(text):
+        first, line = first or number, line.rstrip()
+        parts.append(line.removesuffix("\\").rstrip())
+        if not line.endswith("\\"):
+            yield first, " ".join(parts)
+            first, parts = 0, []
+    if parts:
+        yield first, " ".join(parts)
+
+
+_PIP_DOWNLOAD = re.compile(r"\bpip3?\s+download\b([^&|;]*)")
+_WHEELS_ONLY = re.compile(r"(?<!\S)--only-binary(?:=|\s+):all:(?!\S)")
+
+
+def test_documented_pip_downloads_fetch_wheels_only() -> None:
+    """Regression: the publishing runbook fetched the published sdist with `pip download` before
+    checking its attestation. pip prepares an sdist's metadata as it downloads it, which runs the
+    sdist's own build code (its setup.py, or an in-tree backend named by backend-path) even with
+    --no-build-isolation, so a substituted file ran on the maintainer's machine before the check
+    meant to catch it. A documented `pip download` takes wheels only; an sdist is fetched as a file."""
+    problems = [
+        f"{_relative(path)}:{number}: {command}"
+        for path in _markdown_files()
+        for number, command in _shell_commands(_read(path))
+        for match in _PIP_DOWNLOAD.finditer(command)
+        if not _WHEELS_ONLY.search(match.group(1))
+    ]
+    assert not problems, "pip download would build a fetched sdist:\n" + "\n".join(problems)
+
+
+def _leaf_commands(command: Any, path: tuple[str, ...] = ()) -> Iterator[tuple[tuple[str, ...], Any]]:
+    """Yield ``(path, command)`` for every visible command below ``command`` that is not a group."""
+    import click
+
+    if not isinstance(command, click.Group):
+        yield path, command
+        return
+    for name, subcommand in sorted(command.commands.items()):
+        if not subcommand.hidden:
+            yield from _leaf_commands(subcommand, (*path, name))
+
+
+def test_command_reference_documents_every_command_and_option() -> None:
+    """The command reference names every shipped command and option, as it claims to.
+
+    The compatibility contract says the command reference defines the supported
+    commands, so a command or option it leaves out (``triage`` and the ``code
+    --quick`` mode the shipped pre-commit hook runs were) sits outside that contract
+    unnoticed. Each command needs a ``### `shadowscan ...` `` section (a group's own
+    section covers its subcommands), and each option is named in that section or
+    under Shared options. The product guide's command table names every top-level
+    command too.
+    """
+    import click
+
+    from shadowscan.cli import main
+
+    reference = _read(ROOT / "docs" / "reference" / "cli.md")
+    sections = {
+        " ".join(itertools.takewhile(re.compile(r"[a-z][a-z-]*").fullmatch, heading.split())): body
+        for heading, body in re.findall(r"^### `shadowscan ([^`]+)`\n(.*?)(?=^##)", reference, re.M | re.S)
+    }
+    shared = _readme_section(reference, "## Shared options")
+    problems = []
+    for path, command in _leaf_commands(main):
+        name = " ".join(path)
+        owner = next((key for n in range(len(path), 0, -1) if (key := " ".join(path[:n])) in sections), None)
+        if owner is None:
+            problems.append(f"shadowscan {name}: no section")
+            continue
+        for option in command.params:
+            if not isinstance(option, click.Option) or option.hidden:
+                continue
+            spellings = option.opts + option.secondary_opts
+            if not any(
+                re.search(rf"(?<![\w-]){re.escape(spelling)}(?![\w-])", sections[owner] + shared)
+                for spelling in spellings
+            ):
+                problems.append(f"shadowscan {name}: {'/'.join(spellings)}")
+    assert not problems, "docs/reference/cli.md omits:\n" + "\n".join(problems)
+    guide = _readme_section(_read(ROOT / "docs" / "reference" / "product-guide.md"), "## Command reference")
+    listed = set(re.findall(r"^\| `shadowscan ([a-z][a-z-]*)", guide, re.M))
+    visible = {name for name, command in main.commands.items() if not command.hidden}
+    assert visible <= listed, f"the product guide's command table omits {sorted(visible - listed)}"
 
 
 # `python -m MODULE`, also through a path, a versioned interpreter or interpreter

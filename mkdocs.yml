@@ -12,6 +12,8 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
+  # System fonts: Material otherwise loads Roboto from Google Fonts on every page.
+  font: false
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -66,14 +68,13 @@ plugins:
             docstring_style: google
             members_order: source
 
+# No mermaid custom fence: for a mermaid block Material loads mermaid.js from
+# unpkg at a floating major version with no integrity check, outside the lock.
+# GitHub still renders the diagrams; the site shows their source.
 markdown_extensions:
   - admonition
   - pymdownx.details
-  - pymdownx.superfences:
-      custom_fences:
-        - name: mermaid
-          class: mermaid
-          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.superfences
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
