@@ -555,12 +555,14 @@ def test_patterns_stay_linear_on_hostile_input() -> None:
         "fw_" + "a" * 200_000,
         "hook." * 40_000,
     ]
-    started = time.perf_counter()
+    started = time.process_time()
     for text in hostile:
         list(findings(text))
-    # Linear scans of every pattern take about a second and a half here; a quadratic one
-    # would take minutes. The bound leaves room for a loaded test runner.
-    assert time.perf_counter() - started < 3
+    # Linear scans of every pattern take about a second and a half of CPU here; a
+    # quadratic one would take minutes. CPU time, not wall-clock time, is measured so a
+    # loaded runner (one leg spent 3.02 s of wall clock on 1.5 s of work) cannot fail
+    # the guard, and the bound still fails for any superlinear pattern.
+    assert time.process_time() - started < 10
 
 
 def test_reported_file_names_cannot_forge_a_report_line_or_a_workflow_command(tmp_path, capsys):
