@@ -200,13 +200,14 @@ for walkthroughs of each surface and the
 | `shadowscan code [PATHS...]` | Scan repos for agent frameworks, MCP, coding agents, IaC, secrets |
 | `shadowscan scan -c CONFIG` | Run every connector in a YAML config file |
 | `shadowscan run CONNECTOR` | Run a single connector ad-hoc (`--set key=val`) |
-| `shadowscan endpoint` | Scan workstation AI clients (Claude, Cursor, Windsurf, Ollama, …) |
+| `shadowscan endpoint` | Scan workstation AI client configuration (Claude, Cursor, Windsurf, VS Code, …) |
 | `shadowscan gateway LOGS...` | Analyze LLM gateway / provider / proxy logs |
 | `shadowscan jwt [TOKENS...]` | Classify JWTs as human, service, or agent |
 | `shadowscan merge REPORTS...` | Combine JSON reports into one fleet report |
 | `shadowscan dashboard REPORTS...` | Write a static fleet dashboard (HTML + optional inventory JSON) |
 | `shadowscan diff BASE CURRENT` | Compare reports for new, resolved, and drifted findings |
 | `shadowscan controls REPORTS...` | Map findings to NIST AI RMF / ISO 42001 / EU AI Act / AIUC-1 controls |
+| `shadowscan triage REPORT` | Browse a JSON report in the terminal, offline and read-only |
 | `shadowscan inventory check` | Validate Agent Card / agents.yaml / CSV inventory files |
 | `shadowscan inventory stubs` | Generate Agent Card skeletons from shadow findings |
 | `shadowscan mcp-registry snapshot` | Pin an MCP registry into a versioned snapshot |
