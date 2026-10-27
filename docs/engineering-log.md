@@ -13,6 +13,126 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Audit fixes: fail-closed gaps, redaction coverage, detection accuracy and gate integrity (October 26)
+
+An eight-dimension audit (network egress, untrusted input, output safety, CI and
+supply chain, core correctness, connector correctness, documentation and
+packaging, test and tooling integrity) produced 32 candidate findings. Each was
+checked twice before anything changed: by a refute-by-default verifier, and
+again by the agent that fixed it, reproducing it on the unmodified tree. 28
+are fixed: the 21 below, each with a regression test shown to fail with the
+fix reverted, and seven documentation findings in the entry below this one.
+One was refuted, one (a stale ROADMAP line) is fixed by #329, and two are
+decisions for the maintainer. Network egress produced no finding.
+
+**Fail closed.**
+- `lowcode.zapier`, `identity.auth0` and `saas.slack` each page their own way
+  (`links.next`; `include_totals` and checkpoint `next`; `team.integrationLogs`
+  `paging`), which their live collectors follow but the shared offline check did
+  not, so a single saved first page exited 0. Each connector now adds its
+  provider's continuation check after the shared one, as Kubernetes, Salesforce
+  and GitHub Apps do. For Slack the gap also dropped bots whose scopes came only
+  from the missing log pages.
+- The quick scan's staged-gitlink refusal read `git diff --cached --raw` without
+  `--ignore-submodules=none`, so `submodule.<name>.ignore = all` in the worktree
+  `.gitmodules` (scanned, untrusted content, honoured even when unstaged or
+  untracked) or `diff.ignoreSubmodules` dropped the gitlink and the scan reported
+  "0 changed file(s)" complete.
+- `require_local_git_metadata()` checked `<root>/.git`, but later commands used
+  normal discovery: an invalid `.git` directory made Git open the root as a bare
+  repository, whose config and alternates were never inspected, or walk up into
+  an enclosing repository. The metadata commands set `safe.bareRepository=explicit`
+  and `GIT_CEILING_DIRECTORIES`.
+- `endpoint --dump-records` wrote `manifest.json` before the command added its
+  own discovery diagnostics, so the manifest could say complete while the scan
+  exited 3. `Engine.run` takes keyword-only `extra_stats` for the manifest.
+- Two `code.filesystem` entries scanning different roots under one effective
+  label produced identical finding IDs and were merged; the engine refuses that
+  configuration. Auto-suffixing was rejected because it would change finding
+  identity. Prefix-nested labels (`a` with `b/x.py`, `a/b` with `x.py`) can still
+  collide; that needs a deliberate hierarchical overlap and is left as is.
+
+**Redaction and disclosure.**
+- `*_API_KEYS`/`api_keys` and upper-case `*_PAT` names now withhold their values
+  in text; plural `TOKENS`/`SECRETS` stay unredacted as `SECURITY.md` documents.
+  The redaction linear-time tests and the regex-linearity sweep pass.
+- A smithery.ai URL's `config` query field (base64 or percent-encoded JSON that
+  holds the server's own keys) is withheld beside `api_key`.
+- CLI error messages that embed card paths or source names now pass through
+  `terminal_text`: OSC 8 links, OSC 52 clipboard writes and C1 controls reached
+  the terminal, since Click strips only CSI and only off a tty.
+- The CycloneDX exporter parsed endpoints with `urlsplit`, which reads the
+  sanitized `[REDACTED]@` userinfo as an IPv6 literal and raises, so it silently
+  dropped those endpoints; it now checks the scheme only, as before `fa86e39`.
+
+**Detection accuracy.** osquery `removed` events no longer leave an extension
+reported as installed; Slack `deleted` bot users are not installed apps;
+`network.logs` uses the mapped IPv4 form of `::ffff:` addresses and reads
+`vpc-id`; the Power Platform environment listing and Flow client, and GCP audit
+pages that raise `ValueError`, no longer discard findings already collected;
+`.vs/mcp.json` is read while the rest of `.vs` stays excluded (the exception
+lives in `mcp_config.py`, so the capped `walk.py` does not grow); and
+`--incremental` raises a split job's deadline once.
+
+**Gate integrity.** `tools/check_secrets.py` and the AI review gate's sanitizer
+learn 20+ vendor formats the scanner already withholds, credential-bearing
+webhook URLs and passwordless-user URLs, with a test that keeps them in step with
+the scanner's backstop; the gate decodes BOM-marked UTF-16 and UTF-32 files. The
+workflow policy rejects `|| echo`, `|| printf`, `set +e`, `set +o errexit` or
+`pipefail`, and non-default `shell:` lines. The `[tool.pytest.ini_options]` table
+is pinned so a configuration change cannot deselect the slow sweeps in CI.
+
+**Head review follow-ups.** A review of the PR head found seven gaps in these
+fixes, each now closed with a regression test that fails with its fix reverted:
+- A *directory* named `.vs/mcp.json` matched the kept file name, so the walk
+  descended and scanned the planted subtree, and the incremental fingerprint
+  listed it as the file, raised on it as a special file and fell back to an
+  uncached scan on every run. Every directory in an entered `.vs` is now pruned
+  and only non-directory entries are fingerprinted as the configuration.
+- The Auth0 `include_totals` shortfall was tested only under `clients`, so a
+  partial page saved under `records` or another accepted wrapper passed as
+  complete; every accepted envelope key is now checked.
+- An osquery event whose `unixTime` was missing, a digit string or spelled
+  `unix_time` ordered as time 0, so an untimed removal lost to an earlier timed
+  add. Both spellings and digit strings are read, and an untimed event is
+  ordered after the row's latest event by input position.
+- A Power Platform token response without a usable `access_token` raised
+  `KeyError`/`TypeError` past the per-audience handlers and discarded every
+  collected agent; the token reader raises `ValueError`, which they contain.
+- An unlabelled `code.filesystem` root is labelled by its absolute path, which
+  the distinct-label check skipped, so an explicit label naming that path for
+  another root still merged findings; unlabelled roots now join the check.
+- `.vs/mcp.json` findings are attributed to `Visual Studio`, not `generic`.
+- CLI errors go through `terminal_lines`, so a multi-line message keeps its
+  line breaks instead of printing a literal `\u000a`.
+
+**Merge review follow-up.** A digit-string `unixTime` longer than
+`sys.get_int_max_str_digits()` (4,300 digits by default) made `int()` raise
+inside `endpoint.inventory`'s `analyze()`, which builds every finding only after
+reading every row, so one such line in an osquery export emptied the run's
+findings (the scan still reported itself incomplete). A digit string longer than
+a 64-bit Unix time (19 digits) is now an unusable time, ordered by input
+position like a missing one, so a removal still uninstalls its row.
+
+**Left to the maintainer.** Two findings are reproduced but not changed, and two applied fixes leave a trade-off open:
+- The release `build` job runs `python -m build --no-isolation` in an
+  interpreter holding 92 packages outside the build lock, any of which can
+  rewrite the attested wheel and sdist through setuptools entry points. A
+  build-only virtual environment closes that route but not a `.pth` hook from
+  the same job interpreter, and runners grant passwordless sudo, so a real
+  boundary means changing the release job graph.
+- The distribution declares `Apache-2.0` while shipping two OWASP mapping
+  catalogs labelled `CC-BY-SA-4.0`, and `NOTICE` credits neither OWASP nor
+  MITRE ATLAS.
+- The two Mermaid diagrams now show as source on the docs site; rendering them
+  needs a vendored, reviewed, exact-version `mermaid.min.js`.
+- A CycloneDX endpoint keeps the sanitized `https://[REDACTED]@host` form, which
+  is not a strict RFC 3987 IRI; stripping the userinfo would diverge from the
+  JSON report.
+
+These changes are AI-assisted; the verification above is not independent human
+review.
+
 ### Documented supply-chain checks and reference truthfulness (October 26)
 
 An audit of the documentation against the code and the published artifacts,

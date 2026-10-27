@@ -34,7 +34,9 @@ def test_sanitize_env_values_policy_distinguishes_configuration_from_secrets():
 
 
 @pytest.mark.parametrize(
-    "name", ["AZURE_OPENAI_KEY", "DATABRICKS_TOKEN", "MODAL_TOKEN_SECRET", "LITELLM_MASTER_KEY"]
+    "name",
+    ["AZURE_OPENAI_KEY", "DATABRICKS_TOKEN", "MODAL_TOKEN_SECRET", "LITELLM_MASTER_KEY"]
+    + ["OPENAI_API_KEYS", "AZURE_DEVOPS_EXT_PAT"],
 )
 @pytest.mark.parametrize("shape", ["mapping", "variables", "list", "aliased"])
 def test_configuration_environment_still_redacts_named_secrets_from_siblings(name, shape):
@@ -84,6 +86,26 @@ def test_environment_style_credential_names_are_redacted_in_text(line, value):
 @pytest.mark.parametrize(
     "line",
     [
+        # Open WebUI pairs one key with each of its OPENAI_API_BASE_URLS, joined by ';'.
+        'docker run -e OPENAI_API_KEYS="{first};{second}" ghcr.io/open-webui/open-webui:main',
+        "OPENAI_API_KEYS={first};{second}",
+        "GEMINI_API_KEYS={first},{second}",
+        "API_KEYS={first}",
+        'api_keys = ["{first}", "{second}"]',
+        "export AZURE_DEVOPS_EXT_PAT={first}",
+        "ADO_PAT: {second}",
+    ],
+)
+def test_api_key_lists_and_personal_access_tokens_are_redacted_in_text(line):
+    # Neither value has a provider prefix, so only the name withholds it.
+    first, second = "synthetic-mistral-key-0000", "0123456789abcdef0123456789abcdef"
+    clean = sanitize_text(line.format(first=first, second=second))
+    assert first not in clean and second not in clean and REDACTED in clean
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
         "sort_key_fn = compute()",
         "key = 1",
         'nextPageToken = "abc"',
@@ -91,6 +113,8 @@ def test_environment_style_credential_names_are_redacted_in_text(line, value):
         'AWS_REGION = "us-east-1"',
         'OPENAI_BASE_URL = "https://api.openai.com/v1"',
         "MAX_TOKENS = 4096",
+        "date_pat = re.compile(r'[0-9]+')",
+        "json.dumps(record, sort_keys=True)",
     ],
 )
 def test_non_credential_assignments_are_preserved(line):

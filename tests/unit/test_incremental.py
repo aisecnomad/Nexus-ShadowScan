@@ -1389,6 +1389,40 @@ def test_deeper_default_excluded_probe_cannot_reuse_complete_entry_limited_scan(
     assert full_scan.stats[0].errors == changed.stats[0].errors
 
 
+def test_mcp_configuration_read_inside_a_default_excluded_directory_is_fingerprinted(tmp_path, index):
+    # The walk reads Visual Studio's .vs/mcp.json and nothing else in .vs.
+    cfg = config(tmp_path)
+    vs = tmp_path / "repo" / ".vs"
+    (vs / "Repo").mkdir(parents=True)
+    state = vs / "Repo" / "state.json"
+    state.write_text("{}")
+    first = Engine(cfg, index).run()
+    assert first.complete and not any(f.kind == Kind.MCP_SERVER for f in first.findings)
+    state.write_text('{"opened": true}')
+    assert Engine(cfg, index).run().stats[0].cached
+
+    configuration = vs / "mcp.json"
+    configuration.write_text(json.dumps({"servers": {"helper": {"command": "npx"}}}))
+    added = Engine(cfg, index).run()
+    assert not added.stats[0].cached
+    assert [f.metadata["path"] for f in added.findings if f.kind == Kind.MCP_SERVER] == [".vs/mcp.json"]
+    assert Engine(cfg, index).run().stats[0].cached
+    configuration.write_text(json.dumps({"servers": {"helper": {"command": "uvx"}}}))
+    assert not Engine(cfg, index).run().stats[0].cached
+
+
+def test_directory_named_like_the_vs_mcp_configuration_keeps_the_cache(tmp_path, index):
+    # The walk prunes a .vs/mcp.json directory, so the fingerprint must not try to read it as the file.
+    cfg = config(tmp_path)
+    planted = tmp_path / "repo" / ".vs" / "mcp.json"
+    planted.mkdir(parents=True)
+    (planted / "agent.py").write_text("from crewai import Agent\n")
+    first = Engine(cfg, index).run()
+    assert first.complete and not any(f.kind == Kind.MCP_SERVER for f in first.findings)
+    assert not any("fingerprint" in warning for warning in first.stats[0].warnings)
+    assert Engine(cfg, index).run().stats[0].cached
+
+
 def test_default_excluded_probe_consumes_the_fingerprint_entry_budget(tmp_path, index, monkeypatch):
     cfg = config(tmp_path)
     nested = tmp_path / "repo" / "vendor" / "a" / "b" / "c"

@@ -102,6 +102,15 @@ from `hostIdentifier` (or `label`), and the home from `username`, then the
 user directory in the extension path, then `uid-<uid>`. Records exported with `--dump-records` replay unchanged, so a
 collection on each laptop can be analysed centrally.
 
+A logger line in osquery's event format carries an `action`. A differential
+query logs a row as `added` when it appears and as `removed` when it goes, so
+the latest event for each row, by `unixTime` and then input order, decides
+whether the extension is still installed: an `added` or `snapshot` row is, a
+`removed` row is not. A differential log lists changes only, so supply it from
+the query's first run, whose results are all `added`; an extension installed
+before the log starts and unchanged since is not in it. A line with any other
+`action` is skipped with a warning, and the scan is incomplete.
+
 ### Safety and completeness
 
 - Every file and directory is opened without following a symbolic link in

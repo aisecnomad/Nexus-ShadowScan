@@ -2363,6 +2363,31 @@ def test_ci_never_deselects_the_slow_timed_sweeps() -> None:
         )
 
 
+def test_the_pytest_configuration_deselects_nothing() -> None:
+    """Every CI leg reads the pytest configuration, so it cannot narrow the suite either.
+
+    The CI commands are pinned with no selection flag, but ``-m "not slow"``, ``--deselect``
+    or ``--ignore`` in ``addopts``, or a narrower ``testpaths``, ``python_files`` or
+    ``norecursedirs``, would skip the sweeps in every leg without changing a workflow line.
+    The table is pinned whole, and nothing may override it: a ``pytest.toml`` or
+    ``pytest.ini`` is read instead of pyproject.toml, ``PYTEST_ADDOPTS`` extends every
+    command line, and a conftest ``collect_ignore`` drops files before collection.
+    """
+    assert _pyproject()["tool"]["pytest"]["ini_options"] == {
+        "testpaths": ["tests"],
+        "pythonpath": ["."],
+        "addopts": "--strict-markers --strict-config",
+    }, "a pytest setting changed; every CI leg inherits it, so check it selects the whole suite"
+    for name in ("pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini"):
+        assert not (ROOT / name).exists(), f"{name} would replace the pytest table in pyproject.toml"
+    for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        assert "PYTEST_ADDOPTS" not in _read(workflow), (
+            f"{_relative(workflow)} sets PYTEST_ADDOPTS, which adds options to every pinned pytest command"
+        )
+    for conftest in sorted((ROOT / "tests").rglob("conftest.py")):
+        assert "collect_ignore" not in _read(conftest), f"{_relative(conftest)} skips test files"
+
+
 def test_the_fail_closed_summary_names_the_coverage_budget() -> None:
     """The one line an operator reads before wiring exit 3 into a CI gate.
 

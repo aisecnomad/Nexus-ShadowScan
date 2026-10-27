@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from io import StringIO
 
+import click
 import pytest
+from click.testing import CliRunner
 from rich.console import Console
 
+from shadowscan.cli import main
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
 from shadowscan.models import Evidence, Finding, Kind, RiskFactor, ScanResult, ScanStats, Surface
 from shadowscan.reporters.table import print_table
+from shadowscan.utils.output import terminal_text
 
 
 @pytest.mark.parametrize(
@@ -72,3 +76,50 @@ def test_engine_repository_filename_is_inert_in_verbose_output(tmp_path):
     print_table(result, Console(file=output, force_terminal=False, width=240), verbose=True)
     assert "\x1b[2J" not in output.getvalue()
     assert r"agent\u001b[2J.py:1" in output.getvalue()
+
+
+@pytest.mark.parametrize("control", ["\x1b]52;c;dGVzdA==\x07", "\x9b2J"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["inventory", "check", "{cards}"],
+        ["code", "{src}", "-i", "{cards}", "-f", "json"],
+        ["merge", "{stale}", "{current}", "-f", "json"],
+        ["controls", "{stale}", "{current}", "-f", "json"],
+        ["dashboard", "{stale}", "{current}", "-o", "{out}"],
+    ],
+)
+def test_untrusted_file_name_in_a_cli_error_is_inert(tmp_path, command, control):
+    # Click strips only CSI sequences, and only off a terminal: an OSC clipboard write
+    # or a C1 control in a card or report file name reached stderr as it was.
+    cards = tmp_path / "agents"
+    cards.mkdir()
+    (cards / f"card{control}.yaml").write_text("agents: [unclosed\n", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    stale = tmp_path / f"host{control}.json"
+    stale.write_text('{"findings": [], "finding_identity_schema": "legacy"}', encoding="utf-8")
+    (tmp_path / "current.json").write_text('{"findings": []}', encoding="utf-8")
+    paths = {"cards": cards, "src": tmp_path / "src", "stale": stale}
+    paths |= {"current": tmp_path / "current.json", "out": tmp_path / "dashboard.html"}
+
+    result = CliRunner().invoke(main, [arg.format_map(paths) for arg in command])
+
+    assert result.exit_code == 1, result.output
+    assert control not in result.output
+    assert terminal_text(control) in result.stderr
+
+
+def test_multi_line_cli_error_keeps_its_line_breaks():
+    # Neutralizing controls must not fold a multi-line message into one line of \\u000a.
+    @click.command("synthetic-multi-line-error")
+    def failing() -> None:
+        raise click.ClickException("first line\r\nsecond line \x1b]52;c;dGVzdA==\x07")
+
+    main.add_command(failing)
+    try:
+        result = CliRunner().invoke(main, ["synthetic-multi-line-error"])
+    finally:
+        main.commands.pop("synthetic-multi-line-error")
+    assert result.exit_code == 1
+    assert "Error: first line\nsecond line \\u001b]52;c;dGVzdA==\\u0007\n" in result.output
+    assert "\\u000a" not in result.output and "\\u000d" not in result.output

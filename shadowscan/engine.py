@@ -12,7 +12,7 @@ import re
 import secrets
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -591,6 +591,7 @@ class _ConnectorRunner:
             surface = resolved.surface
             if isinstance(surface, Surface):
                 self._scopes.declare_surface(number, surface)
+        self._extend_deadline_for_large_input(spec, _hooks(resolved), state)
         roots = spec.config.get("paths")
         root_ids = spec.config.get("root_ids")
         if isinstance(roots, list):
@@ -696,7 +697,9 @@ class _ConnectorRunner:
 
         Done here rather than before the job starts, so it reuses the class
         the runner has already resolved: a second lookup would happen outside
-        the job's origin-policy scope.
+        the job's origin-policy scope. Done once per job, from every root it
+        scans: the roots of a split job share its deadline, and raising it
+        again for each root would carry the job past ``MAX_AUTO_TIMEOUT``.
         """
         if not connector_timeout_is_default(self._config.connector_timeout_seconds):
             return
@@ -749,7 +752,6 @@ class _ConnectorRunner:
             resolved = _hook_failure(spec.name, "inherits_instance_credentials_approval()", exc)
             hooks, inherits_approval = _hooks(resolved), True
         cfg = self._connector_config(spec, inherits_approval, dump_key)
-        self._extend_deadline_for_large_input(spec, hooks, state)
         identity_key = self._run_identity_key if hooks.uses_run_identity_key else None
         ctx = ConnectorContext(
             config=cfg,
@@ -1330,7 +1332,9 @@ class Engine:
         ]
 
     @staticmethod
-    def _reject_selection(result: ScanResult, invalid: list[str]) -> ScanResult:
+    def _reject_selection(
+        result: ScanResult, invalid: list[str], extra_stats: Sequence[ScanStats] = ()
+    ) -> ScanResult:
         result.collection_scope = {
             "schema": "shadowscan.collection-scope/v1",
             "comparable": False,
@@ -1347,7 +1351,8 @@ class Engine:
                 errors=[
                     sanitize(f"unknown or disabled connector selector: {selector}") for selector in invalid
                 ],
-            )
+            ),
+            *extra_stats,
         ]
         result.finished_at = now_iso()
         return result
@@ -1607,13 +1612,23 @@ class Engine:
         entry.finished_at = now_iso()
         return entry
 
-    def run(self, only: list[str] | None = None, *, job_deadline: float | None = None) -> ScanResult:
+    def run(
+        self,
+        only: list[str] | None = None,
+        *,
+        job_deadline: float | None = None,
+        extra_stats: Sequence[ScanStats] = (),
+    ) -> ScanResult:
         """Run the scan and return its result.
 
         ``job_deadline`` is the ``time.monotonic()`` time at which the caller
         stops the process, if it does: LLM triage then ends early enough to
         leave time to emit the report. It does not bound connector collection.
         A value that is not None or a finite number is refused before collection.
+
+        ``extra_stats`` are the caller's own diagnostics (the endpoint command's
+        discovery, for example). They join the run's stats before the record-export
+        manifest records whether the run was complete.
         """
         job_deadline = _validated_job_deadline(job_deadline)
         self._prepare_run()
@@ -1625,11 +1640,13 @@ class Engine:
         )
         invalid = self._invalid_selectors(only)
         if invalid:
-            return self._reject_selection(result, invalid)
+            return self._reject_selection(result, invalid, extra_stats)
         jobs = self._select_jobs(only)
         specs = [spec for _, spec in jobs]
         self.config.validate_connector_isolation(specs)
+        self.config.validate_distinct_scan_labels(specs)
         stats = self._selection_stats(specs) + self._inventory_stats(specs, result.started_at)
+        stats += extra_stats
         cache = IncrementalCache(self.config, self.index, identity_key=self._identity_key)
         dump_records = self.config.dump_records
         dump_directory = prepare_private_directory(dump_records) if dump_records else None

@@ -163,6 +163,7 @@ from shadowscan.connectors.code.manifests import _pattern_timeout as _pattern_ti
 from shadowscan.connectors.code.manifests import is_manifest_name as is_manifest_name
 from shadowscan.connectors.code.manifests import manifest_comment_projection as manifest_comment_projection
 from shadowscan.connectors.code.manifests import parse_manifest as parse_manifest
+from shadowscan.connectors.code.mcp_config import DEFAULT_EXCLUDED_MCP_CONFIGS
 from shadowscan.connectors.code.mcp_config import _mcp_client_for as _mcp_client_for
 from shadowscan.connectors.code.mcp_config import _parse_mcp_servers as _parse_mcp_servers
 from shadowscan.connectors.code.mcp_tools import MCPToolLimitError as MCPToolLimitError
@@ -835,8 +836,12 @@ class FilesystemConnector(BaseConnector):
         extra = _validated_names(ctx.get("exclude"), "exclude")
         self.default_excludes = config_boolean(ctx.get("default_excludes", True), "default_excludes")
         self._explicit_exclude_names = frozenset(e for e in extra if "*" not in e and "/" not in e)
+        # The names the walk prunes. It enters a built-in one that holds a client's MCP
+        # configuration for that file alone (``beside_entered_mcp_config``), unless `exclude` names it.
         self.exclude_names = (
-            set(DEFAULT_EXCLUDES) if self.default_excludes else set(VCS_METADATA_EXCLUDES)
+            set(DEFAULT_EXCLUDES - DEFAULT_EXCLUDED_MCP_CONFIGS.keys())
+            if self.default_excludes
+            else set(VCS_METADATA_EXCLUDES)
         ) | self._explicit_exclude_names
         self.exclude_globs = [e for e in extra if "*" in e or "/" in e]
         self.include_paths = _validated_include(ctx.get("include"))

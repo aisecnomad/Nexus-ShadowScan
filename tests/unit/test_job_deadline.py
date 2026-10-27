@@ -114,11 +114,11 @@ def test_cli_passes_the_watchdog_expiry_to_the_engine(
     CliRunner().invoke(main, ["scan", "--config", str(path), "--format", "json", *option])
     if armed_with is None:
         arm.assert_not_called()
-        assert received == [{"job_deadline": None}]
+        assert received == [{"job_deadline": None, "extra_stats": ()}]
     else:
         arm.assert_called_once_with(armed_with)
         arm.return_value.cancel.assert_called_once_with()
-        assert received == [{"job_deadline": 12345.0}]
+        assert received == [{"job_deadline": 12345.0, "extra_stats": ()}]
 
 
 def test_jwt_reuses_watchdog_armed_before_stdin(monkeypatch):

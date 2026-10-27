@@ -40,7 +40,9 @@ the CLI passes as `run(job_deadline=...)` only ends LLM triage early enough to w
 report, and does not bound collection.
 
 A connector error, timeout or limit makes `result.complete` false, which the CLI reports as
-exit 3.
+exit 3. So does an incomplete entry in `run(extra_stats=[...])`, the caller's own `ScanStats`
+diagnostics (the `endpoint` command's discovery, for example): they join the result's stats
+before the `options.dump_records` manifest records whether the run was complete.
 
 ## Post-collection pipeline
 

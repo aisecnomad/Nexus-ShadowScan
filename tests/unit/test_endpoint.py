@@ -221,6 +221,30 @@ def test_endpoint_own_profile_with_redirected_appdata_is_incomplete(tmp_path: Pa
     assert report["summary"]["complete"] is True and report["findings"]
 
 
+def test_endpoint_discovery_gap_marks_the_record_export_manifest_incomplete(tmp_path: Path, monkeypatch):
+    # Replay trusts manifest.json to say whether the run behind an export was
+    # complete. A redirected %APPDATA% is a gap only the command sees (the
+    # profile walk itself completes), so the manifest must not call the run complete.
+    home = tmp_path / "Users" / "bob"
+    home.mkdir(parents=True)
+    (home / ".claude.json").write_text(MCP)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "share" / "bob" / "AppData" / "Roaming"))
+    args = ["endpoint", "--format", "json", "-o", str(tmp_path / "report.json"), "--dump-records"]
+    result = CliRunner().invoke(main, [*args, str(tmp_path / "gap")])
+    assert result.exit_code == 3, result.output
+    manifest = json.loads((tmp_path / "gap" / "manifest.json").read_text())
+    assert manifest["complete"] is False
+    # The profile's own locations were read in full, so their export is still written.
+    assert [(entry["complete"], entry["exported"]) for entry in manifest["exports"]] == [(True, True)]
+    # A discovery warning alone (no known location exists) leaves the run complete.
+    (home / ".claude.json").unlink()
+    monkeypatch.delenv("APPDATA")
+    result = CliRunner().invoke(main, [*args, str(tmp_path / "ok")])
+    assert result.exit_code == 0, result.output
+    assert json.loads((tmp_path / "ok" / "manifest.json").read_text())["complete"] is True
+
+
 def test_endpoint_instruction_alias_to_an_unselected_file_is_incomplete(tmp_path: Path):
     # A link inside a selected directory passes the location check; its target
     # outside the known locations is never read, so the scan is incomplete.

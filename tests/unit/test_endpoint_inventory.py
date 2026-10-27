@@ -348,6 +348,90 @@ def test_osquery_logger_envelope_and_unknown_rows(run_connector, tmp_path):
     assert any("skipped 1 record(s)" in w for w in ctx.stats.warnings)
 
 
+def test_osquery_differential_events_replay_to_current_state(run_connector, tmp_path):
+    """Regression: a differential "removed" row is an uninstall, never an installed extension."""
+
+    def event(action, unix_time, **columns):
+        return {"hostIdentifier": "mac-12", "unixTime": unix_time, "action": action, "columns": columns}
+
+    def vscode(extension_id, version):
+        publisher, name = extension_id.split(".")
+        return {"username": "lee", "publisher": publisher, "name": name, "uuid": "u", "version": version}
+
+    chrome = {"username": "lee", "browser_type": "chrome", "identifier": "abc", "name": "ChatGPT for Google"}
+    lines = [
+        # Read out of order: the later removal still wins.
+        event("removed", 300, **vscode("github.copilot", "1")),
+        event("added", 100, **vscode("github.copilot", "1")),
+        # An upgrade removes the old row and adds the new one in the same result.
+        event("added", 100, **vscode("saoudrizwan.claude-dev", "1")),
+        event("added", 200, **vscode("saoudrizwan.claude-dev", "2")),
+        event("removed", 200, **vscode("saoudrizwan.claude-dev", "1")),
+        # Removed before the log starts; then reinstalled.
+        event("removed", 100, **vscode("continue.continue", "1")),
+        event("removed", 100, **chrome),
+        event("added", 400, **chrome),
+        event("snapshot", 500, **vscode("openai.chatgpt", "1")),
+        # An exported record cannot set the internal action marker.
+        {
+            "record_type": "ide_extension",
+            "extension_id": "rooveterinaryinc.roo-cline",
+            "_osquery_action": "removed",
+        },
+    ]
+    path = write(tmp_path, "events.jsonl", "".join(json.dumps(line) + "\n" for line in lines))
+    findings, ctx = run_connector("endpoint.inventory", input=str(path), label="fleet")
+    assert not ctx.stats.warnings and not ctx.stats.incomplete
+    by_title = {f.title: f for f in findings}
+    assert sorted(by_title) == [
+        "AI browser extension installed: ChatGPT for Google (Chrome) on mac-12 (~lee)",
+        "AI editor extension installed: Cline on mac-12 (~lee)",
+        "AI editor extension installed: OpenAI Codex on mac-12 (~lee)",
+        "AI editor extension installed: Roo Code on fleet (~unknown)",
+    ]
+    assert by_title["AI editor extension installed: Cline on mac-12 (~lee)"].metadata["versions"] == ["2"]
+
+    # A removal whose time is missing, stringified or spelled unix_time still uninstalls the row.
+    untimed = [
+        event("added", 100, **vscode("github.copilot", "1")),
+        {**event("removed", 0, **vscode("github.copilot", "1")), "unixTime": None},
+        event("added", 100, **vscode("saoudrizwan.claude-dev", "1")),
+        event("removed", "200", **vscode("saoudrizwan.claude-dev", "1")),
+        event("added", 100, **vscode("continue.continue", "1")),
+        {
+            "hostIdentifier": "mac-12",
+            "unix_time": 200,
+            "action": "removed",
+            "columns": vscode("continue.continue", "1"),
+        },
+    ]
+    write(tmp_path, "events.jsonl", "".join(json.dumps(line) + "\n" for line in untimed))
+    findings, ctx = run_connector("endpoint.inventory", input=str(path), label="fleet")
+    assert not findings and not ctx.stats.incomplete
+
+    # An event this connector cannot interpret is skipped, and the scan is incomplete.
+    write(tmp_path, "events.jsonl", json.dumps(event("deleted", 600, **chrome)) + "\n")
+    findings, ctx = run_connector("endpoint.inventory", input=str(path), label="fleet")
+    assert not findings and ctx.stats.incomplete
+    assert any("skipped 1 record(s)" in w for w in ctx.stats.warnings)
+
+
+def test_osquery_event_time_too_long_for_an_integer_is_untimed(run_connector, tmp_path):
+    """Regression: one digit-string unixTime past int()'s digit limit discarded every finding."""
+    cline = {"username": "lee", "publisher": "saoudrizwan", "name": "claude-dev", "uuid": "u", "version": "1"}
+    copilot = {**cline, "publisher": "github", "name": "copilot"}
+    lines = [
+        {"hostIdentifier": "mac-12", "unixTime": 100, "action": "added", "columns": copilot},
+        {"hostIdentifier": "mac-12", "unixTime": 100, "action": "added", "columns": cline},
+        # No usable time, so it is ordered after the row's add and still uninstalls Cline.
+        {"hostIdentifier": "mac-12", "unixTime": "1" * 5000, "action": "removed", "columns": cline},
+    ]
+    path = write(tmp_path, "events.jsonl", "".join(json.dumps(line) + "\n" for line in lines))
+    findings, ctx = run_connector("endpoint.inventory", input=str(path), label="fleet")
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    assert [f.title for f in findings] == ["AI editor extension installed: GitHub Copilot on mac-12 (~lee)"]
+
+
 @pytest.mark.parametrize(
     ("line", "shell", "tool"),
     [

@@ -391,6 +391,23 @@ def test_unnamed_servers_and_endpoint_bounds_are_never_silent(tmp_path):
     assert {"aggregate": "incomplete", "dependencies": ["ss-cfg"]} in doc["compositions"]
 
 
+def test_endpoints_with_withheld_userinfo_are_kept():
+    # Sanitized userinfo reads '[REDACTED]@', which urlsplit rejects as a malformed IPv6 host.
+    password = "placeholder-not-a-secret"
+    servers = [
+        {"name": "password", "transport": "sse", "url": "https://ops:" + password + "@api.example.com/sse"},
+        {"name": "user", "transport": "http", "urls": ["HTTPS://ops@mcp.example.com/mcp"]},
+    ]
+    f = _finding("ss-cfg", Kind.MCP_SERVER, metadata={"servers": servers})
+    out = render_cyclonedx(_result([f]))
+    assert password not in out
+    doc = json.loads(out)
+    _resolves(doc)
+    by_name = {s["name"]: s for s in doc["services"] if s.get("group") == "mcp-server"}
+    assert by_name["password"]["endpoints"] == ["https://[REDACTED]@api.example.com/sse"]
+    assert by_name["user"]["endpoints"] == ["HTTPS://[REDACTED]@mcp.example.com/mcp"]
+
+
 def test_mcp_registry_matches_become_service_properties():
     matched = {
         "registry": "official",

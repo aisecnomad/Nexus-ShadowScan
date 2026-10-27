@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, BinaryIO, cast
 from shadowscan.connectors.base import ConnectorContext, ConnectorError, incomplete_reason
 from shadowscan.connectors.code.lockfiles import LOCKFILE_NAMES
 from shadowscan.connectors.code.manifests import is_manifest_name
-from shadowscan.connectors.code.mcp_config import json_readings_declare_mcp
+from shadowscan.connectors.code.mcp_config import beside_entered_mcp_config, json_readings_declare_mcp
 from shadowscan.connectors.code.model_artifacts import ARTIFACT_SUFFIXES
 from shadowscan.connectors.code.path_context import _is_test_path, negative_context
 from shadowscan.connectors.code.scan_records import (
@@ -453,13 +453,13 @@ DEFAULT_EXCLUDES = {
     "thirdparty",
     "external",
 }
-# The walk skips DEFAULT_EXCLUDES at any depth unless `default_excludes` is false.
-# Most are tool metadata, caches, virtualenvs, dependency trees and IDE state that never hold a project's own
-# source: those are skipped without comment. The names here are build output or
-# vendored code by convention, but projects also keep first-party code in them
-# (scripts in bin/, an agent under vendor/ or build/). A directory with these
-# names that holds a file is reported as a scan warning (not incomplete) so the
-# omission is visible. This is the one definition of the split.
+# The walk skips DEFAULT_EXCLUDES at any depth unless `default_excludes` is false, except for the MCP
+# configuration a client reads in one (`.vs/mcp.json`, mcp_config.DEFAULT_EXCLUDED_MCP_CONFIGS). Most are
+# tool metadata, caches, virtualenvs, dependency trees and IDE state: those are skipped without comment.
+# The names here are build output or vendored code by convention, but projects also keep first-party code
+# in them (scripts in bin/, an agent under vendor/ or build/). A directory with these names that holds a
+# file is reported as a scan warning (not incomplete) so the omission is visible. This is the one
+# definition of the split.
 DISCLOSED_DEFAULT_EXCLUDES = frozenset(
     {
         "bin",
@@ -1022,8 +1022,8 @@ class TreeWalker:
         self.skipped_oversize_test_fixtures = 0
 
     def _excluded(self, rel: str, name: str) -> bool:
-        """Directory exclusion: configured names and globs."""
-        return name in self.exclude_names or self._excluded_file(rel)
+        """Directory exclusion: configured names, globs and every directory inside an entered ``.vs``."""
+        return name in self.exclude_names or self._excluded_file(rel, directory=True)
 
     def included(self, rel: str) -> bool:
         """Whether ``rel`` is one of the configured include paths or sits below one (all, when unset)."""
@@ -1054,12 +1054,12 @@ class TreeWalker:
             return True
         return False
 
-    def _excluded_file(self, rel: str) -> bool:
-        """File exclusion: globs only, so a file named like an excluded directory is still scanned."""
+    def _excluded_file(self, rel: str, *, directory: bool = False) -> bool:
+        """File exclusion: globs (directory names never exclude a file) and all of ``.vs`` but mcp.json."""
         for g in self.exclude_globs:
             if PurePosixPath(rel).match(g) or PurePosixPath(rel).match(g.rstrip("/") + "/*"):
                 return True
-        return False
+        return self.default_excludes and beside_entered_mcp_config(rel, self.exclude_names, directory)
 
     def _analyzed_name(self, rel: str, name: str) -> bool:
         """Whether the scanner would read a regular file called ``name`` for evidence.

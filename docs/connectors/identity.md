@@ -377,6 +377,12 @@ The latter stays unattributed at possible confidence. Machine clients are kept b
 [unattributed applications](#unattributed-applications) when nothing AI is
 established. Auth: M2M client for the Management API
 (`read:clients`, `read:client_grants`) or `token`.
+An offline `clients` page saved from the Management API is a partial export
+when its `start` plus its client count is below its `total` (an
+`include_totals` page) or when it carries a checkpoint `next` token: its
+clients are kept and the scan is incomplete. A non-integer or negative
+`total` or `start`, or a non-string `next`, is invalid pagination metadata
+and also incomplete.
 
 ## `identity.jwt`
 Decodes tokens (never stored) and classifies the holder as `human`, `service`,

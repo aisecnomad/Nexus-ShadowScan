@@ -90,9 +90,13 @@ _KEY_NORMALISE = re.compile(r"[^a-z0-9]")
 # DATABRICKS_TOKEN, MODAL_TOKEN_SECRET, LITELLM_MASTER_KEY) even though the bare
 # suffixes are too broad for arbitrary record fields (S3 object keys, pagination
 # tokens, tag "Key" members). Applied to assignments in text excerpts only, where
-# over-redaction of a sort key or a page token costs nothing.
+# over-redaction of a sort key or a page token costs nothing. A personal access
+# token's name counts in upper case only (AZURE_DEVOPS_EXT_PAT, ADO_PAT): 'date_pat'
+# names a regular expression. A list of API keys (Open WebUI's OPENAI_API_KEYS,
+# 'k1;k2') counts as one key does; plural 'tokens' and 'secrets' do not (MAX_TOKENS).
 _ASSIGNMENT_CREDENTIAL_NAME = re.compile(
-    r"(?i)[a-z][a-z0-9]*(?:_[a-z0-9]+)*_(?:key|token|secret|password|passwd|credentials?)"
+    r"(?i)[a-z][a-z0-9]*(?:_[a-z0-9]+)*_(?:key|token|secret|password|passwd|credentials?|(?-i:PAT))"
+    r"|(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_)?api_keys"
 )
 
 

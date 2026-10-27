@@ -537,6 +537,13 @@ def test_gcp_empty_service_usage_response_is_not_an_empty_project(index):
     [
         ([HttpError(403, "https://logging.googleapis.com")], "audit logs not readable", 0),
         ([requests.ConnectionError("reset")], "audit logs not readable", 0),
+        # HttpClient raises ValueError for an oversized, slow or non-JSON body.
+        ([ValueError("HTTP response exceeds the read deadline")], "audit logs not readable", 0),
+        (
+            [{"entries": [{"protoPayload": {}}], "nextPageToken": "a"}, ValueError("Invalid JSON response")],
+            "audit logs not readable",
+            1,
+        ),
         ([{"error": {"code": 400}}], "invalid audit log response", 0),
         ([{"entries": "not-a-list"}], "invalid audit log response", 0),
         (
@@ -563,6 +570,35 @@ def test_gcp_audit_collection_fails_closed_and_keeps_observed_events(index, resp
     assert len(records) == expected
     assert connector.ctx.stats.incomplete
     assert any(warning in w for w in connector.ctx.stats.warnings)
+
+
+def test_gcp_unreadable_audit_page_keeps_other_projects_callers(index):
+    def page(project: str) -> dict[str, Any]:
+        email = f"agent-runner@{project}.iam.gserviceaccount.com"
+        payload = {"methodName": "GenerateContent", "authenticationInfo": {"principalEmail": email}}
+        return {"entries": [{"protoPayload": payload}]}
+
+    answers = iter([page("first"), ValueError("HTTP response exceeds the read deadline"), page("third")])
+
+    def audit(url: str) -> Any:
+        answer = next(answers)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    connector = GcpConnector(
+        context(index, projects=["first", "second", "third"], audit_days=1, locations=["us-central1"])
+    )
+    fake = FakeGoogle(
+        {"/services": enabled("aiplatform.googleapis.com"), "/serviceAccounts": {"accounts": []}},
+        posts={":getIamPolicy": {"bindings": []}, "entries:list": audit},
+    )
+    connector._auth = lambda: setattr(connector, "http", fake)  # type: ignore[method-assign]
+    findings = _by_kind(list(connector.analyze(connector.collect())))
+    # One project's unreadable page neither drops the callers already read nor stops later projects.
+    assert sorted(f.account for f in findings["caller/principal"]) == ["first", "third"]
+    assert "cloud.gcp: audit logs not readable for second (ValueError)" in connector.ctx.stats.warnings
+    assert connector.ctx.stats.incomplete
 
 
 def test_gcp_audit_pages_forward_their_continuation_token(index):

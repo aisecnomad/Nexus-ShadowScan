@@ -103,7 +103,8 @@ def test_power_platform_rejects_cross_origin_environment_continuation(monkeypatc
     assert any(f.resource == "power-platform:app:app-1" for f in findings)
     assert ctx.stats.incomplete
     assert len([call for call in calls if call[0] == BAP]) == 1
-    assert "attacker.example" not in " ".join(ctx.stats.errors)
+    assert "attacker.example" not in " ".join(ctx.stats.errors + ctx.stats.warnings)
+    assert set(ctx.stats.incomplete_reasons) == {"upstream-error"}
 
 
 def test_power_platform_app_later_page_failure_keeps_findings_and_scans_next_environment(
@@ -137,6 +138,59 @@ def test_power_platform_app_later_page_failure_keeps_findings_and_scans_next_env
     assert any("apps in env-1: HTTP 403" in warning for warning in ctx.stats.warnings)
     assert all("secret=" not in warning for warning in ctx.stats.warnings)
     assert len([call for call in calls if call[0] == PAPPS]) == 3
+
+
+DATAVERSE = "https://org1.crm.dynamics.com"
+AGENT_AND_FIRST_APP = {"power-platform:bot:bot-1", "power-platform:app:app-env-1"}
+
+
+@pytest.mark.parametrize(
+    ("failure", "status", "reason", "resources"),
+    [
+        ("environments", 503, "upstream-error", AGENT_AND_FIRST_APP),
+        ("environments", 403, "access-denied", AGENT_AND_FIRST_APP),
+        ("flows in env-1", 400, "upstream-error", AGENT_AND_FIRST_APP | {"power-platform:app:app-env-2"}),
+    ],
+)
+def test_power_platform_later_failure_keeps_collected_copilot_studio_agents(
+    monkeypatch, run_connector, failure, status, reason, resources
+):
+    # analyze() reports agents only after the last record, so a failure that
+    # escaped collect() used to discard the agent already collected in env-1.
+    dataverse_env = _env("env-1")
+    dataverse_env["properties"]["linkedEnvironmentMetadata"] = {"instanceUrl": DATAVERSE + "/"}
+
+    def respond(base, path, params):
+        if base == BAP:
+            if "$skiptoken" not in path:
+                return {"value": [dataverse_env], "nextLink": BAP + "/environments?$skiptoken=opaque"}
+            if failure == "environments":
+                raise HttpError(status, BAP + "/environments?$skiptoken=do-not-log")
+            return {"value": [_env("env-2")]}
+        if base == PAPPS:
+            return {"value": [_app("app-env-1" if "/env-1/" in path else "app-env-2")]}
+        if base == DATAVERSE and path.endswith("/bots"):
+            return {"value": [{"botid": "bot-1", "name": "HR Helper", "schemaname": "hr_helper"}]}
+        return {"value": []}
+
+    def token(self, scope):
+        # The Power Automate audience is refused; the other audiences are granted.
+        if failure != "environments" and scope == "https://service.flow.microsoft.com/.default":
+            raise HttpError(status, "https://login.microsoftonline.com/tenant/oauth2/v2.0/token")
+        return scope
+
+    _mock_live_power_api(monkeypatch, respond)
+    monkeypatch.setattr(PowerPlatformConnector, "_token", token)
+    findings, ctx = run_connector(
+        "lowcode.power-platform", tenant_id="tenant", client_id="app", client_secret="secret"
+    )
+
+    assert {f.resource for f in findings} == resources
+    assert ctx.stats.incomplete
+    assert not ctx.stats.errors
+    assert f"lowcode.power-platform: {failure}: HTTP {status}" in ctx.stats.warnings
+    assert set(ctx.stats.incomplete_reasons) == {reason}
+    assert all("do-not-log" not in message for message in ctx.stats.warnings)
 
 
 @pytest.mark.parametrize(
@@ -246,3 +300,40 @@ def test_notion_missing_or_nonboolean_has_more_is_incomplete(monkeypatch, run_co
     assert ctx.stats.incomplete
     assert "invalid has_more" in " ".join(ctx.stats.warnings)
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("body", [{}, {"access_token": 5}, {"access_token": ""}, ["access_token"]])
+def test_power_platform_malformed_token_response_keeps_collected_agents(monkeypatch, run_connector, body):
+    # A 200 token response without a usable access_token used to raise KeyError or
+    # TypeError out of collect() and discard the Copilot Studio agent from env-1.
+    dataverse_env = _env("env-1")
+    dataverse_env["properties"]["linkedEnvironmentMetadata"] = {"instanceUrl": DATAVERSE + "/"}
+
+    def respond(base, path, params):
+        if base == BAP:
+            return {"value": [dataverse_env, _env("env-2")]}
+        if base == PAPPS:
+            return {"value": [_app("app-env-1" if "/env-1/" in path else "app-env-2")]}
+        if base == DATAVERSE and path.endswith("/bots"):
+            return {"value": [{"botid": "bot-1", "name": "HR Helper", "schemaname": "hr_helper"}]}
+        return {"value": []}
+
+    real_token = PowerPlatformConnector._token
+    _mock_live_power_api(monkeypatch, respond)
+    monkeypatch.setattr(PowerPlatformConnector, "_token", real_token)
+    monkeypatch.setattr(HttpClient, "post", lambda self, url, **kwargs: kwargs["data"]["scope"])
+
+    def read_json_response(self, scope):
+        return body if scope == "https://service.flow.microsoft.com/.default" else {"access_token": scope}
+
+    monkeypatch.setattr(HttpClient, "read_json_response", read_json_response)
+    findings, ctx = run_connector(
+        "lowcode.power-platform", tenant_id="tenant", client_id="app", client_secret="secret"
+    )
+
+    assert {f.resource for f in findings} == AGENT_AND_FIRST_APP | {"power-platform:app:app-env-2"}
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert (
+        sum(warning.startswith("lowcode.power-platform: flows in env-") for warning in ctx.stats.warnings)
+        == 2
+    )

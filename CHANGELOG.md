@@ -8,6 +8,22 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## Unreleased
 
+- An audit with each finding reproduced before it was fixed closes 21 gaps.
+  Fail-closed: a single saved Zapier, Auth0 or Slack API page, a staged
+  submodule hidden by `ignore = all`, an endpoint `--dump-records` manifest and
+  repository discovery through an invalid `.git` no longer look complete.
+  Redaction withholds `*_API_KEYS`/`*_PAT` values and a Smithery MCP URL's
+  `config`. Two code entries that would merge different repositories into one
+  finding are refused. Detection keeps collected Power Platform and GCP findings
+  when a later call fails, reads Visual Studio's `.vs/mcp.json`, and no longer
+  reports osquery-removed extensions or deleted Slack bot users as installed or
+  splits IPv4-mapped IPv6 hosts. The secrets gate learns 20+ credential formats
+  and UTF-16/32 files, and the CI policy catches more failure suppressions.
+  Follow-ups from the head review close seven gaps in these fixes (a `.vs/mcp.json`
+  directory, Auth0 pages under other envelope keys, untimed osquery removals,
+  a malformed Power Platform token, unlabelled roots in the label check,
+  Visual Studio attribution and multi-line CLI errors).
+
 - Documented supply-chain checks are tightened: `gh attestation verify` in the
   install guide and publishing step 6 pins `release.yml` on `main` at the
   tagged commit on a GitHub-hosted runner (`--repo` alone accepted any workflow

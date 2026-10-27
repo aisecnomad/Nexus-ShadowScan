@@ -26,6 +26,7 @@ from requests import RequestException
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import failure_summary, finalize
 from shadowscan.connectors.identity.common import app_product_or_hint, assess_app, summarize_scopes
+from shadowscan.connectors.offline import UNCOLLECTED_NEXT_PAGE
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.text import get_path, parse_timestamp, to_iso
@@ -208,6 +209,27 @@ class SlackConnector(BaseConnector):
             params["cursor"] = cursor
         self.ctx.warn(f"saas.slack: page limit for {path}", incomplete=True)
 
+    @staticmethod
+    def _offline_pagination_issue(data: dict[str, Any]) -> str | None:
+        # team.integrationLogs pages by number (paging.page of paging.pages)
+        # rather than by the cursor the shared check reads; collect() reads to
+        # the last page, so an earlier saved page is a partial export.
+        issue = BaseConnector._offline_pagination_issue(data)
+        if issue or "paging" not in data:
+            return issue
+        paging = data["paging"]
+        page = paging.get("page", 1) if isinstance(paging, dict) else None
+        pages = paging.get("pages") if isinstance(paging, dict) else None
+        if (
+            type(page) is not int
+            or type(pages) is not int
+            or page < 1
+            or pages < 0
+            or (pages == 0 and data.get("logs"))
+        ):
+            return "offline export has invalid pagination metadata"
+        return UNCOLLECTED_NEXT_PAGE if page < pages else None
+
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         export = self._index_records(records)
         workspace = self._workspace(export)
@@ -305,6 +327,10 @@ class SlackConnector(BaseConnector):
                 export.foreign_records += 1
                 continue
             if kind == "bot_user":
+                if rec.get("deleted") is True:
+                    # Slack deactivates the bot user of an uninstalled app; it
+                    # is not evidence that the app is installed.
+                    continue
                 app_id = get_path(rec, "profile.api_app_id") or rec.get("id")
                 app_key = str(app_id)
                 existing = export.bots.get(app_key)
@@ -396,7 +422,8 @@ class SlackConnector(BaseConnector):
         ):
             return None
         if any(
-            rec.get(key) is not None and not isinstance(rec[key], bool) for key in ("is_bot", "is_app_user")
+            rec.get(key) is not None and not isinstance(rec[key], bool)
+            for key in ("is_bot", "is_app_user", "deleted")
         ):
             return None
         kind = rec.get("_kind") or _infer(rec)

@@ -43,6 +43,50 @@ release is created by this change.
 
 ## Migration notes and change history
 
+Unreleased: what an operator sees change after the October 26 audit fixes.
+
+- **Exit 3 where 0 was reported.** An offline replay of a single saved
+  `lowcode.zapier` `/v2/zaps` page with `links.next`, an `identity.auth0`
+  page short of its `total` (under `clients` or any other accepted envelope key)
+  or carrying a checkpoint `next`, or a
+  `saas.slack` `team.integrationLogs` page below `paging.pages` is
+  `unscanned-input` (malformed continuation metadata `unparsed-input`); observed
+  records are kept. `shadowscan code --quick` and the pre-commit hook exit 3 for
+  a staged submodule even when `.gitmodules` or `diff.ignoreSubmodules` sets
+  `ignore = all`. Local Git metadata commands no longer fall back from an
+  invalid `<root>/.git` to the scan root as a bare repository or to an enclosing
+  repository. `shadowscan endpoint --dump-records` writes `"complete": false` in
+  `manifest.json` whenever the scan itself is incomplete.
+- **Exit 1 where a merged report was produced.** A configuration with two
+  `code.filesystem` entries that scan different roots under the same effective
+  label (or the same label and `root_id`) is refused before scanning: such
+  entries produced identical finding IDs, and one repository's findings were
+  merged into the other's. Give each entry a distinct `label`. Entries that point
+  at the same root are still accepted, and no accepted configuration's finding
+  IDs change. An entry without a label takes its root's absolute path as its
+  label, so another entry that names that path as its label for a different
+  root is refused too.
+- **Credential policy.** Values after `*_API_KEYS`/`api_keys` names (Open WebUI's
+  `OPENAI_API_KEYS`) and upper-case `*_PAT` names, and the `config` query field of
+  a Smithery-hosted MCP URL (base64 or percent-encoded server configuration with
+  its keys), are withheld. Reports and `--dump-records` exports from earlier
+  builds may hold such values: treat them as sensitive and rescan before sharing.
+- **Findings that change.** `.vs/mcp.json` is read despite the default `.vs`
+  exclusion, so Visual Studio solutions can report new MCP configuration,
+  attributed to client `Visual Studio`; a directory of that name is skipped like
+  the rest of `.vs`. `endpoint.inventory` no longer reports extensions an osquery
+  `removed` event uninstalled, including a removal whose `unixTime` is missing,
+  a numeric string or spelled `unix_time` (it is ordered by input position);
+  `saas.slack` no longer reports the bot users of uninstalled apps; `network.logs` merges IPv4-mapped IPv6 clients with their dotted form and reads
+  VPC Flow Logs' `vpc-id` as network context, so duplicate contacts disappear and
+  flows can attribute to Route 53 answers. `lowcode.power-platform` and
+  `cloud.gcp` keep findings already collected when a later environment, token or
+  audit page fails, including a token response without an `access_token` (the
+  scan stays incomplete). CycloneDX BOMs keep the sanitized endpoint of an MCP
+  server whose URL carried inline credentials.
+- **Deadlines.** With `--incremental` and several roots, the automatic deadline
+  extension is applied once per job, capped at 1,800 s, not once per root.
+
 Unreleased: the shared offline reader rejects collection envelopes embedded in a
 record array. Export one collection envelope or an array of native records;
 do not concatenate API page envelopes into the record array. A rejected page
@@ -534,8 +578,12 @@ History enrichment requires Git 2.45 or later and a self-contained `.git`
 directory; external gitfiles and symlinks are not accepted for enrichment.
 Metadata preflight also rejects common-directory and alternate-object
 indirections, local `include`/`includeIf` configuration sections, internal links
-and special files. Local `config` and `config.worktree` use confined reads with
-a 1 MiB limit and a conservative UTF-8, single-line configuration grammar.
+and special files. Git then opens only that `.git` directory: when Git does not
+accept it, the read fails instead of using the scan root as a bare repository
+or a repository above it, and a root whose parent path contains `:` is refused
+because it cannot bound that search. Local `config` and `config.worktree` use
+confined reads with a 1 MiB limit and a conservative UTF-8, single-line
+configuration grammar.
 Ordinary sections, quoted or deprecated dotted subsections, comments and
 single-line values work; unsupported section syntax, continuations and multiline
 values make coverage incomplete before Git starts. Inputs must remain immutable

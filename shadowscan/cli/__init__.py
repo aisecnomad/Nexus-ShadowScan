@@ -47,6 +47,7 @@ from shadowscan.utils.deadline import JobDeadline, arm_job_deadline
 from shadowscan.utils.git import terminate_active_clones, terminate_clones_on_signal
 from shadowscan.utils.output import (
     encodable_text,
+    terminal_lines,
     terminal_report_text,
     terminal_text,
     write_private_text,
@@ -309,7 +310,8 @@ def _run_and_emit_with_deadline(
         # handlers: a termination signal must stop live clones from here.
         with terminate_clones_on_signal():
             # The engine ends LLM triage early enough to emit the report before the watchdog fires.
-            result = engine.run(only=only, job_deadline=job_deadline)
+            # Command-level stats join before a record-export manifest states the run's completeness.
+            result = engine.run(only=only, job_deadline=job_deadline, extra_stats=extra_stats or ())
     except SetupError as exc:
         # SetupError messages are credential-free by contract (shadowscan.errors).
         raise click.ClickException(str(exc)) from None
@@ -321,7 +323,6 @@ def _run_and_emit_with_deadline(
     except Exception as exc:  # noqa: BLE001 - third-party exception text may echo credentials
         _log_masked_failure("scan setup failed", exc)
         raise click.ClickException(f"{SETUP_FAILED} ({type(exc).__name__})") from None
-    result.stats.extend(extra_stats or [])
     # With abandoned workers, arm a bounded exit watchdog so the process cannot
     # hang indefinitely during report emission or clone cleanup. An armed job
     # deadline already bounds both, and its report time must not be cut short.
@@ -686,7 +687,11 @@ def _with_placement_hint(error: click.UsageError) -> click.UsageError:
 
 
 class _MainGroup(click.Group):
-    """Root group: usage errors of every command, raised while parsing or running, exit 1."""
+    """Root group: usage errors of every command, raised while parsing or running, exit 1.
+
+    Other command errors leave with terminal controls rendered visibly: a message can
+    name an inventory card or report file whose name came from a scanned tree.
+    """
 
     def make_context(
         self,
@@ -706,6 +711,10 @@ class _MainGroup(click.Group):
             return super().invoke(ctx)
         except click.UsageError as exc:
             raise _UsageError(_with_placement_hint(exc)) from None
+        except click.ClickException as exc:
+            # Click quotes the values in its own usage errors, not in these messages,
+            # and every ClickException that is not a usage error exits 1.
+            raise click.ClickException(terminal_lines(exc.format_message())) from None
 
 
 @click.group(cls=_MainGroup, context_settings={"help_option_names": ["-h", "--help"]})

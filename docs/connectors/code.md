@@ -568,7 +568,11 @@ reviewed local metadata. The metadata command must support `--no-lazy-fetch`;
 unsupported Git versions or failed history reads mark the scan incomplete.
 Metadata reads cannot initiate a transport, fetch missing objects or use hooks.
 Local metadata must be self-contained: config includes, internal links and
-alternate/common metadata directories are rejected. Local `config` and
+alternate/common metadata directories are rejected. Git opens only the scan
+root's own `.git`: when Git does not accept that directory, the read fails
+instead of using the scan root as a bare repository or a repository above it
+(a root whose parent path contains `:` cannot bound that search and is
+refused). Local `config` and
 `config.worktree` reads are bounded to 1 MiB; unsupported section syntax,
 encodings, continuations or multiline values make coverage incomplete before
 Git runs. Use immutable checkouts; preflight does not sandbox Git.
@@ -658,6 +662,11 @@ Include=... />`, `<PackageReference Update=... />`) and project files whose
 Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
 `max_notebook_size`, `max_ast_nodes`, `agent_granularity`, `scan_secrets`, `staged`, `strict_coverage`, `include_tests`, `profile`, `triage`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
+A scalar `path` gives every finding its label alone as the resource prefix, so
+a scan refuses (exit 1) a second entry that scans a different root under the
+same label, or under the same label and root ID: their findings would share
+ids and merge, and an approval of one repository would cover the other. Give
+each entry its own label, or list the roots in one entry's `paths`.
 
 `profile: ci` (`--profile ci`) declares the coverage gaps a source gate accepts
 in advance: unread symbolic links, non-regular entries, unparsed content,
@@ -709,6 +718,12 @@ state that never hold a project's own source, and are skipped without comment:
 `__pycache__`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `.tox`, `.nox`,
 `.cache`, `.coverage`, `.hypothesis`, `.dart_tool`, `.gradle`, `.terraform`, `.serverless`,
 `.next`, `.nuxt`, `.svelte-kit`, `.turbo`, `.parcel-cache`, `.idea` and `.vs`.
+One file inside `.vs` is read all the same: Visual Studio loads MCP servers
+from `.vs/mcp.json` (in any letter case), so it is scanned as an MCP
+configuration (client `Visual Studio`) while the rest of `.vs`, including a
+directory of that name, is skipped, and a `.vs` that is a symbolic
+link is a coverage gap like any other unfollowed directory link. Listing `.vs`
+in `exclude` skips the file too.
 The remaining names are build output or vendored code by convention, but
 projects also keep first-party code there (scripts in `bin/`, an agent under
 `vendor/` or `build/`): `bin`, `build`, `dist`, `out`, `target`, `obj`,
@@ -1077,7 +1092,10 @@ repeats such a reference; both stay redacted. A GitHub Actions workflow is not
 itself an MCP document: servers passed as a JSON object in a step input (for
 example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
 reported from that workflow, and an embedded object that cannot be parsed
-makes the scan incomplete.
+makes the scan incomplete. A Smithery server URL's `config` query field holds
+the server's own configuration, its keys and tokens included, as base64 or
+percent-encoded JSON: it is withheld like the URL's `api_key`, and the server
+is listed with `secret_locations: ["url"]`.
 
 A server URL gets `mcp-insecure-transport` when it is `http://` or `ws://` to
 a host not known to be loopback, read as WHATWG URL parsers (Node and browser

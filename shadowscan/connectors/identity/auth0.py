@@ -21,6 +21,7 @@ from shadowscan.connectors.identity.common import (
     identity_kind_for,
     summarize_scopes,
 )
+from shadowscan.connectors.offline import _WRAPPERS, UNCOLLECTED_NEXT_PAGE
 from shadowscan.models import Evidence, Finding, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
@@ -109,6 +110,27 @@ class Auth0Connector(BaseConnector):
             if len(batch) < 100:
                 return
         self.ctx.warn(f"identity.auth0: pagination limit reached for {path}")
+
+    @staticmethod
+    def _offline_pagination_issue(data: dict[str, Any]) -> str | None:
+        # A saved Management API page continues past its clients when it was
+        # read with include_totals (start and total) or a checkpoint (next).
+        # collect() reads bare pages, so its record exports carry neither.
+        issue = BaseConnector._offline_pagination_issue(data)
+        if issue:
+            return issue
+        token = data.get("next")
+        if token is not None and not isinstance(token, str):
+            return "offline export has invalid pagination metadata"
+        if "total" in data:
+            total, start = data["total"], data.get("start", 0)
+            if type(total) is not int or type(start) is not int or total < 0 or start < 0:
+                return "offline export has invalid pagination metadata"
+            # The page's records may sit under any accepted envelope key, not only `clients`.
+            pages = [value for key, value in data.items() if key in _WRAPPERS and isinstance(value, list)]
+            if any(start + len(page) < total for page in pages):
+                return UNCOLLECTED_NEXT_PAGE
+        return UNCOLLECTED_NEXT_PAGE if token else None
 
     def _record_kind(self, rec: Any) -> str | None:
         if not self._record_fields_valid(

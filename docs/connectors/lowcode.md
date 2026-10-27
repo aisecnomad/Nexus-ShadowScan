@@ -100,7 +100,11 @@ a `links` object with a `next` continuation. Only `null` or an empty string ends
 pagination successfully; a missing `links` object or `next` field, a non-string
 continuation or a whitespace-only string keeps that page's Zaps but marks
 coverage incomplete. Zaps observed on earlier pages remain in the report when a
-later page fails. Workato accepts both an `items` object envelope and a bare
+later page fails. An offline export that is a saved `/v2/zaps` page is read the
+same way: a `links.next` string is an uncollected next page and malformed
+`links` are invalid pagination metadata, both keeping the page's Zaps and
+marking the scan incomplete. An account export without a `links` object is
+unaffected. Workato accepts both an `items` object envelope and a bare
 recipe array.
 
 An n8n step counts as AI when its node type is a LangChain, model-provider,

@@ -462,6 +462,57 @@ def test_symlink_named_like_a_disclosed_directory_is_not_probed(tmp_path, run_co
     assert not findings and not ctx.stats.warnings
 
 
+@pytest.mark.parametrize("name", ["mcp.json", "MCP.json"])
+def test_visual_studio_mcp_configuration_is_read_from_the_default_excluded_vs_directory(
+    tmp_path, run_connector, name
+):
+    # Visual Studio loads <solution>/.vs/mcp.json; the rest of .vs is IDE state and stays skipped.
+    server = json.dumps({"servers": {"helper": {"type": "stdio", "command": "npx", "args": ["-y", "x-mcp"]}}})
+    state = tmp_path / "app" / ".vs" / "App" / "v17"
+    state.mkdir(parents=True)
+    (state.parent.parent / name).write_text(server)
+    (state / "mcp.json").write_text(server)
+    (state / "agent.py").write_text("from crewai import Agent\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert [f.metadata["path"] for f in findings if f.kind == Kind.MCP_SERVER] == [f"app/.vs/{name}"]
+    assert "framework.crewai" not in _frameworks(findings)
+    assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+    # Naming the directory in `exclude` still skips all of it.
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, exclude=[".vs"])
+    assert not findings and not ctx.stats.incomplete and not ctx.stats.warnings
+
+
+def test_directory_named_like_the_vs_mcp_configuration_stays_skipped(tmp_path, run_connector):
+    # Only the file is read; a directory called .vs/mcp.json is IDE state like the rest of .vs.
+    planted = tmp_path / ".vs" / "mcp.json" / "nested"
+    planted.mkdir(parents=True)
+    (planted / "agent.py").write_text("from crewai import Agent\n")
+    (planted / "mcp.json").write_text(json.dumps({"servers": {"helper": {"command": "npx"}}}))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not findings
+    assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+
+
+def test_visual_studio_mcp_configuration_is_attributed_to_visual_studio(tmp_path, run_connector):
+    (tmp_path / ".vs").mkdir()
+    (tmp_path / ".vs" / "mcp.json").write_text(json.dumps({"servers": {"helper": {"command": "npx"}}}))
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert [f.metadata.get("client") for f in findings if f.kind == Kind.MCP_SERVER] == ["Visual Studio"]
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unavailable")
+def test_symlinked_vs_directory_is_a_coverage_gap_rather_than_skipped(tmp_path, run_connector):
+    # Visual Studio reads .vs/mcp.json through the link; the walk never follows it.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "mcp.json").write_text(json.dumps({"servers": {"helper": {"command": "npx"}}}))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".vs").symlink_to(outside, target_is_directory=True)
+    findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
+    assert not findings and ctx.stats.incomplete
+
+
 def test_default_excludes_must_be_a_boolean(tmp_path, run_connector):
     with pytest.raises(Exception, match="default_excludes must be a boolean"):
         run_connector("code.filesystem", path=str(tmp_path), default_excludes="false")

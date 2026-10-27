@@ -221,7 +221,7 @@ class OwnershipResolver:
                     "--",
                     target,
                 ],
-                env=metadata_git_env(),
+                env=metadata_git_env(root),
                 ctx=self.ctx,
                 timeout=deadline - time.monotonic(),
             )

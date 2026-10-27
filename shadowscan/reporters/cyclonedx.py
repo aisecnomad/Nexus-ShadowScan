@@ -44,7 +44,6 @@ import json
 import uuid
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlsplit
 
 from shadowscan import __version__
 from shadowscan.mappings import finding_references
@@ -107,13 +106,15 @@ def _properties(pairs: list[tuple[str, object]]) -> list[dict[str, str]]:
 
 
 def _http_url(value: object) -> bool:
-    """An http or https URL; the scheme is compared case-insensitively."""
+    """An http or https URL; the scheme is compared case-insensitively.
+
+    Only the scheme is read. Sanitized userinfo reads ``[REDACTED]@``, which
+    ``urlsplit`` rejects as a malformed IPv6 host, and the endpoint must not be lost.
+    """
     if not isinstance(value, str):
         return False
-    try:
-        return urlsplit(value.strip()).scheme.lower() in {"http", "https"}
-    except ValueError:
-        return False
+    scheme, colon, _ = value.strip().partition(":")
+    return bool(colon) and scheme.lower() in {"http", "https"}
 
 
 def _text(record: dict[str, Any], key: str) -> str | None:

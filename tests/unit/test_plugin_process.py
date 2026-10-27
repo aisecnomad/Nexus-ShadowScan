@@ -1083,8 +1083,8 @@ def test_credential_environment_names(name, withheld):
 @pytest.mark.parametrize(
     ("name", "value", "withheld"),
     [
-        # The values carry no user and password pair, which tools/check_secrets.py reports;
-        # any user information is withheld.
+        # Any user information is withheld. Of these values tools/check_secrets.py reports only
+        # the passwords without a user name, which tools/secret_allowlist.json approves.
         ("REDIS_URL", "redis://:synthetic@cache:6379/0", True),
         ("MONGODB_URI", "mongodb+srv://synthetic@cluster.example/db", True),
         ("SQLALCHEMY_DATABASE_URI", "postgresql://user:syn/thetic@db.example/app", True),  # unescaped /

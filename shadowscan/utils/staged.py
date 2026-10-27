@@ -104,7 +104,7 @@ def _selection(raw: bytes) -> tuple[list[tuple[str, bytes]], int]:
 def _git(
     root: Path, args: list[str], ctx: ConnectorContext, *, limit: int, stdin: IO[bytes] | None = None
 ) -> bytes:
-    env = metadata_git_env()
+    env = metadata_git_env(root)
     env["GIT_NO_REPLACE_OBJECTS"] = "1"
     result = run_bounded_git_bytes(
         [*metadata_git_argv_prefix(), "-C", str(root), *args],
@@ -158,6 +158,9 @@ def staged_snapshot(root: Path, ctx: ConnectorContext) -> Iterator[StagedSnapsho
                 "--no-renames",
                 "--no-ext-diff",
                 "--no-textconv",
+                # Otherwise "ignore = all" in .gitmodules (tracked or worktree-only) or
+                # diff.ignoreSubmodules drops a staged gitlink before _selection refuses it.
+                "--ignore-submodules=none",
                 "-z",
                 "--",
             ],

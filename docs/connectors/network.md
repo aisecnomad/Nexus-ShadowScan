@@ -52,19 +52,24 @@ validity interval when their windows overlap or touch, so a busy client's
 repeated lookups cost no storage; expired answers do not identify later
 traffic, and future answers never identify earlier traffic.
 
-Optional `sensor`/`sensor_id`, `network_id`/`vpc_id`, and
+Optional `sensor`/`sensor_id`, `network_id`/`vpc_id`/`vpc-id`, and
 `resolver`/`resolver_id` fields scope both DNS and TLS UID joins. Supplied
 context must match exactly; missing context does not wildcard-match a known
-sensor. With no context fields, the configured input/label is the shared
-vantage. Split overlapping address spaces into separate labeled connector
-inputs when exporters cannot supply context. Findings still aggregate by
-configured label, client and service.
+sensor. Route 53 Resolver query logs always carry `vpc_id`, so VPC flows are
+attributed through them only when the flow log format includes `vpc-id` (the
+spelling of VPC Flow Logs text headers). With no context fields, the
+configured input/label is the shared vantage. Split overlapping address
+spaces into separate labeled connector inputs when exporters cannot supply
+context. Findings still aggregate by configured label, client and service.
 
 Zeek `TTLs`, generic `ttls`, `ttl`/`TTL`, and explicitly supplied Route 53
 TTL metadata are accepted. Vector TTLs must align with the answers. A
 response containing a CNAME and IP answers uses the shortest answer TTL;
 CNAME-only records do not produce an IP association, and chains are never
-resolved over the network. IPv4 and IPv6 addresses are normalized. Sampled
+resolved over the network. IPv4 and IPv6 addresses are normalized. An
+IPv4-mapped IPv6 address, as dual-stack resolvers and proxies log IPv4 peers
+(`::ffff:192.0.2.10`), is the IPv4 address it carries, for clients, servers
+and DNS answers alike. Sampled
 `dns_attribution` metadata preserves host, address, the first answer's
 observation time and original TTL, flow timestamps and context; when later
 answers extended that answer's validity, `valid_until` gives the end of the

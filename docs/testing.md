@@ -194,9 +194,11 @@ page; `make docs` builds the site with `mkdocs build --strict` and catches the
 rest.
 
 `make secrets` runs `tools/check_secrets.py` over every tracked file. It reports
-credential-shaped strings (provider tokens and keys, private-key headers, passwords
-in URLs) and prints at most four characters of a match. Tests, fixtures and the
-labelled detection corpora are checked too. Synthetic values and documentation
+credential-shaped strings (provider tokens and keys, credential-bearing webhook
+URLs, private-key headers, passwords in URLs) and prints at most four characters of
+a match. Tests, fixtures and the labelled detection corpora are checked too. A file
+that opens with a UTF-16 or UTF-32 byte-order mark is read in that encoding, as the
+scanner reads it, and any other file as UTF-8. Synthetic values and documentation
 placeholders need an exact repository path, credential family and matched-text
 SHA-256 approval with a review reason in `tools/secret_allowlist.json`.
 Private-key headers additionally bind the whole file's SHA-256. Malformed or

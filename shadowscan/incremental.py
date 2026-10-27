@@ -35,6 +35,7 @@ from shadowscan.connectors.code.filesystem import (
     _holds_file,
     _WalkBudget,
 )
+from shadowscan.connectors.code.mcp_config import DEFAULT_EXCLUDED_MCP_CONFIGS
 from shadowscan.coverage import MAX_DECLARED_PATHS, validate_coverage_summary
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import SignatureIndex
@@ -255,7 +256,7 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
             # scanned repository and are untrusted.
             result = run_bounded_metadata(
                 [*metadata_git_argv_prefix(), "-C", str(root), *args],
-                metadata_git_env(),
+                metadata_git_env(root),
                 _BudgetContext(),  # type: ignore[arg-type]
                 timeout=budget.timeout(10),
                 strict_utf8=True,
@@ -298,6 +299,33 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
         raise ValueError("git history has grafts")
     shallow_digest = _file_digest(shallow, budget=budget) if shallow.exists() else None
     return hashlib.sha256(_json([head.decode(), shallow_digest])).hexdigest()
+
+
+def _entered_mcp_configs(
+    directory: Path, root: Path, excluded_dir_names: frozenset[str], budget: _HashBudget
+) -> tuple[bytes, list[str]]:
+    """Fingerprint what the walk reads in ``directory``, which the fingerprint otherwise skips.
+
+    The walk enters a built-in exclusion that holds a client's MCP configuration
+    (``DEFAULT_EXCLUDED_MCP_CONFIGS``) for that file alone, unless ``exclude``
+    names it. Listing it costs the walk an entry per name there, so their count
+    is part of the record. The configuration files are returned relative to the
+    parent directory, to be fingerprinted as every other file is.
+    """
+    kept = DEFAULT_EXCLUDED_MCP_CONFIGS.get(directory.name)
+    if kept is None or directory.name in excluded_dir_names:
+        return b"", []
+    names: list[str] = []
+    configs: list[str] = []
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            budget.check(entries=1)
+            names.append(entry.name)
+            # A directory of that name is pruned by the walk, not read.
+            if entry.name.lower() in kept and not entry.is_dir(follow_symlinks=False):
+                configs.append(entry.name)
+    record = _json(["entered-directory", directory.relative_to(root).as_posix(), len(names)])
+    return record, [f"{directory.name}/{name}" for name in sorted(configs)]
 
 
 def _tree_digest(
@@ -363,6 +391,9 @@ def _tree_digest(
             path = basepath / name
             built_in = DEFAULT_EXCLUDES if skip_default_excludes else VCS_METADATA_EXCLUDES
             if code and (name in built_in or name in excluded_dir_names):
+                record, configs = _entered_mcp_configs(path, root, excluded_dir_names, budget)
+                digest.update(record)
+                files.extend(configs)
                 if name in built_in and name in DISCLOSED_DEFAULT_EXCLUDES:
                     # The scan warns about a skipped directory of this name that
                     # holds a file; a cached result must not drop that warning.

@@ -316,9 +316,17 @@ def _concurrency_violations(workflow_name: str, workflow: dict[str, Any]) -> lis
     return problems
 
 
-# `|| true` and its spellings, linters told to exit 0, and audits told to skip a
-# vulnerability all turn a failing gate green.
-_SUPPRESSION = re.compile(r"\|\|\s*(?:true\b|:(?![\w:])|exit\s+0\b)|--exit-zero\b|--ignore-vuln\b")
+# `|| true` and its spellings, `|| echo` and `|| printf` (which always succeed),
+# `set +e` and `set +o pipefail`, linters told to exit 0, and audits told to skip
+# a vulnerability all turn a failing gate green.
+_SUPPRESSION = re.compile(
+    r"\|\|\s*(?:true\b|:(?![\w:])|exit\s+0\b|echo\b|printf\b)|--exit-zero\b|--ignore-vuln\b"
+    r"|(?<![\w-])set\s+\+[a-zA-Z]*(?:e|o\s+(?:errexit|pipefail)\b)"
+)
+# GitHub starts its built-in `bash` and `sh` with `-e`. A custom command line
+# runs as written, so `bash {0}` lets a script carry on past a failing command
+# and only its last command decides the step.
+_FAIL_FAST_SHELLS = {"bash", "sh"}
 _COVERAGE_FLOOR_ARGUMENT = re.compile(r"(?<![\w-])--(?:cov-)?fail-under(?:=|\s+)(\S+)")
 _EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
 # Values that the workflow author or the runner controls. Event payload text,
@@ -330,9 +338,27 @@ _TRUSTED_RUN_EXPRESSION = re.compile(
 )
 
 
+def _shell_violations(workflow: dict[str, Any]) -> list[str]:
+    """Each step's shell, its own or a workflow or job default, stops at the first failing command."""
+    shells: list[tuple[str, Any]] = [
+        ("workflow", ((workflow.get("defaults") or {}).get("run") or {}).get("shell"))
+    ]
+    for name, job in workflow["jobs"].items():
+        shells.append((name, ((job.get("defaults") or {}).get("run") or {}).get("shell")))
+        shells += [
+            (f"{name}: step {step.get('name') or step.get('run') or step.get('uses')}", step.get("shell"))
+            for step in job.get("steps", [])
+        ]
+    return [
+        f"{owner}: shell {shell!r} does not stop at a failing command; use bash or sh"
+        for owner, shell in shells
+        if shell is not None and shell not in _FAIL_FAST_SHELLS
+    ]
+
+
 def _run_violations(workflow_name: str, workflow: dict[str, Any]) -> list[str]:
     """Steps must not hide a failure, lower a coverage floor or interpolate untrusted text."""
-    problems = []
+    problems = _shell_violations(workflow)
     for name, job in workflow["jobs"].items():
         if job.get("continue-on-error") not in (None, False):
             problems.append(f"{name}: job sets continue-on-error")
@@ -738,6 +764,14 @@ def test_workflow_steps_cannot_hide_failures_or_interpolate_untrusted_text(path:
     assert not _run_violations(path.name, _load(path))
 
 
+def test_suppression_rule_spares_tracing_and_status_capture() -> None:
+    """`set +x` and `|| status=$?` keep a failure visible; their fail-fast cousins hide it."""
+    for line in ("set +e", "set +eu", "set +o errexit", "set +uo pipefail", "make check || echo failed"):
+        assert _SUPPRESSION.search(line), line
+    for line in ("set +x", "set +o xtrace", "set -euo pipefail", "make check || status=$?"):
+        assert not _SUPPRESSION.search(line), line
+
+
 @pytest.mark.parametrize("path", WORKFLOWS, ids=lambda path: path.name)
 def test_push_runs_are_not_cancelled_by_a_newer_push(path: Path) -> None:
     assert not _concurrency_violations(path.name, _load(path))
@@ -836,6 +870,7 @@ def _replace_last(old: str, new: str) -> Callable[[str], str]:
 
 
 _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format sarif -o shadowscan.sarif"
+_COVERAGE_GATE = 'python -m tools.coverage_gate "$RUNNER_TEMP/shadowscan-coverage.json"'
 
 
 @pytest.mark.parametrize(
@@ -917,6 +952,48 @@ _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format 
             _replace('git cat-file -e "${HEAD_SHA}^{commit}"', 'git cat-file -e "${HEAD_SHA}^{commit}" || :'),
             "suppresses a failure",
             id="dco-suppressed-ref-check",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace(_COVERAGE_GATE, _COVERAGE_GATE + ' || echo "coverage gate failed"'),
+            "suppresses a failure",
+            id="or-echo",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace(_COVERAGE_GATE, "set +e\n          " + _COVERAGE_GATE),
+            "`set +e` suppresses a failure",
+            id="set-plus-e",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace("set -euo pipefail\n", "set -euo pipefail\n          set +o pipefail\n"),
+            "`set +o pipefail` suppresses a failure",
+            id="set-plus-o-pipefail",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace("\njobs:\n", "\ndefaults:\n  run:\n    shell: bash {0}\njobs:\n"),
+            "workflow: shell 'bash {0}' does not stop at a failing command",
+            id="workflow-default-shell",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace(
+                "  docs:\n    runs-on:",
+                "  docs:\n    defaults:\n      run:\n        shell: sh {0}\n    runs-on:",
+            ),
+            "docs: shell 'sh {0}' does not stop at a failing command",
+            id="job-default-shell",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace(
+                "      - name: Evaluate labeled detection cases\n",
+                "      - name: Evaluate labeled detection cases\n        shell: bash {0}\n",
+            ),
+            "step Evaluate labeled detection cases: shell 'bash {0}' does not stop",
+            id="step-shell",
         ),
         pytest.param(
             ".github/workflows/ci.yml",

@@ -72,8 +72,10 @@ The snapshot accepts at most 100 changed files, 1 MiB per file and 8 MiB of
 combined Git output. Each Git read has a ten-second ceiling, additionally
 bounded by the connector deadline. A missing blob, unresolved conflict,
 staged symbolic link or submodule, unsupported path or exceeded limit leaves
-the scan incomplete. Split a large commit or run a full scan; quick mode never
-falls back to unstaged content or silently truncates the selection.
+the scan incomplete. A submodule `ignore` setting in `.gitmodules` or Git
+configuration does not hide a staged submodule. Split a large commit or run a
+full scan; quick mode never falls back to unstaged content or silently
+truncates the selection.
 
 Git 2.45 or later and a local `.git` directory are required. Linked worktrees,
 alternate object stores and Git configuration includes are refused by the

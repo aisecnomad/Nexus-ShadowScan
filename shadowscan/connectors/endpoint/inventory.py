@@ -96,6 +96,12 @@ _ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _RECORD_TYPES = {"agent_config", "ide_extension", "browser_extension", "local_model", "shell_history"}
 # Internal marker on a replayed record that lost approval or posture entries; never exported.
 _GATE_INCOMPLETE = "_approval_entries_dropped"
+# Internal marker on a row from an osquery logger line in event format: its action. Never exported.
+_OSQUERY_ACTION = "_osquery_action"
+_OSQUERY_ACTIONS = ("added", "removed", "snapshot")
+# Digits in a 64-bit Unix time. A longer digit string is no usable event time, and int()
+# refuses one past sys.get_int_max_str_digits(), which would end analyze() for every row.
+_EVENT_TIME_DIGITS = 19
 _OWN_STRINGS = (
     "device", "home", "client", "product", "signature", "location", "editor", "extension_id", "version",
     "browser", "profile", "name", "runtime", "provider", "shell", "tool",
@@ -131,6 +137,44 @@ class _Group:
     """Records for one finding before it is built."""
 
     records: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class _Events:
+    """osquery event-format rows: the latest event for a row decides whether it is still installed."""
+
+    # Row identity -> ((unixTime, input position), record, or None once removed).
+    latest: dict[str, tuple[tuple[int, int], dict[str, Any] | None]] = field(default_factory=dict)
+
+    def add(self, rec: dict[str, Any], raw: dict[str, Any], seq: int, *, removed: bool) -> None:
+        # osquery diffs whole rows, so a removal repeats exactly the row an earlier event added.
+        row = json.dumps([rec["device"], raw["columns"]], sort_keys=True, default=str)
+        held = self.latest.get(row)
+        unix_time = _event_time(raw)
+        # An event without a usable time is ordered by its input position after the row's
+        # latest event, so an untimed removal still uninstalls an earlier timed add.
+        order = (unix_time if unix_time is not None else (held[0][0] if held else 0), seq)
+        if held is None or order > held[0]:
+            self.latest[row] = (order, None if removed else rec)
+
+    def current(self) -> list[dict[str, Any]]:
+        return [rec for _, rec in self.latest.values() if rec is not None]
+
+
+def _event_time(raw: dict[str, Any]) -> int | None:
+    """An osquery event's ``unixTime`` (or ``unix_time``) as an integer, or None when unusable."""
+    for key in ("unixTime", "unix_time"):
+        value = raw.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        if (
+            isinstance(value, str)
+            and value.isascii()
+            and value.isdigit()
+            and len(value) <= _EVENT_TIME_DIGITS
+        ):
+            return int(value)
+    return None
 
 
 # Links a running Chromium browser keeps in its user-data directory (the
@@ -551,7 +595,8 @@ class EndpointInventoryConnector(BaseConnector):
         # (device, home, client) groups that lost a whole malformed agent_config record; None
         # stands for a record whose group could not be read, which leaves every group partial.
         lost_gates: set[tuple[str, str, str] | None] = set()
-        for raw in records:
+        events = _Events()
+        for seq, raw in enumerate(records):
             self.ctx.examined()
             rec = self._normalize(raw)
             if rec is None:
@@ -565,21 +610,13 @@ class EndpointInventoryConnector(BaseConnector):
             if kind == "shell_history":
                 history.append(rec)
                 continue
-            if kind == "agent_config":
-                key: tuple[str, ...] = (kind, rec["device"], rec["home"], str(rec.get("client")))
-            elif kind == "ide_extension":
-                key = (kind, rec["device"], rec["home"], str(rec.get("extension_id")))
-            elif kind == "browser_extension":
-                key = (
-                    kind,
-                    rec["device"],
-                    rec["home"],
-                    str(rec.get("browser")),
-                    str(rec.get("extension_id")),
-                )
-            else:
-                key = (kind, rec["device"], rec["home"], str(rec.get("runtime")))
-            groups.setdefault(key, _Group()).records.append(rec)
+            action = rec.pop(_OSQUERY_ACTION, None)
+            if action is not None:
+                events.add(rec, raw, seq, removed=action == "removed")
+                continue
+            groups.setdefault(_group_key(rec), _Group()).records.append(rec)
+        for rec in events.current():
+            groups.setdefault(_group_key(rec), _Group()).records.append(rec)
         if unknown:
             self.ctx.warn(
                 f"endpoint.inventory: skipped {unknown} record(s) that are neither endpoint records nor "
@@ -618,6 +655,7 @@ class EndpointInventoryConnector(BaseConnector):
                     skipped["gate_group"] = who if all(isinstance(v, str) for v in who) else None
                 return skipped
             rec = dict(raw)
+            rec.pop(_OSQUERY_ACTION, None)  # set only on osquery rows, never taken from an export
             rec.setdefault("device", self.label)
             rec.setdefault("home", "unknown")
             servers = list(rec.get("mcp_servers") or [])
@@ -662,6 +700,11 @@ class EndpointInventoryConnector(BaseConnector):
             return rec
         nested = raw.get("columns")
         columns: dict[str, Any] = nested if isinstance(nested, dict) else raw
+        # A logger line in event format says whether its row was added or removed; any other
+        # action is a shape this connector cannot read.
+        action = raw.get("action") if columns is nested else None
+        if action is not None and action not in _OSQUERY_ACTIONS:
+            return None
         device = str(raw.get("hostIdentifier") or raw.get("host_identifier") or self.label)
         path = str(columns.get("path") or "")
         username = columns.get("username")
@@ -671,6 +714,8 @@ class EndpointInventoryConnector(BaseConnector):
             or (f"uid-{columns['uid']}" if columns.get("uid") not in (None, "") else "unknown")
         )
         base = {"device": device, "home": home}
+        if action is not None:
+            base[_OSQUERY_ACTION] = action
         if "browser_type" in columns and "identifier" in columns:
             name = str(columns.get("name") or "")
             if not AI_EXTENSION_NAME.search(name):
@@ -1114,6 +1159,18 @@ def _history_tool(line: str, shell: str) -> str | None:
     if word == "gh" and len(words) > 1 and words[1] == "copilot":
         return "copilot"
     return word if word in SHELL_TOOLS else None
+
+
+def _group_key(rec: dict[str, Any]) -> tuple[str, ...]:
+    """The finding a record belongs to."""
+    kind = rec["record_type"]
+    if kind == "agent_config":
+        return (kind, rec["device"], rec["home"], str(rec.get("client")))
+    if kind == "ide_extension":
+        return (kind, rec["device"], rec["home"], str(rec.get("extension_id")))
+    if kind == "browser_extension":
+        return (kind, rec["device"], rec["home"], str(rec.get("browser")), str(rec.get("extension_id")))
+    return (kind, rec["device"], rec["home"], str(rec.get("runtime")))
 
 
 def _home_from_path(path: str) -> str | None:

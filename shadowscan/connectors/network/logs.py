@@ -664,7 +664,9 @@ class NetworkLogConnector(BaseConnector, _NoDump):
 
     def _context(self, row: dict[str, Any], name: str, *, flow_only: bool = False) -> _Context | None:
         values = []
-        for aliases in (("sensor", "sensor_id"), ("network_id", "vpc_id"), ("resolver", "resolver_id")):
+        # Route 53 Resolver logs name the VPC vpc_id; VPC Flow Logs text headers spell it vpc-id.
+        networks = ("network_id", "vpc_id", "vpc-id")
+        for aliases in (("sensor", "sensor_id"), networks, ("resolver", "resolver_id")):
             supplied = [row[key] for key in aliases if row.get(key) not in (None, "", "-")]
             if (
                 any(
@@ -747,7 +749,7 @@ class NetworkLogConnector(BaseConnector, _NoDump):
             "ts": ts,
             "client": client,
             "query": query,
-            "answers": [str(ipaddress.ip_address(a)) for a in answers if _ip(a)][:32],
+            "answers": [_address(a) for a in answers if _ip(a)][:32],
             "ttl": ttl,
             "context": context,
         }
@@ -1330,12 +1332,19 @@ def _host(value: Any) -> str | None:
     return host if _HOST.match(host) and not _ip(host) else None
 
 
-@functools.lru_cache(maxsize=65_536)
-def _cached_ip(text: str) -> str | None:
+def _canonical_ip(text: str) -> str | None:
     try:
-        return str(ipaddress.ip_address(text))
+        address = ipaddress.ip_address(text)
     except ValueError:
         return None
+    # Dual-stack resolvers and proxies log an IPv4 peer as ::ffff:a.b.c.d, where
+    # Zeek and VPC flow logs write the same host in dotted form.
+    return str(getattr(address, "ipv4_mapped", None) or address)
+
+
+@functools.lru_cache(maxsize=65_536)
+def _cached_ip(text: str) -> str | None:
+    return _canonical_ip(text)
 
 
 def _parsed_ip(text: str) -> str | None:
@@ -1344,10 +1353,7 @@ def _parsed_ip(text: str) -> str | None:
     Only short strings are cached, so hostile input cannot pin large values in memory.
     """
     if len(text) > 64:
-        try:
-            return str(ipaddress.ip_address(text))
-        except ValueError:
-            return None
+        return _canonical_ip(text)
     return _cached_ip(text)
 
 

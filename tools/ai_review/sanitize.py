@@ -15,18 +15,55 @@ import re
 _PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?<![\w-])sk-[A-Za-z0-9]{20,}"),
     re.compile(r"(?<![\w-])sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{32,}"),
-    re.compile(r"(?<![\w-])sk-ant-(?:api|admin)\d{2}-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"(?<![\w-])sk-ant-(?:api|admin|oat|ort)\d{2}-[A-Za-z0-9_-]{20,}"),
     re.compile(r"(?<![A-Za-z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Za-z0-9])"),
     re.compile(
         r"(?i:(?:aws_?)?secret_?access_?key)[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+=])"
     ),
     re.compile(r"(?<![\w])gh[pousr]_[A-Za-z0-9]{36,251}(?![A-Za-z0-9_])"),
     re.compile(r"(?<![\w])github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59}(?![A-Za-z0-9_])"),
-    re.compile(r"(?<![\w-])glpat-[A-Za-z0-9_-]{20,}"),
-    re.compile(r"(?<![A-Za-z0-9])xox[abeoprs]-\d+-[0-9A-Za-z-]{10,}"),
+    re.compile(
+        r"(?<![\w-])(?:gl(?:pat|rt|ptt|dt|ft|soat|cbt|imt|oas|agent|ffct)-[A-Za-z0-9_-]{20,}"
+        r"|GR1348941[A-Za-z0-9_-]{20,})"
+    ),
+    re.compile(r"(?<![A-Za-z0-9])(?:xox[abeoprs]|xapp)-\d+-[0-9A-Za-z-]{10,}"),
     re.compile(r"(?<![\w-])AIza[0-9A-Za-z_-]{35}(?![\w-])"),
+    re.compile(
+        r"(?<![\w-])(?:ya29\.[A-Za-z0-9_-]{20,}|1//0[A-Za-z0-9_-]{30,}|GOCSPX-[A-Za-z0-9_-]{20,})"
+        r"(?![A-Za-z0-9_])"
+    ),
     re.compile(r"(?<![\w])hf_[A-Za-z0-9]{34,}(?![A-Za-z0-9_])"),
-    re.compile(r"(?<![\w])[rs]k_live_[0-9A-Za-z]{20,}(?![A-Za-z0-9_])"),
+    re.compile(r"(?<![\w])(?:[rs]k_(?:live|test)_[0-9A-Za-z]{20,}|whsec_[A-Za-z0-9]{24,})(?![A-Za-z0-9_])"),
+    # The vendor formats and webhook URLs of tools/check_secrets.py, unchanged.
+    re.compile(
+        r"(?<![\w-])(?:sk-(?:or-v1|lf|litellm|live)-[A-Za-z0-9_-]{20,}"
+        r"|gsk_[A-Za-z0-9]{40,}|pcsk_[A-Za-z0-9_]{20,}|e2b_[a-f0-9]{40}|tgp_v1_[A-Za-z0-9_-]{30,}"
+        r"|lsv2_(?:pt|sk)_[a-f0-9]{32}_[a-f0-9]{10}"
+        r"|tvly-(?:dev-|prod-)?[A-Za-z0-9_-]{20,}|xai-[A-Za-z0-9]{60,}|pplx-[A-Za-z0-9]{40,}"
+        r"|csk-[A-Za-z0-9]{30,}|nvapi-[A-Za-z0-9_-]{60,}|r8_[A-Za-z0-9]{30,}|fc-[a-f0-9]{32}"
+        r"|sk_[a-f0-9]{40,}|fw_(?=[A-Za-z]*\d)[A-Za-z0-9]{24,}"
+        r"|(?<![+/])ABSK[A-Za-z0-9+/]{60,}={0,2}|bedrock-api-key-[A-Za-z0-9+/_-]{40,}={0,2})"
+        r"(?![A-Za-z0-9_])"
+    ),
+    re.compile(r"(?<![\w-])(?:npm_[A-Za-z0-9]{30,}|pypi-AgE[A-Za-z0-9_-]{40,})(?![A-Za-z0-9_])"),
+    re.compile(
+        r"(?<![\w-])(?:do[opr]_v1_[a-f0-9]{64}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|dapi[a-f0-9]{32}"
+        r"|shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}|ATATT3[A-Za-z0-9_=-]{40,}|lin_api_[A-Za-z0-9]{32,}"
+        r"|ntn_[A-Za-z0-9]{40,}|PMAK-[a-f0-9]{24}-[a-f0-9]{34}"
+        r"|dp\.(?:pt|st|sa|ct|scim|audit)\.[A-Za-z0-9]{40,}|sbp_[a-f0-9]{40}|sb_secret_[A-Za-z0-9_-]{20,}"
+        r"|glsa_[A-Za-z0-9]{32}_[a-f0-9]{8}|glc_[A-Za-z0-9+/]{32,}={0,2}|sntry[su]_[A-Za-z0-9+/=_-]{30,}"
+        r"|hv[sbr]\.[A-Za-z0-9_-]{24,}|[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_-]{60,})"
+        r"(?![A-Za-z0-9_])"
+    ),
+    re.compile(
+        r"(?<![\w-])(?:hooks\.slack(?:-gov)?\.com/(?:services|workflows|triggers|actions|commands)/"
+        r"|(?:(?:ptb|canary)\.)?discord(?:app)?\.com/api(?:/v\d+)?/webhooks/"
+        r"|webhook\.office\.com/webhook(?:b2)?/|outlook\.office(?:365)?\.com/webhook(?:b2)?/"
+        r"|hooks\.zapier\.com/hooks/|mcp\.zapier\.com/api/mcp/s/|actions\.zapier\.com/mcp/"
+        r"|hook\.(?:[a-z0-9-]+\.)?(?:make|integromat)\.com/"
+        r"|maker\.ifttt\.com/trigger/[A-Za-z0-9_-]+/(?:json/)?with/key/"
+        r"|api\.telegram\.org/(?:file/)?bot)[A-Za-z0-9_@:/-]{20,}"
+    ),
     re.compile(r"(?<![\w-])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
     # A header with JSON whitespace around its '{' (see tools/check_secrets.py).
     re.compile(
@@ -53,7 +90,7 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i:\b(?:Account|SharedAccess)Key)\s*=\s*[A-Za-z0-9+/]{40,}={0,2}"),
     re.compile(
         r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*://"
-        r"[^\s/:@'\"<>]+:[^\s/@'\"<>]+@[^\s/'\"<>]"
+        r"(?P<user>[^\s/:@'\"<>]*):(?P<password>[^\s/@'\"<>]+)@[^\s/'\"<>]"
     ),
 )
 
