@@ -96,8 +96,12 @@ def terminal_report_text(value: str, report_format: str) -> str:
     """
     if report_format not in {"csv", "html"}:
         return value
-    normalized = value.replace("\r\n", "\n")
-    return "\n".join(terminal_text(line) for line in normalized.split("\n"))
+    return terminal_lines(value)
+
+
+def terminal_lines(value: str) -> str:
+    """``terminal_text`` for each line, keeping the line breaks (CRLF read as one)."""
+    return "\n".join(terminal_text(line) for line in value.replace("\r\n", "\n").split("\n"))
 
 
 def prepare_private_directory(path: str | Path) -> Path:

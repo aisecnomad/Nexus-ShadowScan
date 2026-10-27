@@ -47,6 +47,7 @@ from shadowscan.utils.deadline import JobDeadline, arm_job_deadline
 from shadowscan.utils.git import terminate_active_clones, terminate_clones_on_signal
 from shadowscan.utils.output import (
     encodable_text,
+    terminal_lines,
     terminal_report_text,
     terminal_text,
     write_private_text,
@@ -713,7 +714,7 @@ class _MainGroup(click.Group):
         except click.ClickException as exc:
             # Click quotes the values in its own usage errors, not in these messages,
             # and every ClickException that is not a usage error exits 1.
-            raise click.ClickException(terminal_text(exc.format_message())) from None
+            raise click.ClickException(terminal_lines(exc.format_message())) from None
 
 
 @click.group(cls=_MainGroup, context_settings={"help_option_names": ["-h", "--help"]})

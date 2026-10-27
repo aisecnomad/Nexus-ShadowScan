@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from io import StringIO
 
+import click
 import pytest
 from click.testing import CliRunner
 from rich.console import Console
@@ -106,3 +107,19 @@ def test_untrusted_file_name_in_a_cli_error_is_inert(tmp_path, command, control)
     assert result.exit_code == 1, result.output
     assert control not in result.output
     assert terminal_text(control) in result.stderr
+
+
+def test_multi_line_cli_error_keeps_its_line_breaks():
+    # Neutralizing controls must not fold a multi-line message into one line of \\u000a.
+    @click.command("synthetic-multi-line-error")
+    def failing() -> None:
+        raise click.ClickException("first line\r\nsecond line \x1b]52;c;dGVzdA==\x07")
+
+    main.add_command(failing)
+    try:
+        result = CliRunner().invoke(main, ["synthetic-multi-line-error"])
+    finally:
+        main.commands.pop("synthetic-multi-line-error")
+    assert result.exit_code == 1
+    assert "Error: first line\nsecond line \\u001b]52;c;dGVzdA==\\u0007\n" in result.output
+    assert "\\u000a" not in result.output and "\\u000d" not in result.output
