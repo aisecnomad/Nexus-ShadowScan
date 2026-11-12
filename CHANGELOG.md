@@ -8,6 +8,9 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## Unreleased
 
+- The live Kubernetes network policy example now permits cluster DNS only;
+  operators must configure and validate deployment-specific egress.
+
 - The development toolchain moves to pytest 9.2.0 (#347). The repository's
   own pytest 9.2 fixes landed earlier (the redaction-namespace descriptors and
   the scoped `os.fstat` stub); CI's `benchmark-tests` job now runs the pinned

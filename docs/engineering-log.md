@@ -13,6 +13,13 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Kubernetes live egress baseline (November 12)
+
+The example live NetworkPolicy grants cluster DNS only until an operator adds
+an environment-specific egress path. Guidance calls for validating internal
+address ranges, additive policies, CNI enforcement and service translation.
+No live-cluster validation is claimed.
+
 ### pytest 9.2.0 and the companion suite's capture mode (November 5)
 
 Dependabot's #347 moves pytest from 9.1.1 to 9.2.0. This repository's own

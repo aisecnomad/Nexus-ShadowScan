@@ -445,7 +445,20 @@ separate Job and enforce a network path through an approved transparent egress
 gateway or firewall that filters by name; a standard Kubernetes NetworkPolicy
 cannot filter destinations by DNS name, and ShadowScan's HTTP client and its Git
 clones ignore proxy environment variables (the client also rejects an explicit
-proxy). See [operational controls](operations/operational-controls.md).
+proxy). The [live policy example](https://github.com/Hunzee-VC/Nexus-ShadowScan/blob/main/examples/k8s-network-policy.yaml)
+denies egress by default and permits only cluster DNS for pods labelled
+`shadowscan-mode: live`: configure the approved gateway addresses and ports or a
+CNI FQDN policy before expecting live API collection to succeed. This replaces
+the example's former broad IPv4 HTTPS allowance. Restrict and monitor DNS too.
+
+Do not assume RFC1918 exclusions cover the cluster: pod, service, node, VPC and
+other internally routed networks may use non-RFC1918 IPv4 or global-unicast IPv6.
+Prefer a narrow gateway allowlist. If allowing broad address ranges, exclude the
+actual internal and translated CIDRs and metadata endpoints in both families;
+account for IPv4-mapped IPv6 and NAT64. NetworkPolicies are additive. Validate
+all policies selecting the pod against the deployed CNI and routing, including
+service DNAT, NodeLocal DNS, IPv6 and host-network behavior. The policy does not
+itself prove enforcement. See [operational controls](operations/operational-controls.md).
 
 Opt-in Git history enrichment requires Git 2.45+;
 verify the distribution Git version if that feature is needed. Cloning also requires

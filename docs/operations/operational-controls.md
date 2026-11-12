@@ -62,18 +62,26 @@ outside the process as well.
   [live egress example](https://github.com/Hunzee-VC/Nexus-ShadowScan/blob/main/examples/k8s-network-policy.yaml)
   is the address-level baseline underneath that allowlist. It denies all
   egress to every pod labelled `app.kubernetes.io/name: shadowscan`, and
-  allows cluster DNS and HTTPS to public addresses only to pods that also
-  carry `shadowscan-mode: live`, so a live Job without that label gets no
-  egress rather than unrestricted egress. It also blocks NodeLocal DNSCache
-  and the metadata endpoints that GKE Workload Identity and EKS Pod Identity
-  use; allow only the one address and port a live scan needs. IPv6 egress
-  stays denied until you add the IPv6 rule the example describes. That rule
-  excepts unique-local, link-local, IPv4-mapped and both NAT64 prefixes
-  (`64:ff9b::/96` and the local-use `64:ff9b:1::/48`), but not the cluster
-  itself: when pod, service, node or VPC addresses are global-unicast IPv6,
-  add those prefixes, and any network-specific NAT64 prefix in use, to its
-  `except` list as well. It works
-  only with a CNI that enforces NetworkPolicy.
+  permits cluster DNS only to pods that also carry `shadowscan-mode: live`.
+  It does not permit HTTPS out of the box: add the actual approved egress
+  gateway addresses and ports or deploy an appropriate CNI FQDN policy before
+  running a live scan. This is a migration for installations relying on the
+  example's former broad IPv4 HTTPS rule. A live Job without the mode label
+  gets no egress. DNS itself can carry data, so restrict and monitor it too.
+
+  Do not assume RFC1918 exclusions cover the cluster: pod, service, node,
+  VPC and other internally routed networks may use non-RFC1918 IPv4 or
+  global-unicast IPv6. Prefer narrowly allowed approved gateway addresses; if
+  a broad IP rule is necessary, explicitly exclude every internal and
+  translated range, cloud metadata and wire-server addresses, IPv4-mapped
+  IPv6, the well-known and local-use NAT64 prefixes (`64:ff9b::/96` and
+  `64:ff9b:1::/48`), and any network-specific translation prefixes. The
+  baseline blocks NodeLocal DNSCache and metadata endpoints used by GKE Workload
+  Identity and EKS Pod Identity; permit only the addresses and ports needed.
+  NetworkPolicies are additive, so review all policies selecting the pod.
+  Test the deployed policy with its CNI and routing, including service DNAT,
+  IPv6 and host-network behavior: this example is enforced only by a CNI that
+  supports NetworkPolicy and cannot attest to an installation's enforcement.
 
 ## Plugin trust
 

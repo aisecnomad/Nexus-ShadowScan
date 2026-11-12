@@ -4,43 +4,41 @@
 # The first denies all egress to every pod labelled
 # app.kubernetes.io/name: shadowscan. NetworkPolicies are additive, so a pod
 # that lacks or misspells the mode label stays denied instead of falling
-# outside every policy. The second widens egress only for pods that also carry
-# shadowscan-mode: live; label live-collection Jobs that way (the Job in
-# k8s-job.yaml is offline and needs no egress).
+# outside every policy. The second widens egress to cluster DNS only for pods
+# that also carry shadowscan-mode: live; label live-collection Jobs that way
+# (the Job in k8s-job.yaml is offline and needs no egress). Live API access
+# needs an additional, deployment-specific allow rule before a scan can succeed.
 #
-# The live policy is not a host allowlist: a standard NetworkPolicy matches
-# addresses, not DNS names, so it cannot express "only graph.microsoft.com". It
-# limits the scanner pod to cluster DNS and HTTPS to public addresses, denying
-# private, carrier-grade NAT and link-local ranges (including cloud metadata at
-# 169.254.169.254) and Azure's wire server. Enforce the per-connector host
-# allowlist in a layer that sees names: a transparent egress gateway or firewall
-# that filters on TLS SNI, or a CNI with FQDN policies. ShadowScan's HTTP client
-# ignores proxy environment variables and rejects an explicit proxy, so
-# HTTPS_PROXY is not an option.
+# A standard NetworkPolicy matches addresses, not DNS names, so it cannot
+# express "only graph.microsoft.com". This example permits cluster DNS, but no
+# HTTPS destination by default. Add only the addresses and ports needed to
+# reach an approved transparent egress gateway or use a CNI with FQDN policies.
+# Enforce the per-connector host allowlist in a layer that sees names.
+# ShadowScan's HTTP client ignores proxy environment variables and rejects an
+# explicit proxy, so HTTPS_PROXY is not an option. DNS itself can carry data;
+# restrict and monitor DNS separately.
 #
-# These policies also block NodeLocal DNSCache (169.254.20.10), the GKE
-# metadata server that Workload Identity uses and the EKS Pod Identity agent
+# Do not use a broad 0.0.0.0/0 or ::/0 HTTPS rule without excluding the actual
+# pod, service, node, VPC and other internal routed CIDRs in BOTH address
+# families. Internal networks can use public IPv4 or global-unicast IPv6
+# space, not just RFC1918 and unique-local ranges. Account for cloud metadata,
+# Azure's wire server, IPv4-mapped IPv6, NAT64 and any local translation
+# prefixes. A narrow allowlist of approved gateway addresses is preferable.
+# IP-based rules alone cannot enforce an API host allowlist, and addresses and
+# DNS answers can change. NetworkPolicies are additive: any other policy that
+# selects these pods may widen the allowed destinations.
+#
+# These policies block NodeLocal DNSCache (169.254.20.10), the GKE metadata
+# server that Workload Identity uses and the EKS Pod Identity agent
 # (169.254.170.23). A live scan that needs one of them fails and reports the
 # scan incomplete (exit 3). Allow only the one address and port you need, and
 # remember that the cloud SDKs, unlike ShadowScan's HTTP client, do not refuse
 # metadata addresses themselves.
 #
-# IPv6 egress is denied because no rule allows it. On a dual-stack cluster, add
-# a second ipBlock to the HTTPS rule:
-#   - ipBlock:
-#       cidr: ::/0
-#       except: [fc00::/7, fe80::/10, 64:ff9b::/96, "64:ff9b:1::/48", "::ffff:0:0/96"]
-# (fc00::/7 covers AWS's fd00:ec2::254 metadata address; 64:ff9b::/96 and the
-# local-use 64:ff9b:1::/48 are NAT64 prefixes, which can reach IPv4 metadata
-# and private addresses. Also except any network-specific NAT64 prefix your
-# cluster uses.)
-# Unlike the IPv4 rule, ::/0 does not exclude the cluster: on clusters whose
-# pods, services, nodes or VPC use global-unicast IPv6 (EKS IPv6, GKE
-# dual-stack with external IPv6, many on-premises CNIs) also add those
-# prefixes to except, or the pod can reach internal HTTPS endpoints, including
-# the API server, that the IPv4 rule denies.
-#
-# Enforced only by a CNI that supports NetworkPolicy.
+# Validate the deployed policies with the actual CNI and cluster routing,
+# including service DNAT, IPv6, NodeLocal DNS and host-network behavior.
+# Enforced only by a CNI that supports NetworkPolicy. Confirm no other selecting
+# policy grants broader access before relying on these controls.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -76,17 +74,6 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # HTTPS to public addresses only.
-    - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-            except:
-              - 10.0.0.0/8
-              - 100.64.0.0/10
-              - 168.63.129.16/32
-              - 169.254.0.0/16
-              - 172.16.0.0/12
-              - 192.168.0.0/16
-      ports:
-        - protocol: TCP
-          port: 443
+    # Add an explicit destination and port for your approved egress path here.
+    # Do not apply a placeholder address: determine the actual destination and
+    # validate it against the cluster's complete internal and translated ranges.

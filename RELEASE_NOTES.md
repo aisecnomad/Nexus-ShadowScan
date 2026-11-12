@@ -8,6 +8,11 @@ records each in detail, and the
 [deployment and migration guide](https://github.com/Hunzee-VC/Nexus-ShadowScan/blob/main/docs/production.md)
 has the full upgrade steps.
 
+## Unreleased
+
+- The live Kubernetes network policy example now permits cluster DNS only.
+  Configure and validate deployment-specific egress before live collection.
+
 ## 0.1.4 — 2026-10-23
 
 A patch release carrying every change on `main` since `v0.1.3` was tagged:

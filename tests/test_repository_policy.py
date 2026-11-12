@@ -2808,13 +2808,11 @@ def test_kubernetes_network_policy_example_denies_egress_unless_live() -> None:
     assert deny["spec"] == {"podSelector": {"matchLabels": scanner}, "policyTypes": ["Egress"], "egress": []}
     assert live["spec"]["podSelector"] == {"matchLabels": {**scanner, "shadowscan-mode": "live"}}
     assert live["spec"]["policyTypes"] == ["Egress"]
-    blocks = [peer["ipBlock"] for rule in live["spec"]["egress"] for peer in rule["to"] if "ipBlock" in peer]
-    (https,) = [rule for rule in live["spec"]["egress"] if any("ipBlock" in peer for peer in rule["to"])]
-    assert https["ports"] == [{"protocol": "TCP", "port": 443}]
-    # Private, carrier-grade NAT and link-local (cloud metadata) ranges and Azure's wire server.
-    private = {"10.0.0.0/8", "100.64.0.0/10", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16"}
-    (block,) = blocks
-    assert block["cidr"] == "0.0.0.0/0" and private | {"168.63.129.16/32"} <= set(block["except"])
+    # A site's internal networks are not necessarily RFC1918. The uncustomized
+    # live policy grants DNS only and cannot grant arbitrary IPv4/IPv6 HTTPS.
+    (dns,) = live["spec"]["egress"]
+    assert dns["ports"] == [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]
+    assert all("ipBlock" not in peer for peer in dns["to"])
 
 
 def test_kubernetes_drift_cronjob_never_overlaps_and_mounts_inputs_read_only() -> None:
