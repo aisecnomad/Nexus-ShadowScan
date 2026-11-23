@@ -39,6 +39,7 @@ from shadowscan.connectors.endpoint.catalog import (
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import SignatureIndex
+from shadowscan.tool_pins import DESCRIPTOR_FIELDS, FINGERPRINT_KEY, FINGERPRINT_PROFILE, fingerprint
 from shadowscan.utils.http import diagnostic_url
 from shadowscan.utils.jcs import CanonicalizationError
 from shadowscan.utils.jwks import fetch_jwks
@@ -126,6 +127,23 @@ _HOST = re.compile(
     r"(?!\.[a-z0-9-]))\b",
     re.IGNORECASE,
 )
+
+
+def _definition_fingerprint(tool: dict[str, Any]) -> dict[str, Any]:
+    """The comparable fingerprint of a tool definition as metadata; empty when it has none.
+
+    A definition whose model-visible fields were changed by redaction is not the
+    served text, so it gets no fingerprint: a pin compared with it would report
+    a difference that is not one. Export-only fields (``auth``, ``auth_mode``,
+    ``url``) are outside the preimage and do not suppress the fingerprint.
+    """
+    digest = fingerprint(tool)
+    if digest is None:
+        return {}
+    descriptor = {key: value for key, value in tool.items() if key in DESCRIPTOR_FIELDS}
+    if REDACTED in json.dumps(descriptor, ensure_ascii=False):
+        return {}
+    return {FINGERPRINT_KEY: {"profile": FINGERPRINT_PROFILE, "digest": digest}}
 
 
 def _bounded_text(value: object, limit: int = _MAX_LABEL) -> str:
@@ -800,6 +818,7 @@ class MCPInventoryConnector(_EndpointConnector):
                     "tool_definition_sha256": hashlib.sha256(
                         json.dumps(tool, sort_keys=True, separators=(",", ":"), default=str).encode()
                     ).hexdigest(),
+                    **_definition_fingerprint(tool),
                     "tls": server_tls.get(
                         server, self._text(tool.get("url") or server).lower().startswith("https://")
                     ),

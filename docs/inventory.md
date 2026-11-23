@@ -183,7 +183,11 @@ subject agent. Only the subject's literal identities become approval bindings:
 its external references, its A2A card URL and a complete
 `k8s:<cluster>/<namespace>/<kind>/<name>` deployment identity. Components,
 package purls and workload UIDs are descriptive provenance in `card`, which also
-records `verification: not-verified`; seals are never verified here. A malformed
+records `verification: not-verified`; seals are never verified here. A digest
+the document pins for a tool is kept in `card.tool_pins` and compared with the
+definition a scan observes
+([pinned tool definitions](connectors/endpoint.md#pinned-tool-definitions)); it
+approves nothing. A malformed
 document fails inventory validation (exit 1). Several snapshots of one subject
 in a directory approve nothing, because their identical bindings are ambiguous:
 keep one document per subject.

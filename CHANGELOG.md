@@ -8,6 +8,19 @@ explain operator migrations. Earlier per-change entries are preserved in the
 
 ## Unreleased
 
+- An MCP tool definition is now compared with the digest an AgentBOM in the
+  sanctioned inventory pins for it, so a tool rewritten after approval is
+  flagged by one scan. `endpoint.mcp` tool findings gain
+  `metadata.tool_definition_fingerprint` (profile `rfc8785-jcs-v2`, the
+  fingerprint Nexus SymBiote records), and a pinned tool gains
+  `metadata.tool_pin` with status `match`, `mismatch` or `unverifiable`. A
+  mismatch adds the tag `tool-definition-drift` (risk weight 15, mapped to
+  OWASP LLM04 and ASI04 and MITRE ATLAS AML.T0109), which `shadowscan diff`
+  reports as adverse capability drift. An unsupported pin, including
+  `tooldef/v1`, prevents a match while preserving any confirmed mismatch.
+  A pin approves nothing, and a malformed pin fails inventory validation.
+  Finding IDs are unchanged. The SymBiote integration page gains the pin
+  rules and a table that lines up the two tools' drift classes.
 - The repository is back at `aisecnomad/Nexus-ShadowScan`, the name 0.1.3 and
   0.1.4 were published and attested under, and its benchmark companion at
   `aisecnomad/Nexus-ShadowBench`. Both were transferred to the `Hunzee-VC`
