@@ -60,6 +60,7 @@ from shadowscan.registry import Inventory, InventoryEntry, clear_match_state
 from shadowscan.risk import RiskPolicy, assess, provider_ids
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.signatures.loader import signature_source_digest
+from shadowscan.tool_pins import apply_tool_pins
 from shadowscan.triage import Triage, TriageConfigError, skip
 from shadowscan.utils.credential_identity import reset_credential_identity_key, set_credential_identity_key
 from shadowscan.utils.http_scope import (
@@ -1505,6 +1506,9 @@ class Engine:
             apply_autonomy(f, entry)
             # Declared facts come only from the card that approved this finding in this run.
             apply_declared_governance(f, entry)
+            # A pinned tool digest is compared, never treated as an approval; trusted
+            # registries pin nothing, so only the loaded inventory is read.
+            apply_tool_pins(f, self.inventory.entries if self.inventory is not None else ())
             f.risk = assess(f, self.index, inventory_present=inventory is not None, policy=risk_policy)
         if outcome is not None and approvals is not None:
             outcome.approval_entries = approvals.entries

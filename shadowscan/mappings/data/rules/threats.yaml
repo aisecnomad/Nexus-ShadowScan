@@ -28,6 +28,16 @@ rules:
       selected in its place, so the duplicating server reads or shapes calls
       meant for the original.
 
+  - id: tool-definition-drift
+    when: {tags_any: [tool-definition-drift]}
+    refs:
+      - owasp-llm-2026:LLM04
+      - owasp-asi-2026:ASI04
+      - mitre-atlas-2026.09:AML.T0109
+    rationale: >-
+      A tool whose served definition differs from the digest pinned for it
+      changed after it was reviewed, so the agent reads text nobody approved.
+
   - id: unsafe-serialization
     when: {tags_any: [unsafe-serialization]}
     refs:

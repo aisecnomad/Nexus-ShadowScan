@@ -1396,8 +1396,10 @@ from `ca_bundle` (see the
 [A2A Agent Card probe](connectors/endpoint.md#a2a-agent-card-probe)). It never
 fetches a URL declared inside a card and never contacts an MCP server. A job
 that sets both `input` and `agent_card_urls` is refused (exit 3), because a
-replay never probes. Model metadata is not parsed from GGUF/safetensors files,
-and MCP fingerprints have no rug-pull baseline.
+replay never probes. Model metadata is not parsed from GGUF/safetensors files.
+An MCP tool definition is compared with a digest only where the sanctioned
+inventory pins one
+([pinned tool definitions](connectors/endpoint.md#pinned-tool-definitions)).
 
 The separate opt-in filesystem artifact pass can inspect bounded raw model
 metadata. MCP description review remains static. The `tool-poisoning` tag keeps
