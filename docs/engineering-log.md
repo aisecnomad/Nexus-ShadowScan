@@ -13,6 +13,62 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Pinned MCP tool digests are compared at scan time (November 18)
+
+Issue #334 left two items after the AgentBOM inventory import: checking the MCP
+tool definitions a scan observes against the digests an AgentBOM pins, and
+lining up the drift classes of `shadowscan diff` and `nexus-symbiote diff`.
+
+- **What the design could rest on.** The issue names the digest `tooldef/v1`,
+  and the fixture pins a tool under it. Neither this repository nor the
+  companion (its full history at commit `c64451d` was searched) defines that
+  algorithm, so it cannot be recomputed. The companion's current tool
+  fingerprint is defined: profile `rfc8785-jcs-v2`, SHA-256 over the RFC 8785
+  canonical form of the name, description, input schema, annotations and, when
+  present, the title, output schema and `_meta`. The scanner computes that
+  profile and reports any other as `unverifiable`.
+- **Fingerprint.** `shadowscan/tool_pins.py` builds the same preimage as the
+  companion's `hash_tool_definition` with the existing `shadowscan.utils.jcs`.
+  Nine descriptors (empty, absent and null descriptions, empty and filled
+  annotations, non-BMP property names, floats, the three optional members)
+  digest identically in both; the companion was run from its source at
+  `c64451d` for the comparison, and the nine digests are the test vectors. A
+  descriptor with an unbound member, a wrong type or a number with no canonical
+  form has no fingerprint, as the companion refuses it. `endpoint.mcp` records
+  the fingerprint beside `tool_definition_sha256`, and omits it when redaction
+  changed the exported text, since the result would differ from any pin.
+- **Pins.** `shadowscan/agentbom.py` reads `tools[].digest` into
+  `card.tool_pins`: server name and endpoint, tool name, algorithm, digest and
+  status. A digest that is not a mapping, a value that is not `sha256:` and 64
+  lowercase hexadecimal digits, a missing algorithm or tool name and a
+  `serverRef` outside `toolServers` fail inventory validation. Tool ids now
+  join the document's unique-id check.
+- **Comparison.** The engine calls `apply_tool_pins` after the inventory match
+  and before scoring. It binds a pin by literal server (name or endpoint) and
+  tool name and writes `metadata.tool_pin`. A served fingerprint that differs
+  from any comparable pin is a `mismatch` and adds `tool-definition-drift`.
+  When no mismatch was established, an unsupported algorithm or a pin whose
+  producer status is not `ok` makes the result `unverifiable`. A regression
+  test covers a comparable mismatch alongside a legacy pin. Each run rebuilds
+  the result and tag from the loaded inventory and the observed fingerprint.
+- **What does not change.** A pin approves nothing: `shadow`, `registry_match`
+  and finding IDs are identical with and without it, which an end-to-end test
+  asserts. The tag has risk weight 15 and a threat-mapping rule (OWASP LLM04,
+  ASI04, ATLAS AML.T0109), and `shadowscan diff` already classes a gained tag
+  as adverse capability drift.
+- **Limits.** No current companion build writes AgentBOM 0.1 with
+  `rfc8785-jcs-v2` pins, and `--inventory` still refuses the native AIBOM that
+  carries them, so a pin that can be compared is written by hand or by an
+  operator's tooling until a producer exists or the native format is read.
+  MCP registrations found in source code are not fingerprinted. A match says
+  the exported text equals the pinned text; it authenticates nothing.
+- **Documentation.** The integration page gains the pin rules, a note on the
+  companion's later `export-inventory` command (its two example simple lists
+  load with `Inventory.load`; the command was not run), and the drift-class
+  table. The table maps classes that report the same kind of change and names
+  the two that do not correspond. No claim of independent review is made for
+  this change.
+
 ### Repository transfer back to aisecnomad (November 17)
 
 The repository is back at `aisecnomad/Nexus-ShadowScan`, the name it had before the

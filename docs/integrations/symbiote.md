@@ -78,7 +78,7 @@ entries. The mapping, implemented in `shadowscan/agentbom.py`:
 | `autonomy_level` | the `automationLevel` claim, via the table below |
 | `resources` | complete `k8s:<cluster>/<namespace>/<kind>/<name>` deployment identities, subject external refs and A2A card URL; all matched literally |
 | `frameworks` | the agent's declared framework (`framework.<name>`, with the name lowercased) |
-| `card` | provenance: spec version, snapshot id/digest/serial, `verification: not-verified`, descriptive `component_resources` and `workload_uids` |
+| `card` | provenance: spec version, snapshot id/digest/serial, `verification: not-verified`, descriptive `component_resources` and `workload_uids`, and `tool_pins` ([pinned tool digests](#pinned-tool-digests)) |
 
 The loader checks consumed object/list types, bounded collection sizes, unique
 entity IDs, subject membership and snapshot subject/digest/serial/id consistency.
@@ -101,6 +101,43 @@ Only a `present` automation claim supplies a declared level. The producer
 schema defaults an omitted claim state to `present`; explicit `unknown` and
 `absent-verified` claims supply no level, and malformed claim states or values
 fail validation. Unknown never counts as low.
+
+## Pinned tool digests
+
+An AgentBOM 0.1 tool can pin a digest of its definition (`tools[].digest`, with
+an `algorithm`, a `value` and a `status`). The loader keeps each pin in the
+entry's `card.tool_pins` with the tool's name and its server's name and
+endpoint. A scan then compares it with the definition the `endpoint.mcp`
+connector observes for that server and tool, and records the result in the
+finding's `metadata.tool_pin`. A served definition that differs from its pin
+carries the tag `tool-definition-drift`, so a tool rewritten after approval is
+flagged by one scan, without an earlier report to compare against
+([pinned tool definitions](../connectors/endpoint.md#pinned-tool-definitions)
+has the statuses and the matching rule).
+
+ShadowScan computes one digest profile, `rfc8785-jcs-v2`: the tool fingerprint
+that SymBiote records as `definition_hash` with `definition_hash_version` in its
+native AIBOM. The fingerprint was checked against SymBiote's own
+`hash_tool_definition` at commit
+[`c64451d`](https://github.com/aisecnomad/Nexus-Symbiote/tree/c64451dc7d52b5120e4dd2977faab733ac114bb6)
+on nine descriptors, and those digests are the test vectors in
+`tests/unit/test_tool_pins.py`. Pins under other algorithms, including the
+fixture's `tooldef/v1`, prevent a `match` verdict. A confirmed difference
+against any comparable pin still produces `mismatch`.
+
+What this does not do:
+
+- A pin approves nothing. A tool is shadow with or without a matching digest.
+- A malformed pin (a digest that is not `sha256:` and 64 lowercase hexadecimal
+  digits, a missing algorithm or tool name, a server that is not among the
+  document's `toolServers`) fails inventory validation (exit 1).
+- The pins come from the AgentBOM 0.1 document only. The native AIBOM that
+  current `nexus-symbiote` builds write carries the same fingerprint, but
+  `--inventory` refuses that format, so its fingerprints are not read. No
+  current build writes AgentBOM 0.1 with `rfc8785-jcs-v2` pins; until one does,
+  such a document is written by hand or by your own tooling.
+- The comparison covers the offline MCP tool-list export. MCP registrations
+  found in source code carry no fingerprint and are not compared.
 
 ## Autonomy vocabulary
 
@@ -151,15 +188,52 @@ describes the mapping.
 
 At the checked commit SymBiote has no command that writes Agent Capability
 Cards, `agents.yaml` lists or AgentBOM 0.1 documents for ShadowScan, and its
-native AIBOM is not a ShadowScan inventory. Until a producer writes a supported
-format, keep the sanctioned inventory as Capability Cards, an `agents.yaml` list
-or CSV ([inventory](../inventory.md)).
+native AIBOM is not a ShadowScan inventory.
 
-## Planned next (not yet implemented here)
+A later commit,
+[`c64451d`](https://github.com/aisecnomad/Nexus-Symbiote/tree/c64451dc7d52b5120e4dd2977faab733ac114bb6),
+adds `nexus-symbiote export-inventory --format shadowscan-simple`, which writes
+the repository agent of a reviewed native inventory as a ShadowScan simple list.
+Its two example outputs (`tests/fixtures/shadowscan-inventory/simple-list.json`
+and `simple-list-unnamed.json` at that commit) load with this scanner's
+`Inventory.load` as one entry each, bound to the `code` surface and the
+`project` observation type. The command itself was not run for this page, and
+the rest of this page still describes commit `18e4b441`. The export carries no
+tool pins and no autonomy level; the companion's
+[export guide](https://github.com/aisecnomad/Nexus-Symbiote/blob/c64451dc7d52b5120e4dd2977faab733ac114bb6/docs/shadowscan-inventory-export.md)
+says what it binds. Otherwise keep the sanctioned inventory as Capability Cards,
+an `agents.yaml` list or CSV ([inventory](../inventory.md)).
 
-Digest-level reconciliation: checking the MCP tool definitions a scan
-observes against the AgentBOM's pinned `tooldef/v1` digests, so a tool whose
-description or schema changed after approval is flagged at discovery time,
-and cross-referencing `shadowscan diff` drift classes with `nexus-symbiote diff`
-delta events. Tracked in
+## Drift classes side by side
+
+`shadowscan diff` compares two scan reports and `nexus-symbiote diff` compares
+two inventories, so neither replaces the other. Where both report the same kind
+of change, the classes line up as follows. The companion's ratings are those of
+its [drift gate guide](https://github.com/aisecnomad/Nexus-Symbiote/blob/c64451dc7d52b5120e4dd2977faab733ac114bb6/docs/drift-gate.md)
+at commit `c64451d`; ShadowScan's classes are in [drift](../operations/drift.md).
+
+| `shadowscan diff` class and field | `nexus-symbiote diff` change | Companion rating |
+|---|---|---|
+| `inventory`: a new finding | Component added | at least medium |
+| `inventory`: a resolved finding (drift, not adverse) | Component removed | high for MCP servers, tools and models; medium otherwise |
+| `capability`: `metadata.tool_definition_sha256` changed, or tag `tool-definition-drift` added | Tool definition, input schema, description or annotations changed | critical |
+| `capability`: `permissions`, `capabilities`, `model_providers` or `models` gained an item | Security field changed (capabilities, authorizations, provider and others) | high |
+| `autonomy`: the observed floor or ceiling rose | Declared autonomy level changed | high |
+| `coverage`: the comparison is incomplete (always exit 3) | Coverage regressed | see the companion's guide |
+
+Two rows differ in what they measure. ShadowScan's `autonomy` class compares
+the interval a scan observes, and the companion compares the level `agent.yaml`
+declares. ShadowScan's `governance` class (`owner`, `shadow`, `registry_match`
+and registry reconciliation) has no counterpart in the companion's table. The
+mapping is for reading the two reports together; neither tool reads the other's
+comparison.
+
+## Not implemented
+
+- Reading tool fingerprints from the companion's native AIBOM, so a
+  `nexus-symbiote scan` baseline could pin tools without an AgentBOM 0.1
+  document.
+- Fingerprinting MCP tool registrations found in source code.
+
+Both are tracked in
 [#334](https://github.com/aisecnomad/Nexus-ShadowScan/issues/334).

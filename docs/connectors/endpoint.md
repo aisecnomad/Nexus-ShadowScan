@@ -165,8 +165,10 @@ exception: `endpoint.mcp` fetches the A2A Agent Cards listed in
 `agent_card_urls` ([below](#a2a-agent-card-probe)). MCP servers are never
 contacted. Supply only synthetic or appropriately sanitized exports.
 
-These offline inventories are not correlated with other surfaces. In
-particular, MCP tool fingerprints are not compared with a rug-pull baseline.
+These offline inventories are not correlated with other surfaces. An MCP tool's
+definition is compared with a digest only when the sanctioned inventory pins
+one for that server and tool ([pinned tool definitions](#pinned-tool-definitions));
+without a pin there is no rug-pull baseline within one scan.
 
 | Connector | Offline input |
 |---|---|
@@ -326,7 +328,7 @@ Descriptions exceeding 64 KiB and unclosed fences mark coverage incomplete. A li
 sentence; only a single sentence over 4,096 characters is audited in its first
 and last 4,096 characters and marks the audit `partial`, not the scan
 incomplete. Tool definitions are fingerprinted
-for downstream comparison, but baseline/rug-pull detection is not yet implemented. No tool is
+for comparison ([pinned tool definitions](#pinned-tool-definitions)). No tool is
 invoked. With `options.mcp_registries`, a tool finding whose server is an
 HTTP(S) URL is matched against the pinned MCP Registry snapshots by that URL
 (`metadata.mcp_registry.matches`); a bare server name identifies nothing and
@@ -340,6 +342,45 @@ are tagged and are never unpickled.
 
 eBPF event correlation is heuristic and offline-only. ShadowScan does not load
 eBPF programs; example operator policies are under `examples/ebpf/`.
+
+### Pinned tool definitions
+
+Each `mcp-tool` finding records two digests of the tool definition in the
+export:
+
+- `metadata.tool_definition_sha256` covers the whole record as exported.
+  `shadowscan diff` compares it between two reports
+  ([drift classes](../operations/drift.md)).
+- `metadata.tool_definition_fingerprint` is the definition's fingerprint under
+  the profile `rfc8785-jcs-v2`: SHA-256 over the RFC 8785 canonical form of the
+  name, the description (absent reads as empty), the input schema when present,
+  the annotations (absent, null and empty are equal), and the title, output
+  schema and `_meta` only when present. It is the fingerprint Nexus SymBiote
+  records for a tool, so the two tools digest one definition alike. The export's
+  own `auth`, `auth_mode` and `url` members are left out. A definition with any
+  other member, a member of the wrong type, a number with no canonical form, or
+  text that redaction changed has no fingerprint.
+
+When the sanctioned inventory holds an
+[AgentBOM](../integrations/symbiote.md#pinned-tool-digests) that pins a digest
+for the same server and tool, the scan compares the two and records the result
+in `metadata.tool_pin`:
+
+| `status` | Meaning |
+|---|---|
+| `match` | The observed fingerprint equals every pinned digest. |
+| `mismatch` | The observed fingerprint differs from at least one comparable pin, even when other pins cannot be compared. The finding carries the tag `tool-definition-drift` (risk weight 15), which also shows as adverse `capability` drift in `shadowscan diff`. |
+| `unverifiable` | The scan established no mismatch and could not complete every comparison. The `reason` is `unsupported-digest-algorithm` (the pin's algorithm is not `rfc8785-jcs-v2`), `pin-status-not-ok` (the producer did not compute the pin), `malformed-pin-digest` (a pin's digest is not a lowercase `sha256:` hex digest) or `observed-definition-has-no-fingerprint`. |
+
+A pin binds the server by the literal name, or endpoint, that the AgentBOM
+records for it, and the tool by its literal name, both case-sensitive. The
+server must be named as the tool export names it. A tool with no pin gets no
+`tool_pin`.
+
+A pin approves nothing: `shadow`, `registry_match` and the finding's identity
+are the same with and without it. A `match` says the exported definition equals
+the pinned text. It does not authenticate the server, the export, the AgentBOM
+or its producer, and it does not constrain what the tool's implementation does.
 
 ## A2A Agent Card probe
 

@@ -108,6 +108,7 @@ include:
 | `tag:exposed-llm-server` | LLM inference service is reachable beyond loopback or cluster scope | 15 |
 | `tag:tool-poisoning` | MCP tool description contains prompt-injection or exfiltration indicators | 15 |
 | `tag:tool-name-shadowing` | MCP tool name duplicates another installed server's tool name | 10 |
+| `tag:tool-definition-drift` | MCP tool definition differs from the digest the inventory pins | 15 |
 | `tag:no-auth-declared` | An A2A Agent Card declares no security scheme | 10 |
 | `tag:a2a-plaintext-interface` | An A2A Agent Card declares an `http://` or `ws://` interface to a host other than loopback | 10 |
 | `tag:a2a-card-signature-invalid` | An A2A Agent Card signature is malformed or does not verify against the operator-trusted keys (`agent_card_jwks_url`) | 10 |

@@ -12,6 +12,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from shadowscan.tool_pins import MAX_PINS_PER_DOCUMENT
+
 AGENTBOM_MARKERS = ("specVersion", "snapshot", "subject")
 ISO_TO_LEVEL: dict[str, int] = {
     "notAutomated": 0,
@@ -30,6 +32,7 @@ _ENTITY_PREFIXES = {
     "parties": "party:",
     "deployments": "deploy:",
     "toolServers": "server:",
+    "tools": "tool:",
 }
 Invalid = Callable[[Path, str, str], Exception]
 
@@ -238,6 +241,50 @@ def _component_resources(servers: dict[str, dict[str, Any]], reader: _Reader) ->
     return list(dict.fromkeys(resources))
 
 
+def _tool_pins(
+    doc: dict[str, Any], servers: dict[str, dict[str, Any]], reader: _Reader
+) -> list[dict[str, Any]]:
+    """The definition digests the document pins for its tools, by server and tool name.
+
+    A pin is descriptive: :mod:`shadowscan.tool_pins` compares it with the definition
+    a scan observes, and it approves nothing. A tool without a digest pins nothing.
+    The algorithm is kept as named; one this scanner does not compute is reported as
+    unverifiable when compared, never as a match.
+    """
+    pins: list[dict[str, Any]] = []
+    for tool in reader.entities(doc, "tools").values():
+        if tool.get("digest") is None:
+            continue
+        digest = reader.mapping(tool["digest"], "tools.digest")
+        server_ref = reader.entity_id(tool.get("serverRef"), "tools.serverRef")
+        if server_ref not in servers:
+            raise reader.error("tools.serverRef", "the server is not among the toolServers")
+        algorithm = reader.text(digest.get("algorithm"), "tools.digest.algorithm")
+        if len(algorithm) > 64:
+            raise reader.error("tools.digest.algorithm", "expected at most 64 characters")
+        value = reader.text(digest.get("value"), "tools.digest.value")
+        if not _DIGEST.fullmatch(value):
+            raise reader.error("tools.digest.value", "expected a sha256 digest")
+        server = servers[server_ref]
+        endpoint = reader.claim(server.get("endpoint"), "toolServers.endpoint")
+        pins.append(
+            {
+                "server": reader.optional_text(server.get("name"), "toolServers.name")
+                or server_ref.split(":", 1)[-1],
+                "endpoint": reader.text(endpoint, "toolServers.endpoint.value")
+                if endpoint is not None
+                else None,
+                "tool": reader.text(tool.get("toolName"), "tools.toolName"),
+                "algorithm": algorithm,
+                "digest": value,
+                "status": reader.optional_text(digest.get("status"), "tools.digest.status") or "ok",
+            }
+        )
+        if len(pins) > MAX_PINS_PER_DOCUMENT:
+            raise reader.error("tools", "too many pinned tool digests")
+    return pins
+
+
 def summarize(doc: dict[str, Any], path: Path, location: str, invalid: Invalid) -> dict[str, Any]:
     """Return subject inventory fields, never treating components or seals as approval."""
     reader = _Reader(path, location, invalid)
@@ -272,6 +319,7 @@ def summarize(doc: dict[str, Any], path: Path, location: str, invalid: Invalid) 
             "verification": "not-verified",
             "component_resources": _component_resources(servers, reader),
             "workload_uids": list(dict.fromkeys(uids)),
+            "tool_pins": _tool_pins(doc, servers, reader),
         },
     }
 
