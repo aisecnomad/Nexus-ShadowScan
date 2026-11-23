@@ -121,8 +121,9 @@ Python files.
   `tool-definition-drift`: its risk score rises by up to 15, and a
   `shadowscan diff` against a report from before the change shows adverse
   `capability` drift for it, which fails `--fail-on-drift capability` (exit 2).
-  A pin under an algorithm other than `rfc8785-jcs-v2` reports `unverifiable`
-  and changes no score. An AgentBOM that loaded before can now fail inventory
+  An unsupported pin makes the result `unverifiable` when the scan finds no
+  confirmed mismatch. A confirmed mismatch against a comparable pin still
+  adds the drift tag. An AgentBOM that loaded before can now fail inventory
   validation (exit 1) when a tool's `digest`, `serverRef` or `toolName` is
   malformed, or when two tools share an id. Finding IDs, `shadow` and
   `registry_match` do not change. See

@@ -45,13 +45,12 @@ lining up the drift classes of `shadowscan diff` and `nexus-symbiote diff`.
   join the document's unique-id check.
 - **Comparison.** The engine calls `apply_tool_pins` after the inventory match
   and before scoring. It binds a pin by literal server (name or endpoint) and
-  tool name and writes `metadata.tool_pin`. Every pin must be comparable for a
-  verdict: one unsupported algorithm or one pin whose producer status is not
-  `ok` makes the result `unverifiable`. A served fingerprint that differs from
-  any pin, or pins that disagree, is a `mismatch` and adds
-  `tool-definition-drift`. The result and the tag are rebuilt on each run, so a
-  value a connector or plugin set is not kept. Only the loaded inventory is
-  read; trusted registries pin nothing.
+  tool name and writes `metadata.tool_pin`. A served fingerprint that differs
+  from any comparable pin is a `mismatch` and adds `tool-definition-drift`.
+  When no mismatch was established, an unsupported algorithm or a pin whose
+  producer status is not `ok` makes the result `unverifiable`. A regression
+  test covers a comparable mismatch alongside a legacy pin. Each run rebuilds
+  the result and tag from the loaded inventory and the observed fingerprint.
 - **What does not change.** A pin approves nothing: `shadow`, `registry_match`
   and finding IDs are identical with and without it, which an end-to-end test
   asserts. The tag has risk weight 15 and a threat-mapping rule (OWASP LLM04,

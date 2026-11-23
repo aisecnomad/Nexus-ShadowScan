@@ -39,7 +39,7 @@ from shadowscan.connectors.endpoint.catalog import (
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import SignatureIndex
-from shadowscan.tool_pins import FINGERPRINT_KEY, FINGERPRINT_PROFILE, fingerprint
+from shadowscan.tool_pins import DESCRIPTOR_FIELDS, FINGERPRINT_KEY, FINGERPRINT_PROFILE, fingerprint
 from shadowscan.utils.http import diagnostic_url
 from shadowscan.utils.jcs import CanonicalizationError
 from shadowscan.utils.jwks import fetch_jwks
@@ -132,11 +132,16 @@ _HOST = re.compile(
 def _definition_fingerprint(tool: dict[str, Any]) -> dict[str, Any]:
     """The comparable fingerprint of a tool definition as metadata; empty when it has none.
 
-    A definition that redaction changed is not the served text, so it gets no
-    fingerprint: a pin compared with it would report a difference that is not one.
+    A definition whose model-visible fields were changed by redaction is not the
+    served text, so it gets no fingerprint: a pin compared with it would report
+    a difference that is not one. Export-only fields (``auth``, ``auth_mode``,
+    ``url``) are outside the preimage and do not suppress the fingerprint.
     """
     digest = fingerprint(tool)
-    if digest is None or REDACTED in json.dumps(tool, default=str):
+    if digest is None:
+        return {}
+    descriptor = {key: value for key, value in tool.items() if key in DESCRIPTOR_FIELDS}
+    if REDACTED in json.dumps(descriptor, ensure_ascii=False):
         return {}
     return {FINGERPRINT_KEY: {"profile": FINGERPRINT_PROFILE, "digest": digest}}
 

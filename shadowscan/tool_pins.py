@@ -16,8 +16,9 @@ be compared is reported as ``unverifiable``, never as a match.
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 from shadowscan.utils.jcs import CanonicalizationError, canonicalize
 
@@ -35,12 +36,25 @@ FINGERPRINT_KEY = "tool_definition_fingerprint"
 STATUSES = ("match", "mismatch", "unverifiable")
 MAX_PINS_PER_DOCUMENT = 2000
 
-_DESCRIPTOR_FIELDS = frozenset(
+DESCRIPTOR_FIELDS = frozenset(
     {"name", "description", "inputSchema", "annotations", "title", "outputSchema", "_meta"}
 )
 # Members a ShadowScan tool export adds beside the descriptor; they are not model-visible.
 _EXPORT_FIELDS = frozenset({"auth", "auth_mode", "url"})
 _OBJECT_FIELDS = ("inputSchema", "annotations", "outputSchema", "_meta")
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
+
+
+def _is_digest(value: Any) -> TypeGuard[str]:
+    return isinstance(value, str) and bool(_DIGEST.fullmatch(value))
+
+
+def _incomparable_reason(pins: list[tuple[str, dict[str, Any]]]) -> str:
+    if any(pin.get("status") != "ok" for _, pin in pins):
+        return "pin-status-not-ok"
+    if any(pin.get("algorithm") not in SUPPORTED_PROFILES for _, pin in pins):
+        return "unsupported-digest-algorithm"
+    return "malformed-pin-digest"
 
 
 def fingerprint(tool: Any) -> str | None:
@@ -53,7 +67,7 @@ def fingerprint(tool: Any) -> str | None:
     without a canonical form has no fingerprint: hashing it without that part
     would let the part change unseen.
     """
-    if not isinstance(tool, dict) or set(tool) - _DESCRIPTOR_FIELDS - _EXPORT_FIELDS:
+    if not isinstance(tool, dict) or set(tool) - DESCRIPTOR_FIELDS - _EXPORT_FIELDS:
         return None
     name, description, title = tool.get("name"), tool.get("description", ""), tool.get("title")
     if not isinstance(name, str) or not name:
@@ -115,35 +129,35 @@ def apply_tool_pins(finding: Finding, entries: Iterable[InventoryEntry]) -> None
     profile = observed.get("profile") if isinstance(observed, dict) else None
     result: dict[str, Any] = {"pinned_by": sorted({agent for agent, _ in pins})}
     comparable = [
-        pin for _, pin in pins if pin.get("status") == "ok" and pin.get("algorithm") in SUPPORTED_PROFILES
+        pin
+        for _, pin in pins
+        if pin.get("status") == "ok"
+        and pin.get("algorithm") in SUPPORTED_PROFILES
+        and _is_digest(pin.get("digest"))
     ]
-    if len(comparable) != len(pins):
-        # One pin that cannot be compared leaves the tool unverified, whatever the others say.
+    pinned = {pin["digest"] for pin in comparable}
+    has_fingerprint = _is_digest(digest) and profile == FINGERPRINT_PROFILE
+    mismatch = has_fingerprint and bool(pinned) and pinned != {digest}
+    # An unchecked pin prevents a match. A checked pin can still establish drift.
+    if len(comparable) != len(pins) and not mismatch:
         result["status"] = "unverifiable"
-        result["reason"] = (
-            "pin-status-not-ok"
-            if any(pin.get("status") != "ok" for _, pin in pins)
-            else "unsupported-digest-algorithm"
-        )
+        result["reason"] = _incomparable_reason(pins)
         result["algorithms"] = sorted({str(pin.get("algorithm")) for _, pin in pins})
-    elif not isinstance(digest, str) or profile != FINGERPRINT_PROFILE:
+    elif not has_fingerprint:
         result["status"] = "unverifiable"
         result["reason"] = "observed-definition-has-no-fingerprint"
     else:
-        pinned = sorted({str(pin.get("digest")) for pin in comparable})
         result["algorithm"] = FINGERPRINT_PROFILE
         result["observed"] = digest
-        result["pinned"] = pinned
-        if pinned == [digest]:
-            result["status"] = "match"
-        else:
-            # Differing pins for one tool cannot both hold; any pin the tool differs from is drift.
-            result["status"] = "mismatch"
+        result["pinned"] = sorted(pinned)
+        result["status"] = "mismatch" if mismatch else "match"
+        if mismatch:
             finding.add_tag(DRIFT_TAG)
     finding.metadata[METADATA_KEY] = result
 
 
 __all__ = [
+    "DESCRIPTOR_FIELDS",
     "DRIFT_TAG",
     "FINGERPRINT_KEY",
     "FINGERPRINT_PROFILE",

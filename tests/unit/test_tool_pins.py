@@ -285,6 +285,17 @@ def test_one_incomparable_pin_leaves_the_tool_unverified(tmp_path: Path) -> None
     assert finding.metadata[METADATA_KEY]["algorithms"] == [FINGERPRINT_PROFILE, "tooldef/v1"]
 
 
+def test_an_incomparable_pin_does_not_hide_a_confirmed_mismatch(tmp_path: Path) -> None:
+    entries = [*_pinned(tmp_path).entries, *Inventory.load([FIXTURE]).entries]
+    finding = _finding({**TOOL, "description": "Look up an issue by its number."})
+
+    apply_tool_pins(finding, entries)
+
+    assert finding.metadata[METADATA_KEY]["status"] == "mismatch"
+    assert finding.metadata[METADATA_KEY]["pinned"] == [TOOL_DIGEST]
+    assert DRIFT_TAG in finding.tags
+
+
 def test_two_pins_that_disagree_are_drift(tmp_path: Path) -> None:
     one, two = tmp_path / "a", tmp_path / "b"
     one.mkdir()
@@ -378,6 +389,56 @@ def test_a_definition_that_redaction_changed_gets_no_fingerprint() -> None:
     }
     assert _definition_fingerprint({**TOOL, "description": f"token {REDACTED}"}) == {}
     assert _definition_fingerprint({**TOOL, "handler": "x"}) == {}
+    # Export-only fields are outside the fingerprint preimage, so redacting them keeps the fingerprint.
+    assert _definition_fingerprint(
+        {**TOOL, "url": f"https://mcp.example/?token={REDACTED}", "auth": REDACTED}
+    ) == {FINGERPRINT_KEY: {"profile": FINGERPRINT_PROFILE, "digest": TOOL_DIGEST}}
+
+
+@pytest.mark.parametrize(
+    "bad_digest",
+    ["", "not-a-digest", "sha256:AB" + "0" * 62, "sha256:" + "0" * 63, "\x1b[31mforged"],
+)
+def test_a_malformed_observed_digest_is_unverifiable(tmp_path: Path, bad_digest: str) -> None:
+    finding = _finding()
+    finding.metadata[FINGERPRINT_KEY] = {"profile": FINGERPRINT_PROFILE, "digest": bad_digest}
+    apply_tool_pins(finding, _pinned(tmp_path).entries)
+    pin = finding.metadata[METADATA_KEY]
+    assert pin["status"] == "unverifiable"
+    assert pin["reason"] == "observed-definition-has-no-fingerprint"
+    assert "observed" not in pin
+    assert DRIFT_TAG not in finding.tags
+
+
+def test_a_hand_built_entry_with_a_malformed_pin_digest_is_unverifiable(tmp_path: Path) -> None:
+    bad_entry = InventoryEntry(
+        agent_id="agent:hand-built",
+        card={
+            "tool_pins": [
+                {
+                    "server": SERVER,
+                    "endpoint": None,
+                    "tool": "get_issue",
+                    "algorithm": FINGERPRINT_PROFILE,
+                    "digest": None,
+                    "status": "ok",
+                }
+            ]
+        },
+    )
+    finding = _finding()
+    apply_tool_pins(finding, [bad_entry])
+    pin = finding.metadata[METADATA_KEY]
+    assert pin["status"] == "unverifiable"
+    assert pin["reason"] == "malformed-pin-digest"
+    assert DRIFT_TAG not in finding.tags
+
+    # A malformed pin still does not hide a confirmed mismatch from a valid comparable pin.
+    changed = _finding({**TOOL, "description": "Look up an issue by its number."})
+    apply_tool_pins(changed, [*_pinned(tmp_path).entries, bad_entry])
+    assert changed.metadata[METADATA_KEY]["status"] == "mismatch"
+    assert changed.metadata[METADATA_KEY]["pinned"] == [TOOL_DIGEST]
+    assert DRIFT_TAG in changed.tags
 
 
 def test_more_pins_than_the_limit_refuse_the_inventory(

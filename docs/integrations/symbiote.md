@@ -121,10 +121,9 @@ native AIBOM. The fingerprint was checked against SymBiote's own
 `hash_tool_definition` at commit
 [`c64451d`](https://github.com/aisecnomad/Nexus-Symbiote/tree/c64451dc7d52b5120e4dd2977faab733ac114bb6)
 on nine descriptors, and those digests are the test vectors in
-`tests/unit/test_tool_pins.py`. A pin under any other algorithm is reported as
-`unverifiable`. That includes `tooldef/v1`, which the test fixture carries:
-neither repository defines it, so it cannot be recomputed here. An unverifiable
-pin is never a match.
+`tests/unit/test_tool_pins.py`. Pins under other algorithms, including the
+fixture's `tooldef/v1`, prevent a `match` verdict. A confirmed difference
+against any comparable pin still produces `mismatch`.
 
 What this does not do:
 

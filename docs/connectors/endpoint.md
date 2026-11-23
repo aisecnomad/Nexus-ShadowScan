@@ -369,8 +369,8 @@ in `metadata.tool_pin`:
 | `status` | Meaning |
 |---|---|
 | `match` | The observed fingerprint equals every pinned digest. |
-| `mismatch` | It differs from a pinned digest, or the pins disagree. The finding carries the tag `tool-definition-drift` (risk weight 15), which also shows as adverse `capability` drift in `shadowscan diff`. |
-| `unverifiable` | The comparison could not be made; `reason` says why: `unsupported-digest-algorithm` (the pin's algorithm is not `rfc8785-jcs-v2`), `pin-status-not-ok` (the producer did not compute the pin) or `observed-definition-has-no-fingerprint`. It is never read as a match. |
+| `mismatch` | The observed fingerprint differs from at least one comparable pin, even when other pins cannot be compared. The finding carries the tag `tool-definition-drift` (risk weight 15), which also shows as adverse `capability` drift in `shadowscan diff`. |
+| `unverifiable` | The scan established no mismatch and could not complete every comparison. The `reason` is `unsupported-digest-algorithm` (the pin's algorithm is not `rfc8785-jcs-v2`), `pin-status-not-ok` (the producer did not compute the pin), `malformed-pin-digest` (a pin's digest is not a lowercase `sha256:` hex digest) or `observed-definition-has-no-fingerprint`. |
 
 A pin binds the server by the literal name, or endpoint, that the AgentBOM
 records for it, and the tool by its literal name, both case-sensitive. The
