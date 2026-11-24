@@ -231,15 +231,34 @@ def test_connector_deadline_returns_incomplete_and_discards_late_results(monkeyp
 
 
 def test_timed_out_connector_preserves_queued_siblings_when_a_worker_remains(monkeypatch):
-    # The second worker starts "in-flight" halfway through the blocked deadline,
-    # which leaves half a deadline of margin on either side: "stagger" completes
-    # well before its own deadline, and the "in-flight" deadline is still live
-    # after the engine observes the blocked expiry and releases it.
-    deadline = 2 * CONNECTOR_DEADLINE
+    # Expire only the blocked connector once the second worker is occupied by
+    # "in-flight" and "queued" is still pending in the executor queue. Event
+    # synchronization removes the wall-clock stagger sleep that could itself
+    # miss a tight deadline on a contended macOS runner and abandon the queue.
+    from shadowscan.engine import _ConnectorRunner, _Supervisor
+
     blocked_started = threading.Event()
+    in_flight_started = threading.Event()
+    capacity_checked = threading.Event()
     blocked_cancelled: dict[str, threading.Event] = {}
+    blocked_states = []
     release = threading.Event()
     finished = threading.Event()
+
+    orig_run_job = _ConnectorRunner._run_job
+
+    def _capture_blocked_state(self, number, spec, state):
+        if spec.label == "blocked":
+            blocked_states.append(state)
+        return orig_run_job(self, number, spec, state)
+
+    orig_capacity_exhausted = _Supervisor._capacity_exhausted
+
+    def _watch_capacity(self):
+        exhausted = orig_capacity_exhausted(self)
+        if not exhausted and in_flight_started.is_set():
+            capacity_checked.set()
+        return exhausted
 
     class Connector:
         def __init__(self, ctx):
@@ -250,45 +269,50 @@ def test_timed_out_connector_preserves_queued_siblings_when_a_worker_remains(mon
             if label == "blocked":
                 blocked_cancelled["event"] = self.ctx.cancelled
                 blocked_started.set()
+                assert in_flight_started.wait(HOLD_TIMEOUT)
+                # Expire only the blocked connector now that the second worker is
+                # occupied by "in-flight" and "queued" is still pending.
+                blocked_states[0].deadline = time.monotonic()
                 try:
                     release.wait(HOLD_TIMEOUT)
                 finally:
                     finished.set()
-            elif label == "stagger":
-                # Start the next worker later, so its own deadline is still
-                # live when the blocked worker expires.
-                time.sleep(deadline / 2)
             elif label == "in-flight":
-                # Stay occupied until the engine has expired the blocked worker,
-                # so the last connector is still queued at that moment.
+                # Stay occupied until the supervisor has expired "blocked" and
+                # confirmed worker capacity remains, so "queued" is still queued
+                # at that exact instant.
+                in_flight_started.set()
                 assert blocked_started.wait(HOLD_TIMEOUT)
-                assert blocked_cancelled["event"].wait(HOLD_TIMEOUT)
+                assert capacity_checked.wait(HOLD_TIMEOUT)
+                assert blocked_cancelled["event"].is_set()
             self.ctx.stats = ScanStats(connector=label, started_at=now_iso(), finished_at=now_iso())
             return [Finding(Surface.CODE, "code.filesystem", Kind.AGENT, label, label, "agent")]
 
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: Connector)
+    monkeypatch.setattr(_ConnectorRunner, "_run_job", _capture_blocked_state)
+    monkeypatch.setattr(_Supervisor, "_capacity_exhausted", _watch_capacity)
     _warm_engine_prelude()
     cfg = ScanConfig(
         connectors=[
-            ConnectorSpec("code.filesystem", label=label)
-            for label in ("blocked", "stagger", "in-flight", "queued")
+            ConnectorSpec("code.filesystem", label=label) for label in ("blocked", "in-flight", "queued")
         ],
         parallel=2,
-        connector_timeout_seconds=deadline,
+        connector_timeout_seconds=10.0,
     )
     try:
         result = Engine(cfg, SignatureIndex([])).run()
     finally:
         release.set()
     assert blocked_started.is_set(), "the deadline expired before the blocked connector started"
+    assert capacity_checked.is_set(), "supervisor never checked remaining worker capacity"
     assert finished.wait(5)
-    assert {finding.resource for finding in result.findings} == {"stagger", "in-flight", "queued"}
+    assert {finding.resource for finding in result.findings} == {"in-flight", "queued"}
     by_connector = {stat.connector: stat for stat in result.stats}
-    assert set(by_connector) == {"blocked", "stagger", "in-flight", "queued"}
+    assert set(by_connector) == {"blocked", "in-flight", "queued"}
     assert "deadline" in by_connector["blocked"].errors[0]
     assert all(
         not by_connector[name].skipped and not by_connector[name].incomplete
-        for name in ("stagger", "in-flight", "queued")
+        for name in ("in-flight", "queued")
     )
 
 
